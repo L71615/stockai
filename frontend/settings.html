@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>设置 — StockAI</title>
+<!-- PWA -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="StockAI">
+<link rel="manifest" href="./manifest.json">
+<script>if('serviceWorker' in navigator){navigator.serviceWorker.register('./service-worker.js').catch(function(){})}</script>
+<link rel="stylesheet" href="css/common.css">
+</head>
+<body>
+<div class="app-layout">
+  <aside class="sidebar"></aside>
+  <main class="main">
+    <div class="header"></div>
+    <div class="content">
+
+      <div class="card">
+        <div class="card-header"><span>AI 模型配置</span></div>
+        <div class="card-body">
+          <div class="form-group">
+            <label class="form-label">AI 服务商</label>
+            <select class="form-input" id="aiProvider" style="width:auto;min-width:200px;" onchange="onProviderChange()">
+              <option value="minimax">MiniMax (MiniMax-M1)</option>
+              <option value="openai">OpenAI (ChatGPT)</option>
+              <option value="claude">Claude API (Anthropic)</option>
+              <option value="custom">其他 OpenAI 兼容</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">API Key</label>
+            <input type="password" class="form-input" id="aiKey" placeholder="输入 API Key…" style="max-width:400px;">
+          </div>
+          <div class="form-group">
+            <label class="form-label">模型</label>
+            <input type="text" class="form-input" id="aiModel" placeholder="MiniMax-M2.7" style="max-width:300px;">
+            <span class="text-sm text-secondary" style="display:block;margin-top:2px;">自行输入模型名，如 MiniMax-M2.7 / MiniMax-M1 / abab6.5s-chat</span>
+          </div>
+          <div class="form-group" id="customBaseUrlGroup" style="display:none;">
+            <label class="form-label">Base URL（自定义）</label>
+            <input type="text" class="form-input" id="aiBaseUrl" placeholder="https://api.minimax.chat/v1" style="max-width:400px;">
+          </div>
+          <button class="btn btn-primary" onclick="saveAIConfig()">保存</button>
+          <span id="aiSaveMsg" class="text-sm text-secondary" style="margin-left:10px;"></span>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header"><span>通知提醒</span></div>
+        <div class="card-body" id="notifSettings">
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border-light);">
+            <div><div>价格预警通知</div><div class="text-sm text-secondary">股价涨跌幅超过设定阈值时推送</div></div>
+            <label class="toggle"><input type="checkbox"><span class="slider"></span></label>
+          </div>
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;">
+            <div><div>AI 分析日报</div><div class="text-sm text-secondary">每日收盘后自动生成持仓分析报告</div></div>
+            <label class="toggle"><input type="checkbox"><span class="slider"></span></label>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header"><span>邮件提醒设置</span></div>
+        <div class="card-body">
+          <div class="text-sm text-secondary" style="margin-bottom:12px;">配置 SMTP 后，系统将在定投扣款日前 24 小时内发送邮件提醒。</div>
+          <div class="form-group">
+            <label class="form-label">SMTP 服务器地址</label>
+            <input type="text" class="form-input" id="smtpHost" placeholder="smtp.qq.com" style="max-width:300px;">
+          </div>
+          <div class="form-group">
+            <label class="form-label">端口</label>
+            <input type="number" class="form-input" id="smtpPort" value="465" style="max-width:120px;">
+            <span class="text-sm text-secondary" style="margin-left:8px;">SSL 用 465，STARTTLS 用 587</span>
+          </div>
+          <div class="form-group">
+            <label class="form-label">发件邮箱</label>
+            <input type="text" class="form-input" id="smtpUser" placeholder="your@qq.com" style="max-width:300px;">
+          </div>
+          <div class="form-group">
+            <label class="form-label">授权码</label>
+            <input type="password" class="form-input" id="smtpPassword" placeholder="输入 SMTP 授权码（非邮箱登录密码）" style="max-width:300px;">
+            <span class="text-sm text-secondary" style="display:block;margin-top:2px;">QQ邮箱 → 设置 → 账户 → POP3/SMTP 服务 → 生成授权码</span>
+          </div>
+          <div style="display:flex;gap:10px;align-items:center;">
+            <button class="btn btn-primary" onclick="saveSmtp()">保存</button>
+            <button class="btn btn-outline" onclick="testSmtp()">测试发送</button>
+            <span id="smtpMsg" class="text-sm text-secondary"></span>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </main>
+</div>
+<script src="js/common.js"></script>
+<script>
+initPage('settings', '⚙️ 设置');
+
+function onProviderChange() {
+  const provider = document.getElementById('aiProvider').value;
+  document.getElementById('customBaseUrlGroup').style.display = provider === 'custom' ? '' : 'none';
+}
+
+function saveAIConfig() {
+  const config = {
+    provider: document.getElementById('aiProvider').value,
+    apiKey: document.getElementById('aiKey').value,
+    model: document.getElementById('aiModel').value,
+    baseUrl: document.getElementById('aiBaseUrl').value,
+  };
+  localStorage.setItem('stockai_ai_config', JSON.stringify(config));
+  document.getElementById('aiSaveMsg').textContent = '✓ 已保存';
+}
+
+(function restore() {
+  const saved = localStorage.getItem('stockai_ai_config');
+  if (saved) {
+    const c = JSON.parse(saved);
+    document.getElementById('aiProvider').value = c.provider || 'minimax';
+    document.getElementById('aiKey').value = c.apiKey || '';
+    document.getElementById('aiModel').value = c.model || '';
+    if (c.baseUrl) document.getElementById('aiBaseUrl').value = c.baseUrl;
+    if (c.provider === 'custom') document.getElementById('customBaseUrlGroup').style.display = '';
+  }
+  loadSmtp();
+})();
+
+async function loadSmtp() {
+  try {
+    const res = await apiGet('/api/settings/smtp');
+    if (res && res.config) {
+      document.getElementById('smtpHost').value = res.config.host || '';
+      document.getElementById('smtpPort').value = res.config.port || 465;
+      document.getElementById('smtpUser').value = res.config.user || '';
+    }
+  } catch (e) { /* 忽略 */ }
+}
+
+async function saveSmtp() {
+  const body = {
+    host: document.getElementById('smtpHost').value.trim(),
+    port: parseInt(document.getElementById('smtpPort').value) || 465,
+    user: document.getElementById('smtpUser').value.trim(),
+    password: document.getElementById('smtpPassword').value,
+  };
+  if (!body.host || !body.user) {
+    showToast('请填写服务器地址和发件邮箱', 'warning'); return;
+  }
+  try {
+    await apiPut('/api/settings/smtp', body);
+    document.getElementById('smtpMsg').textContent = '✓ 已保存';
+    setTimeout(() => { document.getElementById('smtpMsg').textContent = ''; }, 3000);
+  } catch (e) {
+    showToast('保存失败', 'error');
+  }
+}
+
+async function testSmtp() {
+  const body = {
+    host: document.getElementById('smtpHost').value.trim(),
+    port: parseInt(document.getElementById('smtpPort').value) || 465,
+    user: document.getElementById('smtpUser').value.trim(),
+    password: document.getElementById('smtpPassword').value,
+  };
+  if (!body.host || !body.user || !body.password) {
+    showToast('请完整填写 SMTP 配置后再测试', 'warning'); return;
+  }
+  const msgEl = document.getElementById('smtpMsg');
+  msgEl.textContent = '发送中…';
+  try {
+    const res = await apiPost('/api/settings/smtp/test', body);
+    if (res.ok) {
+      msgEl.textContent = '✓ 测试邮件已发送';
+      showToast('测试邮件发送成功', 'success');
+    } else {
+      msgEl.textContent = '✗ ' + (res.error || '发送失败');
+      showToast(res.error || '测试发送失败', 'error');
+    }
+  } catch (e) {
+    msgEl.textContent = '✗ 请求失败';
+    showToast('请求失败', 'error');
+  }
+}
+</script>
+</body>
+</html>

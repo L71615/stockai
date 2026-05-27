@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Agent 工坊 — StockAI</title>
+<!-- PWA -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="StockAI">
+<link rel="manifest" href="./manifest.json">
+<script>if('serviceWorker' in navigator){navigator.serviceWorker.register('./service-worker.js').catch(function(){})}</script>
+<link rel="stylesheet" href="css/common.css">
+<style>
+  .agent-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; }
+  .agent-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; transition: .15s; }
+  .agent-card:hover { border-color: var(--accent); }
+  .agent-card h4 { font-size: 15px; margin-bottom: 4px; }
+  .agent-card .desc { font-size: 12px; color: var(--text-secondary); margin-bottom: 12px; line-height: 1.5; }
+  .agent-card .tools-row { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 14px; }
+  .agent-card .tool-badge { font-size: 10px; padding: 3px 8px; border-radius: 20px; background: var(--accent-bg); color: var(--accent-light); }
+  .agent-card .actions { display: flex; gap: 8px; }
+  .form-row { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end; }
+  .form-row .form-group { flex: 1; min-width: 160px; }
+  .editor-area { margin-top: 12px; }
+  .editor-area textarea { min-height: 120px; font-family: var(--font-mono); font-size: 12px; line-height: 1.6; }
+  .toggle-label { font-size: 12px; color: var(--text-secondary); cursor: pointer; display: flex; align-items: center; gap: 6px; }
+  .memory-panel { background: var(--bg-secondary); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; margin-top: 12px; }
+  .memory-entry { border-bottom: 1px solid var(--border-light); padding: 8px 0; }
+  .memory-entry:last-child { border-bottom: none; }
+  .memory-time { font-size: 11px; color: var(--text-muted); margin-bottom: 4px; }
+  .memory-body { font-size: 13px; line-height: 1.6; white-space: pre-wrap; }
+</style>
+</head>
+<body>
+<div class="app-layout">
+  <aside class="sidebar"></aside>
+  <main class="main">
+    <div class="header"></div>
+    <div class="content">
+
+      <div class="card">
+        <div class="card-header">
+          <span>我的 Agent</span>
+          <button class="btn btn-primary btn-sm" onclick="showCreateForm()">＋ 新建 Agent</button>
+        </div>
+
+        <div id="createForm" style="display:none;padding:16px 20px;border-bottom:1px solid var(--border);">
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">名称</label>
+              <input class="form-input" id="agentName" placeholder="如：持仓分析师">
+            </div>
+            <div class="form-group">
+              <label class="form-label">一句话描述</label>
+              <input class="form-input" id="agentDesc" placeholder="专注于持仓分析和风控建议">
+            </div>
+          </div>
+          <div class="editor-area">
+            <div class="form-row">
+              <div class="form-group" style="flex:2;">
+                <label class="form-label">系统提示词</label>
+                <textarea class="form-input" id="agentPrompt" placeholder="你是一个专业的持仓分析师…"></textarea>
+              </div>
+              <div class="form-group" style="flex:1;">
+                <label class="form-label">可用工具（勾选）</label>
+                <div style="display:flex;flex-direction:column;gap:6px;padding-top:4px;">
+                  <label class="toggle-label"><input type="checkbox" class="tool-cb" value="quote"> 实时行情查询</label>
+                  <label class="toggle-label"><input type="checkbox" class="tool-cb" value="news"> 新闻爬取分析</label>
+                  <label class="toggle-label"><input type="checkbox" class="tool-cb" value="holdings"> 持仓分析</label>
+                  <label class="toggle-label"><input type="checkbox" class="tool-cb" value="dca"> 定投计算</label>
+                  <label class="toggle-label"><input type="checkbox" class="tool-cb" value="indicator"> 技术指标解读</label>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div style="margin-top:12px;display:flex;gap:8px;">
+            <button class="btn btn-primary btn-sm" id="saveAgentBtn" onclick="saveAgent()">保存</button>
+            <button class="btn btn-outline btn-sm" onclick="hideCreateForm()">取消</button>
+            <span id="editingId" style="display:none;"></span>
+          </div>
+        </div>
+
+        <div class="card-body" id="agentList"></div>
+      </div>
+
+      <!-- 记忆面板 -->
+      <div class="card" id="memoryCard" style="display:none;">
+        <div class="card-header">
+          <span id="memoryTitle">📝 Agent 记忆</span>
+          <button class="btn btn-outline btn-sm" onclick="closeMemory()">关闭</button>
+        </div>
+        <div class="card-body">
+          <div style="display:flex;gap:8px;margin-bottom:12px;">
+            <input class="form-input" id="memoryEntry" placeholder="添加新记忆…" style="flex:1;">
+            <button class="btn btn-primary btn-sm" onclick="addMemory()">追加</button>
+          </div>
+          <div id="memoryContent"></div>
+        </div>
+      </div>
+
+    </div>
+  </main>
+</div>
+<script src="js/common.js"></script>
+<script>
+initPage('skills', '🤖 Agent 工坊');
+
+async function loadAgents() {
+  const container = document.getElementById('agentList');
+  showLoading(container);
+  try {
+    const agents = await apiGet('/api/agents/agents');
+    if (!agents.length) {
+      container.innerHTML = `
+        <div class="empty-state">
+          <div class="empty-icon">🤖</div>
+          <p>还没有 Agent</p>
+          <p class="text-sm text-secondary">创建你的第一个 AI Agent，赋予它不同的能力</p>
+        </div>`;
+      return;
+    }
+    const toolsLabel = { quote: '行情', news: '新闻', holdings: '持仓', dca: '定投', indicator: '技术指标' };
+    container.innerHTML = '<div class="agent-list">' + agents.map(a => {
+      let tools = [];
+      try { tools = JSON.parse(a.tools); } catch(e) {}
+      const badges = tools.map(t => `<span class="tool-badge">🔧 ${toolsLabel[t] || t}</span>`).join('');
+      return `<div class="agent-card">
+        <h4>${a.name}</h4>
+        <div class="desc">${a.description || '暂无描述'}</div>
+        ${badges ? '<div class="tools-row">'+badges+'</div>' : ''}
+        <div class="actions">
+          <button class="btn btn-outline btn-sm" onclick="editAgent(${a.id}, '${esc(a.name)}', '${esc(a.description)}', '${esc(a.system_prompt)}', '${esc(a.tools)}')">编辑</button>
+          <button class="btn btn-outline btn-sm" onclick="openMemory(${a.id}, '${esc(a.name)}')">记忆</button>
+          <button class="btn btn-outline btn-sm" onclick="deleteAgent(${a.id})">删除</button>
+        </div>
+      </div>`;
+    }).join('') + '</div>';
+  } catch(err) { showError(container, err); }
+}
+
+function esc(s) { return (s||'').replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/"/g,'&quot;'); }
+
+function showCreateForm() {
+  document.getElementById('createForm').style.display = '';
+  document.getElementById('saveAgentBtn').textContent = '保存';
+  document.getElementById('editingId').style.display = 'none';
+  ['agentName','agentDesc','agentPrompt'].forEach(id => document.getElementById(id).value = '');
+  document.querySelectorAll('.tool-cb').forEach(cb => cb.checked = false);
+}
+
+function hideCreateForm() { document.getElementById('createForm').style.display = 'none'; }
+
+async function saveAgent() {
+  const idEl = document.getElementById('editingId');
+  const editingId = idEl.style.display !== 'none' ? parseInt(idEl.textContent) : null;
+  const name = document.getElementById('agentName').value.trim();
+  const description = document.getElementById('agentDesc').value.trim();
+  const system_prompt = document.getElementById('agentPrompt').value.trim();
+  if (!name) return showToast('请填写 Agent 名称', 'warning');
+  const tools = JSON.stringify(Array.from(document.querySelectorAll('.tool-cb:checked')).map(cb => cb.value));
+  const body = { name, description, system_prompt, tools };
+  if (editingId) {
+    await apiPut('/api/agents/agents/' + editingId, body);
+  } else {
+    await apiPost('/api/agents/agents', body);
+  }
+  hideCreateForm();
+  loadAgents();
+}
+
+async function deleteAgent(id) {
+  showConfirm('确定删除此 Agent？', async () => {
+    await apiDelete('/api/agents/agents/' + id);
+    loadAgents();
+  });
+}
+
+function editAgent(id, name, desc, prompt, tools) {
+  showCreateForm();
+  document.getElementById('saveAgentBtn').textContent = '更新';
+  const idEl = document.getElementById('editingId');
+  idEl.style.display = '';
+  idEl.textContent = id;
+  document.getElementById('agentName').value = name;
+  document.getElementById('agentDesc').value = desc;
+  document.getElementById('agentPrompt').value = prompt;
+  let toolList = [];
+  try { toolList = JSON.parse(tools); } catch(e) {}
+  document.querySelectorAll('.tool-cb').forEach(cb => cb.checked = toolList.includes(cb.value));
+}
+
+let memoryAgentId = null;
+
+async function openMemory(id, name) {
+  memoryAgentId = id;
+  document.getElementById('memoryCard').style.display = '';
+  document.getElementById('memoryTitle').textContent = '📝 ' + name + ' 的记忆';
+  document.getElementById('memoryEntry').value = '';
+  await loadMemory();
+  document.getElementById('memoryCard').scrollIntoView({ behavior: 'smooth' });
+}
+
+function closeMemory() {
+  document.getElementById('memoryCard').style.display = 'none';
+  memoryAgentId = null;
+}
+
+async function loadMemory() {
+  const container = document.getElementById('memoryContent');
+  showLoading(container);
+  try {
+    const data = await apiGet('/api/agents/' + memoryAgentId + '/memory');
+    const content = data.content || '';
+    // 解析 frontmatter 后的内容
+    const parts = content.split(/^## /gm).filter(Boolean);
+    if (!parts.length || (parts.length === 1 && parts[0].startsWith('#'))) {
+      container.innerHTML = '<div class="empty-state"><p>暂无记忆，添加第一条吧</p></div>';
+      return;
+    }
+    container.innerHTML = parts.map(p => {
+      const lines = p.split('\n');
+      const heading = lines[0];
+      const body = lines.slice(1).join('\n').trim();
+      return `<div class="memory-entry">
+        <div class="memory-time">${heading}</div>
+        <div class="memory-body">${body}</div>
+      </div>`;
+    }).join('');
+  } catch(err) { showError(container, err); }
+}
+
+async function addMemory() {
+  const input = document.getElementById('memoryEntry');
+  const entry = input.value.trim();
+  if (!entry) return;
+  try {
+    await apiPost('/api/agents/' + memoryAgentId + '/memory', { entry });
+    input.value = '';
+    await loadMemory();
+  } catch(err) { showToast('保存失败: ' + err.message, 'error'); }
+}
+
+loadAgents();
+</script>
+</body>
+</html>

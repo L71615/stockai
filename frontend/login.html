@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>登录 — StockAI</title>
+<!-- PWA -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="StockAI">
+<link rel="manifest" href="./manifest.json">
+<script>if('serviceWorker' in navigator){navigator.serviceWorker.register('./service-worker.js').catch(function(){})}</script>
+<link rel="stylesheet" href="css/common.css">
+</head>
+<body>
+<div class="login-page">
+  <div class="login-card">
+    <h1>📈 <span>StockAI</span></h1>
+    <p class="subtitle">智能股票追踪 · AI 驱动</p>
+
+    <div class="form-group">
+      <label class="form-label">邮箱</label>
+      <input type="text" class="form-input" id="loginEmail" placeholder="demo@stockai.com">
+    </div>
+    <div class="form-group">
+      <label class="form-label">密码</label>
+      <input type="password" class="form-input" id="loginPassword" placeholder="任意密码 (demo模式)">
+    </div>
+    <div id="loginMsg" style="font-size:12px;margin-bottom:12px;"></div>
+    <button class="btn btn-primary" style="width:100%;justify-content:center;padding:11px;font-size:14px;" onclick="doLogin()">登 录</button>
+
+    <div style="display:flex;justify-content:space-between;margin-top:16px;font-size:12px;">
+      <a href="#">忘记密码？</a>
+      <a href="#">注册新账户</a>
+    </div>
+
+    <div style="margin-top:24px;text-align:center;font-size:11px;color:var(--text-muted);">
+      当前为 Demo 模式 — 使用 demo@stockai.com 登录
+    </div>
+  </div>
+</div>
+<script src="js/common.js"></script>
+<script>
+async function doLogin() {
+  const msg = document.getElementById('loginMsg');
+  msg.style.color = 'var(--text-secondary)';
+  msg.textContent = '登录中…';
+  try {
+    const res = await apiPost('/api/auth/login', {
+      email: document.getElementById('loginEmail').value,
+      password: document.getElementById('loginPassword').value,
+    });
+    msg.style.color = 'var(--green)';
+    msg.textContent = '登录成功，跳转中…';
+    setTimeout(() => { window.location.href = 'index.html'; }, 500);
+  } catch (err) {
+    msg.style.color = 'var(--red)';
+    msg.textContent = err.message;
+  }
+}
+</script>
+</body>
+</html>
