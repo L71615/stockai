@@ -778,3 +778,147 @@ a:hover { text-decoration: underline; }
   gap: 8px;
   justify-content: flex-end;
 }
+
+/* ==================== Skeleton Loading ==================== */
+.skeleton-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--space-md, 20px);
+}
+.skeleton {
+  background: linear-gradient(90deg, var(--bg-card) 25%, var(--bg-hover) 50%, var(--bg-card) 75%);
+  background-size: 200% 100%;
+  animation: skeleton-pulse 1.5s ease-in-out infinite;
+  border-radius: var(--radius-sm);
+}
+@keyframes skeleton-pulse {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+.skeleton-title { height: 20px; width: 40%; margin-bottom: 16px; }
+.skeleton-row { display: flex; gap: 12px; margin-bottom: 12px; }
+.skeleton-cell { height: 14px; flex: 1; }
+.skeleton-cell-sm { height: 14px; flex: 1; max-width: 80px; }
+.skeleton-cell-lg { height: 32px; flex: 1; }
+
+/* ==================== Button: Retry ==================== */
+.btn-retry {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  border-radius: var(--radius-sm);
+  font-family: var(--font);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  border: 1px solid rgba(239,83,80,.2);
+  background: rgba(239,83,80,.1);
+  color: var(--red);
+  transition: background .2s;
+}
+.btn-retry:hover { background: rgba(239,83,80,.18); }
+.btn-retry::before {
+  content: '';
+  display: inline-block;
+  width: 14px; height: 14px;
+  background: currentColor;
+  mask: url("data:image/svg+xml,%3Csvg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2'%3E%3Cpath d='M23 4v6h-6M1 20v-6h6'/%3E%3Cpath d='M3.5 9a9 9 0 0114.8-3.5L23 10M1 14l4.7 4.5A9 9 0 0020.5 15'/%3E%3C/svg%3E") center/contain no-repeat;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2'%3E%3Cpath d='M23 4v6h-6M1 20v-6h6'/%3E%3Cpath d='M3.5 9a9 9 0 0114.8-3.5L23 10M1 14l4.7 4.5A9 9 0 0020.5 15'/%3E%3C/svg%3E") center/contain no-repeat;
+}
+
+/* ==================== SVG Icons ==================== */
+.nav-icon svg { width: 18px; height: 18px; display: block; }
+.logo-svg { width: 22px; height: 22px; vertical-align: -4px; margin-right: 4px; }
+.empty-icon-svg {
+  width: 48px; height: 48px;
+  margin: 0 auto 16px;
+  display: block;
+  color: var(--text-muted);
+}
+.error-state .empty-icon-svg { color: var(--red); }
+
+/* ==================== Error State ==================== */
+.error-state p { color: var(--red); }
+
+/* ==================== Keyboard Shortcuts ==================== */
+.shortcut-hint {
+  padding: 8px 16px;
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.6;
+}
+.shortcut-hint kbd {
+  display: inline-block;
+  padding: 1px 5px;
+  font-size: 10px;
+  font-family: var(--font-mono);
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text-secondary);
+}
+.shortcut-list { margin-top: 12px; }
+.shortcut-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 0;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+.shortcut-row kbd {
+  display: inline-block;
+  padding: 2px 6px;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text);
+}
+.shortcut-row span { margin-left: 4px; }
+
+/* ==================== AI Insight Panel (editorial style) ==================== */
+.ai-insight-bar {
+  background: var(--bg-card);
+  border-left: 3px solid #c4b5fd;
+  border-radius: 0 var(--radius) var(--radius) 0;
+  padding: 16px 20px;
+  margin-bottom: 20px;
+}
+.ai-insight-bar .ai-label {
+  font-size: 11px;
+  color: #c4b5fd;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  margin-bottom: 6px;
+  font-weight: 600;
+}
+.ai-insight-bar .ai-headline {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+  line-height: 1.5;
+  margin-bottom: 4px;
+}
+.ai-insight-bar .ai-meta {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+/* ==================== Freshness Indicator ==================== */
+.freshness-dot {
+  display: inline-block;
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  margin-right: 4px;
+  vertical-align: middle;
+}
+.freshness-dot.live { background: var(--green); }
+.freshness-dot.stale { background: var(--text-muted); }
+.data-freshness {
+  font-size: 11px;
+  color: var(--text-muted);
+}
