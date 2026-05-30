@@ -1400,3 +1400,41 @@ def dividends_summary():
     )
     total = sum(r["total_div"] for r in rows)
     return {"total_dividends": total, "by_stock": rows}
+
+
+# ==================== AI 复盘（结构化） ====================
+
+class StructuredReviewRequest(BaseModel):
+    report_type: str = "daily"   # daily / weekly / monthly
+    user_id: int = 1
+    provider: str = ""           # 留空使用默认
+    api_key: str = ""
+    model: str = ""
+
+
+@router.post("/review/structured")
+async def generate_review_structured(body: StructuredReviewRequest):
+    """生成结构化 AI 复盘报告"""
+    from services.review_service import generate_review_report
+
+    report = await generate_review_report(
+        user_id=body.user_id,
+        provider=body.provider,
+        api_key=body.api_key,
+        model=body.model,
+    )
+    return report
+
+
+@router.get("/reviews")
+def list_reviews(user_id: int = 1, limit: int = 20, offset: int = 0):
+    """返回历史复盘报告列表，最新的在前"""
+    return query_all(
+        """SELECT id, report_type, period_start, period_end, transactions_count,
+                  summary, score_data, created_at
+           FROM review_reports
+           WHERE user_id = ?
+           ORDER BY created_at DESC
+           LIMIT ? OFFSET ?""",
+        (user_id, limit, offset),
+    )
