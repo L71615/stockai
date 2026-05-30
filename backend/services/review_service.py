@@ -2,6 +2,7 @@
 
 数据聚合 -> prompt 构建 -> AI 调用 -> JSON 解析 -> 降级处理
 """
+import asyncio
 import json
 import re
 
@@ -270,3 +271,105 @@ def _normalize_response(data: dict, raw_text: str) -> dict:
         "raw": raw_text,
         "error": "error" in data,
     }
+
+
+async def generate_review_report(
+    user_id: int = 1,
+    provider: str = "",
+    api_key: str = "",
+    model: str = "",
+) -> dict:
+    """Top-level: aggregate → check cold start → prompt → AI call → parse → store
+
+    Returns the parsed report dict. Stores result in review_reports table.
+    """
+    from services.ai_service import ai_chat
+
+    # Step 1: Aggregate
+    data = aggregate_transactions(user_id)
+
+    # Step 2: Cold start check
+    if data["total_trades"] < 5:
+        return {
+            "dimensions": [],
+            "summary": f"已有 {data['total_trades']} 笔交易，至少需要 5 笔交易才能生成 AI 复盘报告。继续记录你的交易吧！",
+            "suggestions": [],
+            "cold_start": True,
+            "transactions_count": data["total_trades"],
+            "raw": "",
+        }
+
+    # Step 3: Build prompt
+    prompt = build_review_prompt(data)
+
+    # Step 4: Call AI with retry + fallback
+    raw = ""
+    try:
+        raw = await asyncio.wait_for(
+            ai_chat(
+                prompt,
+                provider=provider,
+                api_key=api_key,
+                model=model,
+                system_prompt="你是专业的 A 股投资教练。请严格按 JSON 格式输出分析报告。",
+            ),
+            timeout=60.0,
+        )
+    except asyncio.TimeoutError:
+        # Retry once
+        try:
+            raw = await asyncio.wait_for(
+                ai_chat(
+                    prompt,
+                    provider=provider,
+                    api_key=api_key,
+                    model=model,
+                    system_prompt="你是专业的 A 股投资教练。请严格按 JSON 格式输出分析报告。",
+                ),
+                timeout=60.0,
+            )
+        except asyncio.TimeoutError:
+            raw = ""
+    except Exception:
+        raw = ""
+
+    # Step 5: Parse
+    report = parse_review_response(raw)
+    report["transactions_count"] = data["total_trades"]
+    report["cold_start"] = False
+    report["total_pnl"] = data["total_pnl"]
+    report["win_rate"] = data["win_rate"]
+    report["avg_hold_days"] = data["avg_hold_days"]
+    report["win_count"] = data["win_count"]
+    report["lose_count"] = data["lose_count"]
+    dims = report.get("dimensions", [])
+    if dims:
+        avg_score = round(sum(d.get("score", 0) for d in dims) / len(dims))
+    else:
+        avg_score = 0
+    report["avg_score"] = avg_score
+
+    # Step 6: Store in DB
+    try:
+        from database import execute
+        import json as _json
+
+        execute(
+            """INSERT INTO review_reports (user_id, report_type, transactions_count, dimensions, ai_response, summary, score_data)
+               VALUES (?, 'daily', ?, ?, ?, ?, ?)""",
+            (
+                user_id,
+                data["total_trades"],
+                _json.dumps([d["id"] for d in report.get("dimensions", [])], ensure_ascii=False),
+                raw,
+                report["summary"],
+                _json.dumps(
+                    {d["id"]: d.get("score", 0) for d in report.get("dimensions", [])},
+                    ensure_ascii=False,
+                ),
+            ),
+        )
+    except Exception:
+        pass  # Non-critical: report is still returned even if storage fails
+
+    return report

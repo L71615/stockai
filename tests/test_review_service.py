@@ -132,3 +132,28 @@ class TestParseReviewResponse:
         raw = '{"summary":"test","dimensions":[{"id":"a" "title":"T" "summary":"S" "detail":"D" "score":80}] "suggestions":[]}'
         result = parse_review_response(raw)
         assert result["summary"] == "test"
+
+
+import pytest
+
+
+@pytest.mark.asyncio
+async def test_generate_report_returns_data():
+    """Integration-ish test — calls real AI, may be slow."""
+    from services.review_service import generate_review_report
+
+    result = await generate_review_report(user_id=1)
+    assert "summary" in result
+    assert "dimensions" in result
+    assert "suggestions" in result
+    assert len(result["summary"]) > 0
+
+
+@pytest.mark.asyncio
+async def test_generate_report_cold_start():
+    """Verify cold start behavior when < 5 transactions exist"""
+    from services.review_service import generate_review_report
+
+    result = await generate_review_report(user_id=99999)
+    assert result["cold_start"] is True
+    assert "至少需要 5 笔交易" in result["summary"]
