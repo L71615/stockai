@@ -231,6 +231,19 @@ def init_db():
             conn.execute("ALTER TABLE dca_plans ADD COLUMN last_reminded TEXT DEFAULT ''")
         except Exception:
             pass
+        conn.execute("""CREATE TABLE IF NOT EXISTS review_reports (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL DEFAULT 1,
+            report_type TEXT NOT NULL DEFAULT 'daily',
+            period_start TEXT,
+            period_end TEXT,
+            transactions_count INTEGER DEFAULT 0,
+            dimensions TEXT NOT NULL DEFAULT '[]',
+            ai_response TEXT,
+            summary TEXT,
+            score_data TEXT DEFAULT '{}',
+            created_at TEXT DEFAULT (datetime('now','localtime'))
+        )""")
         conn.commit()
     finally:
         conn.close()
