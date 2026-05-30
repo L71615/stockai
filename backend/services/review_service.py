@@ -102,3 +102,91 @@ def aggregate_transactions(user_id: int = 1) -> dict:
         "top_losers": top_losers,
         "holdings_summary": holdings_summary,
     }
+
+
+def build_review_prompt(data: dict) -> str:
+    """Build the structured review prompt with embedded JSON schema"""
+    holdings_text = "\n".join(
+        f"- {h['stock_code']} {h['stock_name']}（{h.get('asset_type','stock')}），"
+        f"持仓{h['quantity']}股，成本{h['cost_price']}元"
+        for h in data["holdings_summary"]
+    ) if data["holdings_summary"] else "暂无持仓"
+
+    gainers_text = "\n".join(
+        f"- {g['stock_code']} {g.get('stock_name','')}：盈亏 +{g['pnl']}元，"
+        f"持有{g['hold_days']}天"
+        for g in data["top_gainers"]
+    ) if data["top_gainers"] else "暂无盈利交易"
+
+    losers_text = "\n".join(
+        f"- {l['stock_code']} {l.get('stock_name','')}：盈亏 {l['pnl']}元，"
+        f"持有{l['hold_days']}天"
+        for l in data["top_losers"]
+    ) if data["top_losers"] else "暂无亏损交易"
+
+    if data["total_trades"] < 5:
+        trades_note = f"（仅 {data['total_trades']} 笔交易，数据不足，分析可能不完整）"
+    else:
+        trades_note = f"共 {data['total_trades']} 笔交易"
+
+    prompt = f"""你是一位专业的 A 股投资教练。请基于以下用户的交易数据，生成一份结构化的投资复盘报告。
+
+## 用户交易数据
+- 总交易笔数：{data['total_trades']} {trades_note}
+- 胜率：{data['win_rate']}%（{data['win_count']}胜/{data['lose_count']}负）
+- 总盈亏：{data['total_pnl']}元
+- 平均持有天数：{data['avg_hold_days']}天
+
+### 当前持仓
+{holdings_text}
+
+### 盈利最大的 3 笔
+{gainers_text}
+
+### 亏损最大的 3 笔
+{losers_text}
+
+## 输出要求
+
+请严格按以下 JSON 结构输出（不要包含 markdown 代码块标记，直接输出 JSON）：
+
+{{
+  "dimensions": [
+    {{
+      "id": "pnl_attribution",
+      "title": "盈亏归因",
+      "summary": "一句话总结本期盈亏情况和归因（选股/择时/大盘）",
+      "detail": "详细分析盈利和亏损的主要原因，对比同期大盘指数表现",
+      "score": 0-100 的整数评分
+    }},
+    {{
+      "id": "behavior_pattern",
+      "title": "行为模式",
+      "summary": "一句话总结交易行为特征（追涨/杀跌/持仓时间/集中度）",
+      "detail": "分析追涨杀跌频率、持仓集中度(top 3占比)、平均持有天数是否合理",
+      "score": 0-100 的整数评分
+    }},
+    {{
+      "id": "risk_alert",
+      "title": "风险提示",
+      "summary": "一句话总结当前风险状况",
+      "detail": "分析单票仓位是否过重(>30%)、行业集中度、是否满仓/空仓极端状态",
+      "score": 0-100 的整数评分
+    }}
+  ],
+  "summary": "总体评估，一段话总结（50-100字）",
+  "suggestions": [
+    {{
+      "text": "具体的改进建议",
+      "reasoning": "为什么提出这条建议，基于什么数据或行为模式"
+    }}
+  ]
+}}
+
+请确保：
+1. 输出是有效的 JSON（不要 markdown 代码块）
+2. 每个维度的 detail 至少 50 字
+3. 给出至少 3 条改进建议，每条必须附带 reasoning
+4. 建议要具体、可执行，不要泛泛而谈
+5. 如果你不知道该说什么，输出 {{"error": "数据不足，无法生成分析"}}"""
+    return prompt
