@@ -87,3 +87,48 @@ class TestBuildReviewPrompt:
         prompt = build_review_prompt(data)
         assert len(prompt) > 0
         assert "暂无" in prompt
+
+
+class TestParseReviewResponse:
+    def test_parses_valid_json(self):
+        from services.review_service import parse_review_response
+        raw = '{"summary":"总体评估","dimensions":[{"id":"a","title":"T","summary":"S","detail":"D","score":80}],"suggestions":[{"text":"建议","reasoning":"理由"}]}'
+        result = parse_review_response(raw)
+        assert result["summary"] == "总体评估"
+        assert len(result["dimensions"]) == 1
+        assert result["dimensions"][0]["score"] == 80
+        assert result["raw"] == raw
+
+    def test_strips_markdown_code_block(self):
+        from services.review_service import parse_review_response
+        raw = '```json\n{"summary":"test","dimensions":[],"suggestions":[]}\n```'
+        result = parse_review_response(raw)
+        assert result["summary"] == "test"
+
+    def test_extracts_json_from_mixed_text(self):
+        from services.review_service import parse_review_response
+        raw = 'Here is the report: {"summary":"mixed","dimensions":[],"suggestions":[]} end'
+        result = parse_review_response(raw)
+        assert result["summary"] == "mixed"
+
+    def test_fallback_on_invalid_json(self):
+        from services.review_service import parse_review_response
+        raw = '这是一段无法解析的中文文本，没有 JSON 结构'
+        result = parse_review_response(raw)
+        assert result["summary"] == "AI 返回格式异常，以下为原始内容"
+        assert result["raw"] == raw
+        assert result["dimensions"] == []
+        assert result["suggestions"] == []
+
+    def test_fallback_on_empty_response(self):
+        from services.review_service import parse_review_response
+        result = parse_review_response("")
+        assert result["summary"] == "AI 分析暂不可用，请稍后重试"
+        assert result["error"] is True
+
+    def test_repairs_common_json_errors(self):
+        from services.review_service import parse_review_response
+        # Missing comma between array elements
+        raw = '{"summary":"test","dimensions":[{"id":"a" "title":"T" "summary":"S" "detail":"D" "score":80}] "suggestions":[]}'
+        result = parse_review_response(raw)
+        assert result["summary"] == "test"

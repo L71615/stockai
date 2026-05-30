@@ -2,6 +2,9 @@
 
 数据聚合 -> prompt 构建 -> AI 调用 -> JSON 解析 -> 降级处理
 """
+import json
+import re
+
 from database import query_all
 
 
@@ -190,3 +193,80 @@ def build_review_prompt(data: dict) -> str:
 4. 建议要具体、可执行，不要泛泛而谈
 5. 如果你不知道该说什么，输出 {{"error": "数据不足，无法生成分析"}}"""
     return prompt
+
+
+def parse_review_response(raw: str) -> dict:
+    """Parse AI response into structured dict, with progressive fallback"""
+    if not raw or not raw.strip():
+        return {
+            "dimensions": [],
+            "summary": "AI 分析暂不可用，请稍后重试",
+            "suggestions": [],
+            "error": True,
+            "raw": "",
+        }
+
+    text = raw.strip()
+
+    # Step 1: Strip markdown code blocks
+    if text.startswith("```"):
+        lines = text.split("\n")
+        # Remove opening ```json or ```
+        if lines[0].startswith("```"):
+            lines = lines[1:]
+        # Remove closing ```
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+        text = "\n".join(lines)
+
+    # Step 2: Try direct parse
+    try:
+        data = json.loads(text)
+        return _normalize_response(data, raw)
+    except json.JSONDecodeError:
+        pass
+
+    # Step 3: Extract JSON fragment between { and }
+    match = re.search(r'\{.*\}', text, re.DOTALL)
+    if match:
+        try:
+            data = json.loads(match.group(0))
+            return _normalize_response(data, raw)
+        except json.JSONDecodeError:
+            pass
+
+    # Step 4: Repair common errors
+    if match:
+        repaired = match.group(0)
+        # Fix missing commas between } and "
+        repaired = re.sub(r'\}\s*"', '}, "', repaired)
+        # Fix missing commas between ] and "
+        repaired = re.sub(r'\]\s*"', '], "', repaired)
+        # Fix missing commas between " and " (adjacent strings in objects)
+        repaired = re.sub(r'"\s+"', '", "', repaired)
+        # Fix missing commas between number and "
+        repaired = re.sub(r'(\d+)\s+"', r'\1, "', repaired)
+        try:
+            data = json.loads(repaired)
+            return _normalize_response(data, raw)
+        except json.JSONDecodeError:
+            pass
+
+    # Step 5: Fallback — return raw text
+    return {
+        "dimensions": [],
+        "summary": "AI 返回格式异常，以下为原始内容",
+        "suggestions": [],
+        "raw": raw,
+    }
+
+
+def _normalize_response(data: dict, raw_text: str) -> dict:
+    """Ensure the parsed response has the expected fields"""
+    return {
+        "dimensions": data.get("dimensions", []),
+        "summary": data.get("summary", ""),
+        "suggestions": data.get("suggestions", []),
+        "raw": raw_text,
+        "error": "error" in data,
+    }
