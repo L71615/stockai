@@ -45,6 +45,8 @@ if FRONTEND_DIR.exists():
 
 @app.on_event("startup")
 def startup():
+    from database import init_db
+    init_db()
     from services.scheduler import start_dca_reminder_thread
     start_dca_reminder_thread()
 

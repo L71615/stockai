@@ -182,10 +182,9 @@ def get_index_quote(code: str) -> Optional[dict]:
 
 
 def get_global_indices() -> list[dict]:
-    """获取全球主要指数行情（A 股三大指数 + 海外指数返回空值兜底）"""
+    """获取 A 股三大指数行情（使用腾讯 API）"""
     results = []
 
-    # A 股三大指数
     for idx_code, name, region in [
         ("000001", "上证指数", "中国"),
         ("399001", "深证成指", "中国"),
@@ -201,25 +200,6 @@ def get_global_indices() -> list[dict]:
                 "change": q.get("change"),
                 "change_pct": q.get("change_pct"),
             })
-        else:
-            results.append({
-                "code": idx_code, "name": name, "region": region,
-                "price": None, "change": None, "change_pct": None,
-            })
-
-    # 海外指数：返回占位（腾讯不支持海外指数实时行情）
-    overseas = [
-        ("HSI", "恒生指数", "中国香港"),
-        ("NDX", "纳斯达克", "美国"),
-        ("SPX", "标普500", "美国"),
-        ("DJIA", "道琼斯", "美国"),
-        ("N225", "日经225", "日本"),
-    ]
-    for code, name, region in overseas:
-        results.append({
-            "code": code, "name": name, "region": region,
-            "price": None, "change": None, "change_pct": None,
-        })
 
     return results
 

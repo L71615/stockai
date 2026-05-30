@@ -79,7 +79,9 @@ async def chat_with_claude(messages: list[dict], *, system_prompt: str = "", api
             model=m, max_tokens=4096,
             system=system_prompt, messages=messages,
         )
-        return response.content[0].text
+        if response.content and len(response.content) > 0:
+            return response.content[0].text
+        return "（Claude 返回空响应）"
     except ImportError:
         return "（请先安装 anthropic SDK: pip install anthropic）"
     except Exception as e:

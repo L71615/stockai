@@ -891,26 +891,16 @@ _INDEX_CACHED_DATA: list[dict] = []
 
 @router.get("/indices/global")
 def get_global_indices():
-    """获取全球主要指数行情（AKShare 优先，东方财富 ulist 兜底）"""
+    """获取全球主要指数行情（东方财富 ulist 优先，AKShare 补充）"""
     global _INDEX_BATCH_EXPIRY, _INDEX_CACHED_DATA
     now = time.time()
     if _INDEX_CACHED_DATA and now < _INDEX_BATCH_EXPIRY:
         return _INDEX_CACHED_DATA
 
     results = []
+    code_set: set[str] = set()
 
-    # 优先 AKShare
-    try:
-        from services.akshare_adapter import get_global_indices as ak_indices
-        results = ak_indices()
-        if results:
-            _INDEX_CACHED_DATA = results
-            _INDEX_BATCH_EXPIRY = now + _INDEX_CACHE_TTL
-            return results
-    except Exception as e:
-        print(f"[AKShare Index Error]: {e}")
-
-    # 兜底：东方财富 ulist API
+    # 1. 东方财富 ulist API — 覆盖全球15个主要指数
     try:
         secids = ",".join([idx["code"] for idx in _GLOBAL_INDICES])
         url = f"https://push2.eastmoney.com/api/qt/ulist.np/get?fltt=2&secids={secids}&fields=f2,f3,f4,f12,f14"
@@ -921,6 +911,7 @@ def get_global_indices():
             code = d.get("f12", "")
             info = code_map.get(code)
             if info:
+                code_set.add(code)
                 results.append({
                     "code": code,
                     "name": info["name"],
@@ -930,8 +921,30 @@ def get_global_indices():
                     "change_pct": d.get("f3"),
                 })
     except Exception as e:
-        print(f"[Global Index Error]: {e}")
-        return _INDEX_CACHED_DATA or []
+        print(f"[Global Index Error] eastmoney: {e}")
+
+    # 2. AKShare 补充 — 用腾讯 API 填充 eastmoney 缺失或不支持的数据
+    try:
+        from services.akshare_adapter import get_global_indices as ak_indices
+        for item in ak_indices():
+            code = item["code"]
+            if code not in code_set and item.get("price") is not None:
+                results.append(item)
+    except Exception as e:
+        print(f"[Global Index Error] akshare: {e}")
+
+    # 3. 兜底：对于没有任何数据源的指数，用 _GLOBAL_INDICES 作为占位
+    for idx in _GLOBAL_INDICES:
+        short_code = idx["code"].split(".")[-1]
+        if short_code not in {r["code"] for r in results}:
+            results.append({
+                "code": short_code,
+                "name": idx["name"],
+                "region": idx["region"],
+                "price": None,
+                "change": None,
+                "change_pct": None,
+            })
 
     order_map = {idx["code"].split(".")[-1]: i for i, idx in enumerate(_GLOBAL_INDICES)}
     results.sort(key=lambda x: order_map.get(x["code"], 99))

@@ -71,6 +71,100 @@ def init_db():
     conn = get_db()
     try:
         conn.execute("PRAGMA foreign_keys=ON")
+
+        # 核心表
+        conn.execute("""CREATE TABLE IF NOT EXISTS users (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            username    TEXT NOT NULL UNIQUE,
+            email       TEXT NOT NULL UNIQUE,
+            password    TEXT NOT NULL,
+            phone       TEXT,
+            avatar_url  TEXT,
+            created_at  TEXT DEFAULT (datetime('now','localtime')),
+            updated_at  TEXT DEFAULT (datetime('now','localtime'))
+        )""")
+        conn.execute("""CREATE TABLE IF NOT EXISTS holdings (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            stock_code  TEXT NOT NULL,
+            stock_name  TEXT,
+            market      TEXT,
+            asset_type  TEXT DEFAULT '',
+            quantity    INTEGER NOT NULL,
+            cost_price  REAL NOT NULL,
+            shares      REAL,
+            created_at  TEXT DEFAULT (datetime('now','localtime')),
+            updated_at  TEXT DEFAULT (datetime('now','localtime'))
+        )""")
+        conn.execute("""CREATE TABLE IF NOT EXISTS watchlist (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            stock_code  TEXT NOT NULL,
+            stock_name  TEXT,
+            market      TEXT,
+            asset_type  TEXT DEFAULT '',
+            added_at    TEXT DEFAULT (datetime('now','localtime')),
+            UNIQUE(user_id, stock_code)
+        )""")
+        conn.execute("""CREATE TABLE IF NOT EXISTS transactions (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            stock_code  TEXT NOT NULL,
+            stock_name  TEXT,
+            asset_type  TEXT DEFAULT '',
+            direction   TEXT NOT NULL,
+            price       REAL NOT NULL,
+            quantity    INTEGER NOT NULL,
+            amount      REAL NOT NULL,
+            fee         REAL DEFAULT 0,
+            traded_at   TEXT NOT NULL,
+            note        TEXT,
+            created_at  TEXT DEFAULT (datetime('now','localtime'))
+        )""")
+        conn.execute("""CREATE TABLE IF NOT EXISTS ai_conversations (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            title       TEXT,
+            created_at  TEXT DEFAULT (datetime('now','localtime'))
+        )""")
+        conn.execute("""CREATE TABLE IF NOT EXISTS ai_messages (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            conversation_id INTEGER NOT NULL REFERENCES ai_conversations(id) ON DELETE CASCADE,
+            role            TEXT NOT NULL,
+            content         TEXT NOT NULL,
+            model           TEXT,
+            tokens_used     INTEGER,
+            created_at      TEXT DEFAULT (datetime('now','localtime'))
+        )""")
+        conn.execute("""CREATE TABLE IF NOT EXISTS agents (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            name            TEXT NOT NULL,
+            description     TEXT DEFAULT '',
+            system_prompt   TEXT DEFAULT '',
+            tools           TEXT DEFAULT '[]',
+            created_at      TEXT DEFAULT (datetime('now','localtime')),
+            updated_at      TEXT DEFAULT (datetime('now','localtime'))
+        )""")
+        conn.execute("""CREATE TABLE IF NOT EXISTS installed_skills (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            skill_id    TEXT NOT NULL,
+            skill_name  TEXT,
+            version     TEXT,
+            enabled     INTEGER DEFAULT 1,
+            config      TEXT DEFAULT '{}',
+            installed_at TEXT DEFAULT (datetime('now','localtime')),
+            UNIQUE(user_id, skill_id)
+        )""")
+        conn.execute("""CREATE TABLE IF NOT EXISTS price_alerts (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            stock_code  TEXT NOT NULL,
+            alert_type  TEXT NOT NULL,
+            target_value REAL NOT NULL,
+            triggered   INTEGER DEFAULT 0,
+            created_at  TEXT DEFAULT (datetime('now','localtime'))
+        )""")
         conn.execute("""CREATE TABLE IF NOT EXISTS dca_plans (
             id              INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -108,15 +202,31 @@ def init_db():
             key             TEXT PRIMARY KEY,
             value           TEXT NOT NULL
         )""")
-        # 为 holdings 添加 portfolio_id（SQLite 不支持 IF NOT EXISTS for ALTER）
-        try:
-            conn.execute("ALTER TABLE holdings ADD COLUMN portfolio_id INTEGER REFERENCES portfolios(id) ON DELETE SET NULL")
-        except Exception:
-            pass
-        try:
-            conn.execute("ALTER TABLE holdings ADD COLUMN journal TEXT DEFAULT ''")
-        except Exception:
-            pass
+        # 向后兼容：为已有数据库添加缺失字段
+        for col, col_def in [
+            ("asset_type", "TEXT DEFAULT ''"),
+            ("shares", "REAL"),
+            ("portfolio_id", "INTEGER REFERENCES portfolios(id) ON DELETE SET NULL"),
+            ("journal", "TEXT DEFAULT ''"),
+        ]:
+            try:
+                conn.execute(f"ALTER TABLE holdings ADD COLUMN {col} {col_def}")
+            except Exception:
+                pass
+        for col, col_def in [
+            ("asset_type", "TEXT DEFAULT ''"),
+        ]:
+            try:
+                conn.execute(f"ALTER TABLE watchlist ADD COLUMN {col} {col_def}")
+            except Exception:
+                pass
+        for col, col_def in [
+            ("asset_type", "TEXT DEFAULT ''"),
+        ]:
+            try:
+                conn.execute(f"ALTER TABLE transactions ADD COLUMN {col} {col_def}")
+            except Exception:
+                pass
         try:
             conn.execute("ALTER TABLE dca_plans ADD COLUMN last_reminded TEXT DEFAULT ''")
         except Exception:

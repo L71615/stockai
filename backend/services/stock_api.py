@@ -1,30 +1,13 @@
-"""StockAI — 股市数据服务（多源适配器模式，借鉴 DSA 的 data_provider 设计）
+"""StockAI — 股市数据服务（多源适配器模式）
 
-数据源优先级：东方财富 > akshare > 新浪
+数据源优先级：AKShare > 东方财富
 每个数据源实现相同的 fetch_quote(code) 接口，挂了自动降级。
 """
 
 import httpx
 from typing import Optional
 
-
-# ==================== 股票代码工具 ====================
-
-def normalize_market(code: str) -> str:
-    """判断股票所属市场"""
-    if code.startswith(("60", "68")):
-        return "SH"
-    elif code.startswith(("00", "30", "002")):
-        return "SZ"
-    elif code.startswith(("4", "8")):
-        return "BJ"
-    return "SZ"
-
-
-def to_eastmoney_secid(code: str) -> str:
-    """转为东方财富 secid 格式"""
-    m = "1" if normalize_market(code) == "SH" else "0"
-    return f"{m}.{code}"
+from services.utils import normalize_market, to_eastmoney_secid
 
 
 # ==================== 数据源适配器 ====================
