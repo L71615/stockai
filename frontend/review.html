@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI 投资复盘 — StockAI</title>
+<link rel="stylesheet" href="css/common.css">
+<style>
+  .review-container { max-width: 900px; margin: 0 auto; }
+  .review-hero {
+    display: flex; gap: 20px; margin-bottom: 24px; flex-wrap: wrap;
+  }
+  .review-hero-card {
+    flex: 1; min-width: 180px;
+    background: var(--bg-card); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 20px;
+  }
+  .review-hero-card .label {
+    font-size: 11px; color: var(--text-muted);
+    text-transform: uppercase; letter-spacing: .06em; margin-bottom: 6px;
+  }
+  .review-hero-card .value {
+    font-size: 24px; font-weight: 700; font-family: var(--font-mono);
+  }
+  .review-hero-card .value.up { color: var(--red); }
+  .review-hero-card .value.down { color: var(--green); }
+
+  .dimension-panel {
+    background: var(--bg-card); border: 1px solid var(--border);
+    border-radius: var(--radius); margin-bottom: 12px; overflow: hidden;
+  }
+  .dimension-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 16px 20px; cursor: pointer; user-select: none;
+    transition: background .15s;
+  }
+  .dimension-header:hover { background: var(--bg-hover); }
+  .dimension-header h3 { font-size: 15px; font-weight: 600; margin: 0; }
+  .dimension-header .dim-score {
+    font-size: 13px; font-weight: 600; padding: 2px 10px;
+    border-radius: 9999px; min-width: 40px; text-align: center;
+  }
+  .dim-score.high { background: rgba(38,166,154,.15); color: var(--green); }
+  .dim-score.mid { background: rgba(245,158,11,.15); color: #f59e0b; }
+  .dim-score.low { background: rgba(239,83,80,.15); color: var(--red); }
+  .dimension-body { padding: 0 20px 20px; display: none; }
+  .dimension-panel.open .dimension-body { display: block; }
+  .dimension-body .dim-summary {
+    font-size: 14px; color: var(--text-secondary); margin-bottom: 12px;
+    line-height: 1.6;
+  }
+  .dimension-body .dim-detail {
+    font-size: 13px; color: var(--text-muted); line-height: 1.7;
+  }
+  .dim-chevron { transition: transform .2s; }
+  .dimension-panel.open .dim-chevron { transform: rotate(180deg); }
+
+  .suggestions-section { margin-top: 24px; }
+  .suggestion-card {
+    background: var(--bg-card); border: 1px solid var(--border);
+    border-left: 3px solid var(--accent); border-radius: 0 var(--radius) var(--radius) 0;
+    padding: 16px 20px; margin-bottom: 10px;
+  }
+  .suggestion-card .sug-text {
+    font-size: 14px; font-weight: 600; color: var(--text); margin-bottom: 8px;
+  }
+  .suggestion-card .sug-reasoning {
+    font-size: 13px; color: var(--text-muted); font-style: italic;
+    padding: 10px 14px; background: var(--bg-primary); border-radius: var(--radius-sm);
+    display: none;
+  }
+  .suggestion-card .sug-reasoning::before {
+    content: "为什么这么说? "; font-style: normal; font-weight: 500; color: #c4b5fd;
+  }
+  .suggestion-card.open .sug-reasoning { display: block; }
+  .sug-toggle {
+    font-size: 12px; color: var(--accent-light); cursor: pointer;
+    background: none; border: none; padding: 4px 0; font-family: var(--font);
+  }
+  .sug-toggle:hover { text-decoration: underline; }
+
+  .cold-start-card {
+    text-align: center; padding: 48px 24px;
+    background: var(--bg-card); border: 1px dashed var(--border);
+    border-radius: var(--radius);
+  }
+  .cold-start-card h3 { font-size: 18px; margin-bottom: 8px; }
+  .cold-start-card p { color: var(--text-secondary); margin-bottom: 16px; }
+  .cold-progress { margin: 16px 0; }
+  .cold-progress-bar {
+    height: 6px; background: var(--bg-primary); border-radius: 3px; overflow: hidden;
+  }
+  .cold-progress-fill {
+    height: 100%; background: var(--accent); border-radius: 3px; transition: width .5s;
+  }
+  .cold-progress-label { font-size: 12px; color: var(--text-muted); margin-top: 6px; }
+
+  .report-history { margin-top: 32px; padding-top: 24px; border-top: 1px solid var(--border); }
+  .report-history h3 { font-size: 14px; color: var(--text-secondary); margin-bottom: 12px; }
+  .history-item {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 10px 16px; border-radius: var(--radius-sm); cursor: pointer;
+    transition: background .15s;
+  }
+  .history-item:hover { background: var(--bg-hover); }
+  .history-item .hi-date { font-size: 13px; color: var(--text); }
+  .history-item .hi-summary { font-size: 13px; color: var(--text-secondary); max-width: 500px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .history-item .hi-count { font-size: 12px; color: var(--text-muted); }
+
+  @media (max-width: 768px) {
+    .review-hero { flex-direction: column; gap: 10px; }
+    .review-hero-card { min-width: auto; }
+  }
+</style>
+</head>
+<body>
+<div class="app-layout">
+  <aside class="sidebar" id="sidebar"></aside>
+  <main class="main">
+    <header class="header" id="header"></header>
+    <div class="content">
+      <div class="review-container" id="reviewContainer"></div>
+    </div>
+  </main>
+</div>
+<nav class="mobile-nav" id="mobileNav"></nav>
+<script src="js/common.js"></script>
+<script>
+// ==================== State ====================
+var state = {
+  report: null,
+  reports: [],
+  loading: true,
+  error: null,
+};
+
+// ==================== Init ====================
+document.getElementById('sidebar').innerHTML = renderSidebar('review');
+document.getElementById('header').innerHTML = renderHeader('AI 投资复盘');
+document.getElementById('mobileNav').innerHTML = renderMobileNav('review');
+
+loadLatestReport();
+loadHistory();
+
+// ==================== Data Loading ====================
+async function loadLatestReport() {
+  state.loading = true;
+  render();
+  try {
+    var res = await apiPost('/api/stocks/review/structured', { report_type: 'daily' });
+    state.report = res;
+    state.error = null;
+  } catch (err) {
+    state.error = err;
+    state.report = null;
+  }
+  state.loading = false;
+  render();
+}
+
+async function loadHistory() {
+  try {
+    state.reports = await apiGet('/api/stocks/reviews?limit=10');
+  } catch (err) {
+    state.reports = [];
+  }
+  renderHistory();
+}
+
+async function generateReport() {
+  state.loading = true;
+  state.error = null;
+  render();
+  try {
+    var res = await apiPost('/api/stocks/review/structured', { report_type: 'daily' });
+    state.report = res;
+  } catch (err) {
+    state.error = err;
+  }
+  state.loading = false;
+  render();
+  loadHistory();
+}
+
+// ==================== Render ====================
+function render() {
+  var c = document.getElementById('reviewContainer');
+
+  if (state.loading) {
+    showLoading(c);
+    return;
+  }
+  if (state.error) {
+    showError(c, state.error, generateReport);
+    return;
+  }
+  if (!state.report) {
+    showEmpty(c, '点击生成你的第一份 AI 复盘报告', '生成复盘报告');
+    var btn = c.querySelector('.btn');
+    if (btn) btn.onclick = generateReport;
+    return;
+  }
+  if (state.report.cold_start) {
+    renderColdStart(c);
+    return;
+  }
+  renderReport(c);
+}
+
+function renderColdStart(c) {
+  var count = state.report.transactions_count || 0;
+  var pct = Math.min(count / 5 * 100, 100);
+  c.innerHTML = `<div class="cold-start-card">
+    <h3>交易数据收集中</h3>
+    <p>已有 ${count} 笔交易记录，满 5 笔后 AI 将生成第一次复盘报告</p>
+    <div class="cold-progress">
+      <div class="cold-progress-bar"><div class="cold-progress-fill" style="width:${pct}%"></div></div>
+      <div class="cold-progress-label">${count} / 5 笔交易</div>
+    </div>
+    <a href="transactions.html" class="btn btn-primary" style="margin-top:16px">去添加交易记录</a>
+  </div>`;
+}
+
+function renderReport(c) {
+  var r = state.report;
+  var dims = (r.dimensions || []).map(function(d, i) {
+    var scoreClass = d.score >= 70 ? 'high' : d.score >= 40 ? 'mid' : 'low';
+    return `<div class="dimension-panel${i === 0 ? ' open' : ''}">
+      <div class="dimension-header" onclick="this.parentElement.classList.toggle('open')">
+        <h3>${d.title}</h3>
+        <div style="display:flex;align-items:center;gap:10px">
+          <span class="dim-score ${scoreClass}">${d.score}</span>
+          <svg class="dim-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+        </div>
+      </div>
+      <div class="dimension-body">
+        <div class="dim-summary">${escHtml(d.summary)}</div>
+        <div class="dim-detail">${escHtml(d.detail)}</div>
+      </div>
+    </div>`;
+  }).join('');
+
+  var suggestions = (r.suggestions || []).map(function(s) {
+    return `<div class="suggestion-card">
+      <div class="sug-text">${escHtml(s.text)}</div>
+      <button class="sug-toggle" onclick="var card=this.parentElement;card.classList.toggle('open');this.textContent=card.classList.contains('open')?'收起':'为什么这么说? →'">为什么这么说? →</button>
+      <div class="sug-reasoning">${escHtml(s.reasoning)}</div>
+    </div>`;
+  }).join('');
+
+  var pnlClass = r.total_pnl >= 0 ? 'up' : 'down';
+  var pnlSign = r.total_pnl >= 0 ? '+' : '';
+
+  c.innerHTML = `<div class="review-hero">
+    <div class="review-hero-card">
+      <div class="label">本期盈亏</div>
+      <div class="value ${pnlClass}">${pnlSign}${(r.total_pnl || 0).toLocaleString()}</div>
+    </div>
+    <div class="review-hero-card">
+      <div class="label">交易笔数</div>
+      <div class="value" style="color:var(--text)">${r.transactions_count || 0}</div>
+    </div>
+    <div class="review-hero-card">
+      <div class="label">综合评分</div>
+      <div class="value" style="color:var(--accent-light)">${r.avg_score || '—'}</div>
+    </div>
+  </div>
+
+  <div class="ai-insight-bar">
+    <div class="ai-label">AI 投资教练</div>
+    <div class="ai-headline">${escHtml(r.summary || '')}</div>
+  </div>
+
+  ${dimensions}
+
+  <div class="suggestions-section">
+    <h3 style="margin-bottom:12px;font-size:16px">改进建议</h3>
+    ${suggestions || '<p style="color:var(--text-muted)">暂无建议</p>'}
+  </div>`;
+}
+
+function renderHistory() {
+  var container = document.getElementById('reviewContainer');
+  var existing = document.getElementById('reportHistory');
+  if (existing) existing.remove();
+  if (!state.reports || state.reports.length === 0) return;
+
+  var html = '<div class="report-history" id="reportHistory"><h3>历史报告</h3>' +
+    state.reports.map(function(rp) {
+      return `<div class="history-item" onclick="loadReportById(${rp.id})">
+        <span class="hi-date">${(rp.created_at || '').slice(0, 10)}</span>
+        <span class="hi-summary">${escHtml(rp.summary || '')}</span>
+        <span class="hi-count">${rp.transactions_count} 笔</span>
+      </div>`;
+    }).join('') + '</div>';
+
+  container.insertAdjacentHTML('beforeend', html);
+}
+
+function loadReportById(id) {
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+  generateReport();
+}
+
+function escHtml(s) {
+  if (!s) return '';
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+</script>
+</body>
+</html>
