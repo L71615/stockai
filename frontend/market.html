@@ -84,26 +84,43 @@ async function loadMarket() {
     const cardEls = [];
     for (const [region, items] of Object.entries(groups)) {
       cardEls.push(`<div class="region-divider">${region}</div>`);
-      items.forEach(idx => {
-        const cls = idx.change > 0 ? 'up' : idx.change < 0 ? 'down' : '';
-        const sign = idx.change > 0 ? '+' : '';
-        cardEls.push(`
-          <div class="idx-card">
-            <div class="idx-name">${idx.name}</div>
-            <div class="idx-code">${idx.code}</div>
-            <div class="idx-price ${cls}">${idx.price != null ? idx.price.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}) : '--'}</div>
-            <div class="idx-sub ${cls}">${sign}${idx.change != null ? idx.change.toFixed(2) : '--'} &nbsp; ${sign}${idx.change_pct != null ? idx.change_pct.toFixed(2) : '--'}%</div>
-          </div>
-        `);
+      items.forEach(function(idx) {
+        var price = idx.price || '—';
+        var chg = idx.change;
+        var changePct = idx.change_pct;
+        var cls = chg > 0 ? 'up' : chg < 0 ? 'down' : '';
+        var sign = chg > 0 ? '+' : '';
+        var priceDisplay = price === '—' ? '—' : Number(price).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+        var chgDisplay = chg != null ? sign + chg.toFixed(2) : '—';
+        var pctDisplay = changePct != null ? sign + changePct.toFixed(2) + '%' : '—';
+        cardEls.push('' +
+          '<div class="idx-card">' +
+            '<div class="idx-name">' + idx.name + '</div>' +
+            '<div class="idx-code">' + idx.code + '</div>' +
+            '<div class="idx-price ' + cls + '">' + priceDisplay + '</div>' +
+            '<div class="idx-sub ' + cls + '">' + chgDisplay + ' &nbsp; ' + pctDisplay + '</div>' +
+          '</div>'
+        );
       });
     }
 
-    container.innerHTML = `
-      <div class="indices-grid">${cardEls.join('')}</div>
-      <div class="update-info">实时数据 · 东方财富 · ${new Date().toLocaleString('zh-CN')}</div>
-    `;
+    container.innerHTML = [
+      '<div class="indices-grid">', cardEls.join(''), '</div>',
+      '<div class="update-info">实时数据 · 东方财富 · ', new Date().toLocaleString('zh-CN'), '</div>',
+      '<div id="freshnessIndicator" class="data-freshness" style="padding:8px 0"></div>',
+    ].join('');
+    renderFreshness();
   } catch (err) {
-    showError(container, err);
+    showError(container, err, loadMarket);
+  }
+}
+
+function renderFreshness() {
+  var el = document.getElementById('freshnessIndicator');
+  if (el) {
+    var now = new Date();
+    var time = now.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    el.innerHTML = '<span class="freshness-dot live"></span>最后更新于 ' + time;
   }
 }
 

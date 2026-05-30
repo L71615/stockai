@@ -46,13 +46,7 @@
           <button class="quick-cmd" onclick="quickSend('请根据今日最新的行业新闻分析我的持仓情况')">📰 持仓新闻分析</button>
         </div>
 
-        <div class="ai-messages" id="aiMessages" style="flex:1;max-height:none;">
-          <div class="ai-msg assistant">
-            你好！我是 StockAI 助手。<br><br>
-            请先在 <a href="settings.html">设置页</a> 配置 AI 服务商和 API Key。<br>
-            在 <a href="skills.html">Agent 工坊</a> 创建 Agent 后，可在此选择使用。
-          </div>
-        </div>
+        <div class="ai-messages" id="aiMessages" style="flex:1;max-height:none;"></div>
 
         <div class="ai-input-row">
           <input type="text" id="aiInput" placeholder="输入你的问题…">
@@ -113,26 +107,30 @@ function addMessage(text, role) {
 
 function quickSend(msg) {
   document.getElementById('aiInput').value = msg;
-  handleSend();
+  sendMessage();
 }
 
-async function handleSend() {
-  const input = document.getElementById('aiInput');
-  const msg = input.value.trim();
+async function sendMessage() {
+  var input = document.getElementById('aiInput');
+  var msg = input.value.trim();
   if (!msg) return;
-  addMessage(msg, 'user');
+
+  var container = document.getElementById('aiMessages');
+  appendMessage('user', msg);
   input.value = '';
 
-  const cfg = getAIConfig();
-  if (!cfg.apiKey) {
-    addMessage('请先在 <a href="settings.html">设置页</a> 配置 API Key', 'assistant');
-    return;
-  }
+  // Show loading skeleton
+  var loadingEl = document.createElement('div');
+  loadingEl.className = 'ai-msg ai-loading';
+  loadingEl.innerHTML = '<div class="skeleton" style="height:16px;width:60%"></div><div class="skeleton" style="height:16px;width:40%;margin-top:8px"></div>';
+  container.appendChild(loadingEl);
+  container.scrollTop = container.scrollHeight;
 
   try {
-    const data = await apiPost('/api/ai/chat', {
+    var cfg = getAIConfig();
+    var res = await apiPost('/api/ai/chat', {
       message: msg,
-      conversationId,
+      conversationId: window._aiConversationId || null,
       agentId: currentAgentId,
       provider: cfg.provider,
       apiKey: cfg.apiKey,
@@ -140,19 +138,46 @@ async function handleSend() {
       baseUrl: cfg.baseUrl || '',
       systemPrompt: currentAgentPrompt,
     });
-    conversationId = data.conversationId;
-    addMessage(data.reply, 'assistant');
-  } catch(err) {
-    addMessage('发送失败: ' + err.message, 'assistant');
+    loadingEl.remove();
+    window._aiConversationId = res.conversationId;
+    appendMessage('assistant', res.reply || res.message || res);
+  } catch (err) {
+    loadingEl.remove();
+    var errEl = document.createElement('div');
+    errEl.className = 'ai-msg error';
+    errEl.innerHTML = '<p>AI 回复失败: ' + err.message + '</p><button class="btn btn-retry" onclick="this.parentElement.remove();sendMessage()">重试</button>';
+    container.appendChild(errEl);
   }
 }
 
-document.getElementById('aiSend').addEventListener('click', handleSend);
+function appendMessage(role, text) {
+  var el = document.getElementById('aiMessages');
+  var div = document.createElement('div');
+  div.className = 'ai-msg ' + role;
+  div.innerHTML = (text || '').replace(/\n/g, '<br>');
+  el.appendChild(div);
+  el.scrollTop = el.scrollHeight;
+  return div;
+}
+
+function showWelcome() {
+  var c = document.getElementById('aiMessages');
+  if (c && c.children.length === 0) {
+    c.innerHTML = '<div class="empty-state">' +
+      '<svg class="empty-icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>' +
+      '<p>你好！我是 StockAI 投资教练</p>' +
+      '<p style="font-size:13px;color:var(--text-muted);margin-top:4px">问我关于持仓分析、交易复盘、投资策略的问题</p>' +
+    '</div>';
+  }
+}
+
+document.getElementById('aiSend').addEventListener('click', sendMessage);
 document.getElementById('aiInput').addEventListener('keydown', e => {
-  if (e.key === 'Enter') handleSend();
+  if (e.key === 'Enter') sendMessage();
 });
 
 loadAgents();
+showWelcome();
 </script>
 </body>
 </html>

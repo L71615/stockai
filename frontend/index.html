@@ -42,6 +42,7 @@
     <div class="header"></div>
     <div class="content">
 
+      <div id="aiSummaryBar" style="display:none"></div>
       <div class="kpi-row" id="kpiRow"></div>
 
       <div class="card" id="diversCard" style="display:none;">
@@ -559,7 +560,7 @@ async function loadHoldings() {
     `;
     document.getElementById('quoteTime').textContent = '实时行情 · ' + new Date().toLocaleString('zh-CN');
 
-    Promise.all([loadDiversification(), loadPeerComparison()]);
+    Promise.all([loadDiversification(), loadPeerComparison(), loadAISummary()]);
 
   } catch (err) {
     showError(table, err);
@@ -1432,10 +1433,28 @@ async function confirmImport() {
   }
 }
 
+// ========================= AI 摘要 =========================
+
+async function loadAISummary() {
+  try {
+    var summaryRes = await apiPost('/api/stocks/review/structured', { report_type: 'daily' });
+    var bar = document.getElementById('aiSummaryBar');
+    if (bar && summaryRes.summary && !summaryRes.cold_start) {
+      bar.innerHTML = '<div class="ai-insight-bar">' +
+        '<div class="ai-label">AI 投资教练</div>' +
+        '<div class="ai-headline">' + summaryRes.summary + '</div>' +
+        '<div class="ai-meta">基于最近交易数据分析 &middot; <a href="review.html">查看完整报告 →</a></div>' +
+      '</div>';
+      bar.style.display = 'block';
+    }
+  } catch (e) {}
+}
+
 // ========================= 启动 =========================
 
 loadPortfolios();
 loadHoldings();
+loadAISummary();
 </script>
 </body>
 </html>
