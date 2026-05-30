@@ -55,15 +55,18 @@ transactions = [
     # Tencent —盈利
     ("00700",  "腾讯控股", "stock", "buy",  340.20, 200, "2026-03-15", "回调买入"),
     ("00700",  "腾讯控股", "stock", "buy",  365.00, 100, "2026-04-08", "加仓"),
+    ("00700",  "腾讯控股", "stock", "sell", 380.00, 150, "2026-05-20", "减仓止盈"),
     # 上证50ETF —盈利
     ("510050", "上证50ETF", "etf",  "buy",  2.78,   1000, "2026-03-01", "定投"),
     ("510050", "上证50ETF", "etf",  "buy",  2.91,   1000, "2026-04-01", "定投"),
+    ("510050", "上证50ETF", "etf",  "sell", 3.05,   500,  "2026-05-22", "部分止盈"),
     # Wuliangye —追涨亏损
     ("000858", "五粮液",   "stock", "buy",  175.00, 100, "2026-04-28", "追高买入"),
     ("000858", "五粮液",   "stock", "sell", 162.00, 50,  "2026-05-12", "止损"),
     # Hikvision —盈利
     ("002415", "海康威视", "stock", "buy",  33.80,  200, "2026-03-08", "回调买入"),
     ("002415", "海康威视", "stock", "buy",  36.50,  200, "2026-04-12", "加仓"),
+    ("002415", "海康威视", "stock", "sell", 38.20,  150, "2026-05-18", "部分止盈"),
     # 创业板ETF —定投
     ("159915", "创业板ETF", "etf",  "buy",  2.05,   1500, "2026-03-01", "定投"),
     ("159915", "创业板ETF", "etf",  "buy",  2.25,   1500, "2026-04-01", "定投"),
@@ -77,5 +80,5 @@ for code, name, atype, direction, price, qty, traded_at, note in transactions:
         (code, name, atype, direction, price, qty, amount, traded_at, note),
     )
 
-print("Demo data seeded: 8 holdings, 18 transactions")
+print("Demo data seeded: 8 holdings, 22 transactions (7 sells, 15 buys)")
 print("Run: python backend/seed_demo_data.py")
