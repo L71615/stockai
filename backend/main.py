@@ -23,7 +23,7 @@ class StaticFiles(_StaticFiles):
                 message["headers"] = list(headers.items())
             await send(message)
         await super().__call__(scope, receive, send_wrapper)
-from routers import auth, stocks, skills, ai, agents, memory, dca, settings as settings_router
+from routers import auth, stocks, skills, ai, agents, memory, dca, settings as settings_router, quant
 
 app = FastAPI(title="StockAI", version="0.2.0", docs_url="/api/docs")
 
@@ -45,6 +45,7 @@ app.include_router(memory.router, prefix="/api", tags=["Memory"])
 app.include_router(dca.router, prefix="/api/stocks", tags=["DCA"])
 app.include_router(ai.router, prefix="/api/ai", tags=["AI"])
 app.include_router(settings_router.router, tags=["Settings"])
+app.include_router(quant.router)
 
 # 健康检查
 @app.get("/api/health")

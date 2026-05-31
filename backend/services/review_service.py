@@ -124,7 +124,7 @@ def aggregate_transactions(user_id: int = 1) -> dict:
     }
 
 
-def build_review_prompt(data: dict) -> str:
+def build_review_prompt(data: dict, quant_context: str = "") -> str:
     """Build the structured review prompt with embedded JSON schema"""
     holdings_text = "\n".join(
         f"- {h['stock_code']} {h['stock_name']}（{h.get('asset_type','stock')}），"
@@ -165,6 +165,9 @@ def build_review_prompt(data: dict) -> str:
 
 ### 亏损最大的 3 笔
 {losers_text}
+
+### 量化风控指标
+{quant_context if quant_context else "暂无量化数据"}
 
 ## 输出要求
 
@@ -289,6 +292,43 @@ def _normalize_response(data: dict, raw_text: str) -> dict:
     }
 
 
+def _format_quant_context(qdata: dict) -> str:
+    """Format quant risk data into natural language for the AI prompt."""
+    if not qdata or qdata.get("error"):
+        return ""
+
+    lines = []
+    if qdata.get("sharpe") is not None:
+        s = qdata["sharpe"]
+        level = "优秀（>1）" if s > 1 else "一般（0.5-1）" if s > 0.5 else "偏低（<0.5）"
+        lines.append(f"- 夏普比率: {s} — {level}，衡量风险调整后收益")
+    if qdata.get("max_drawdown") is not None:
+        dd = qdata["max_drawdown"]
+        lines.append(f"- 最大回撤: {dd*100:.1f}%")
+    if qdata.get("volatility") is not None:
+        vol = qdata["volatility"]
+        lines.append(f"- 年化波动率: {vol*100:.1f}%")
+    if qdata.get("beta") is not None:
+        b = qdata["beta"]
+        level = "高于市场波动" if b > 1 else "低于市场波动" if b < 1 else "与市场同步"
+        lines.append(f"- Beta (vs 沪深300): {b} — {level}")
+
+    # Per-holding risk
+    for hr in qdata.get("holdings_risk", [])[:5]:
+        risk_items = []
+        if hr.get("sharpe") is not None:
+            risk_items.append(f"夏普{hr['sharpe']}")
+        if hr.get("max_dd") is not None:
+            risk_items.append(f"最大回撤{hr['max_dd']*100:.1f}%")
+        if hr.get("vol") is not None:
+            risk_items.append(f"波动率{hr['vol']*100:.1f}%")
+        if risk_items:
+            name = hr.get("name") or hr.get("code", "")
+            lines.append(f"- {name}: {', '.join(risk_items)}")
+
+    return "\n".join(lines) if lines else ""
+
+
 async def generate_review_report(
     user_id: int = 1,
     provider: str = "",
@@ -315,8 +355,14 @@ async def generate_review_report(
             "raw": "",
         }
 
-    # Step 3: Build prompt
-    prompt = build_review_prompt(data)
+    # Step 3: Build prompt (with quant data injection)
+    try:
+        from services.quant_service import get_portfolio_risk
+        quant_data = get_portfolio_risk(user_id)
+        quant_context = _format_quant_context(quant_data)
+    except Exception:
+        quant_context = ""
+    prompt = build_review_prompt(data, quant_context)
 
     # Step 4: Call AI with retry + fallback
     raw = ""

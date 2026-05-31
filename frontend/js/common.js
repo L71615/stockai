@@ -65,6 +65,7 @@ var STOCKAI_ICONS = {
   market:     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>',
   global:     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15 15 0 000 20"/></svg>',
   review:     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 012-2h2a2 2 0 012 2M9 14l2 2 4-4"/></svg>',
+  quant:      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><path d="M7 16l4-8 4 4 4-8"/></svg>',
   skills:     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="20" rx="5"/><path d="M7 8h10M7 12h10M7 16h6"/></svg>',
   transactions: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 1l4 4-4 4"/><path d="M3 11V9a4 4 0 014-4h14"/><path d="M7 23l-4-4 4-4"/><path d="M21 13v2a4 4 0 01-4 4H3"/></svg>',
   settings:   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M1 12h2M21 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4"/></svg>',
@@ -86,6 +87,7 @@ function renderSidebar(activePage) {
     { id: 'market',     href: 'market.html',          icon: I.market, label: '大盘指数' },
     { id: 'global',     href: 'global-news.html',    icon: I.global, label: '全球资讯' },
     { id: 'review',     href: 'review.html',          icon: I.review, label: 'AI 复盘' },
+    { id: 'quant',      href: 'quant.html',          icon: I.quant, label: '量化分析' },
     { id: 'skills',     href: 'skills.html',          icon: I.skills, label: 'Agent 工坊' },
     { id: 'transactions', href: 'transactions.html',  icon: I.transactions, label: '交易记录' },
   ];
@@ -142,6 +144,7 @@ function renderMobileNav(activePage) {
     { id: 'market',       href: 'market.html',         icon: I.market, label: '大盘指数' },
     { id: 'global',       href: 'global-news.html',    icon: I.global, label: '全球资讯' },
     { id: 'review',       href: 'review.html',         icon: I.review, label: 'AI 复盘' },
+    { id: 'quant',        href: 'quant.html',          icon: I.quant, label: '量化分析' },
     { id: 'skills',       href: 'skills.html',         icon: I.skills, label: 'Agent 工坊' },
     { id: 'transactions', href: 'transactions.html',   icon: I.transactions, label: '交易记录' },
     { id: 'divider',      href: '',                    icon: '',    label: '', isDivider: true },

@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>量化分析 — StockAI</title>
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="StockAI">
+<link rel="manifest" href="./manifest.json">
+<script>if('serviceWorker' in navigator){navigator.serviceWorker.register('./service-worker.js').catch(function(){})}</script>
+<link rel="stylesheet" href="css/common.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  .q-kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin-bottom: 20px; }
+  .q-kpi-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; }
+  .q-kpi-label { font-size: 12px; color: var(--text-muted); margin-bottom: 4px; }
+  .q-kpi-value { font-size: 24px; font-weight: 600; font-family: 'JetBrains Mono', monospace; }
+  .q-kpi-note { font-size: 11px; color: var(--text-secondary); margin-top: 2px; }
+  .q-section { margin-bottom: 20px; }
+  .q-two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  @media (max-width: 768px) { .q-two-col { grid-template-columns: 1fr; } }
+  .q-heat-cell { display: inline-block; width: 40px; height: 40px; line-height: 40px; text-align: center; font-size: 12px; font-family: 'JetBrains Mono', monospace; border-radius: 4px; margin: 2px; }
+  .q-heat-label { font-size: 12px; color: var(--text-secondary); margin: 4px 0; }
+  .q-heat-row { display: flex; align-items: center; }
+  .q-backtest-result { padding: 16px; background: var(--bg-secondary); border-radius: var(--radius); margin-top: 12px; }
+  .q-result-row { display: flex; gap: 24px; flex-wrap: wrap; }
+  .q-result-item { text-align: center; }
+  .q-result-val { font-size: 20px; font-weight: 600; font-family: 'JetBrains Mono', monospace; }
+  .q-result-label { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+  .q-strat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; }
+  .q-strat-card { background: var(--bg-secondary); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px; }
+  .q-strat-name { font-size: 13px; font-weight: 500; margin-bottom: 6px; }
+  .q-strat-ret { font-size: 18px; font-weight: 600; font-family: 'JetBrains Mono', monospace; }
+  .q-strat-info { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+  .q-mc-bars { display: flex; align-items: flex-end; gap: 2px; height: 120px; margin: 16px 0; }
+  .q-mc-bar { flex: 1; background: var(--accent); opacity: 0.6; min-width: 4px; }
+  .q-mc-bar.below { opacity: 1; background: #ef4444; }
+  .chart-bar { display: flex; align-items: center; gap: 8px; margin: 4px 0; }
+  .chart-bar-label { width: 80px; font-size: 11px; color: var(--text-secondary); text-align: right; }
+  .chart-bar-track { flex: 1; height: 14px; background: var(--bg-secondary); border-radius: 2px; overflow: hidden; }
+  .chart-bar-fill { height: 100%; border-radius: 2px; transition: width 0.5s; }
+</style>
+</head>
+<body>
+<div class="app-layout">
+  <aside class="sidebar"></aside>
+  <main class="main">
+    <div class="header"></div>
+    <div class="content">
+
+      <!-- 风控 KPI -->
+      <div class="q-kpi-grid" id="kpiGrid">
+        <div class="q-kpi-card"><div class="q-kpi-label">Sharpe 比率</div><div class="q-kpi-value" id="kpSharpe">--</div><div class="q-kpi-note">风险调整后收益</div></div>
+        <div class="q-kpi-card"><div class="q-kpi-label">最大回撤</div><div class="q-kpi-value" id="kpMaxDD">--</div><div class="q-kpi-note">历史最大跌幅</div></div>
+        <div class="q-kpi-card"><div class="q-kpi-label">年化波动率</div><div class="q-kpi-value" id="kpVol">--</div><div class="q-kpi-note">价格波动程度</div></div>
+        <div class="q-kpi-card"><div class="q-kpi-label">Beta vs 沪深300</div><div class="q-kpi-value" id="kpBeta">--</div><div class="q-kpi-note">市场敏感度</div></div>
+      </div>
+
+      <!-- 双列：相关性 + 回测 -->
+      <div class="q-two-col q-section">
+        <div class="card">
+          <div class="card-header"><span>📈 持仓相关性</span><span id="corrCount" class="text-sm text-secondary"></span></div>
+          <div class="card-body" id="corrBody"><div class="text-secondary">加载中…</div></div>
+        </div>
+        <div class="card">
+          <div class="card-header"><span>🎯 DCA 回测</span></div>
+          <div class="card-body">
+            <div class="form-group">
+              <label class="form-label">股票代码</label>
+              <input type="text" class="form-input" id="btCode" value="510050" style="max-width:140px;">
+            </div>
+            <div class="form-group">
+              <label class="form-label">策略</label>
+              <select class="form-input" id="btFreq" style="max-width:200px;">
+                <option value="monthly">每月定投</option>
+                <option value="weekly">每周定投</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label class="form-label">每期金额 (元)</label>
+              <input type="number" class="form-input" id="btAmount" value="2000" style="max-width:180px;">
+            </div>
+            <div class="form-group" style="display:flex;gap:8px;">
+              <div><label class="form-label">起始日期</label><input type="date" class="form-input" id="btStart" value="2024-01-01"></div>
+              <div><label class="form-label">结束日期</label><input type="date" class="form-input" id="btEnd" value="2026-01-01"></div>
+            </div>
+            <button class="btn btn-primary" onclick="runBacktest()" style="margin-top:8px;">计算回测</button>
+            <div id="btResult"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 策略对比 -->
+      <div class="card q-section">
+        <div class="card-header"><span>⚔️ 策略对比</span><span class="text-sm text-secondary">同只股票，不同策略的历史表现</span></div>
+        <div class="card-body">
+          <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;margin-bottom:12px;">
+            <div><label class="form-label">股票代码</label><input type="text" class="form-input" id="scCode" value="510050" style="max-width:120px;"></div>
+            <div><label class="form-label">月投金额</label><input type="number" class="form-input" id="scAmount" value="2000" style="max-width:120px;"></div>
+            <div><label class="form-label">起始</label><input type="date" class="form-input" id="scStart" value="2024-01-01"></div>
+            <div><label class="form-label">结束</label><input type="date" class="form-input" id="scEnd" value="2026-01-01"></div>
+            <button class="btn btn-primary" onclick="runCompare()">对比</button>
+          </div>
+          <div class="q-strat-grid" id="stratGrid"><div class="text-secondary">点击"对比"查看结果</div></div>
+        </div>
+      </div>
+
+      <!-- 蒙特卡洛 -->
+      <div class="card q-section">
+        <div class="card-header"><span>🎲 蒙特卡洛模拟</span><span class="text-sm text-secondary">基于历史波动率的未来价格路径模拟</span></div>
+        <div class="card-body">
+          <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;margin-bottom:12px;">
+            <div><label class="form-label">股票代码</label><input type="text" class="form-input" id="mcCode" value="510050" style="max-width:120px;"></div>
+            <div><label class="form-label">模拟天数</label><input type="number" class="form-input" id="mcDays" value="252" style="max-width:100px;"></div>
+            <div><label class="form-label">模拟次数</label><input type="number" class="form-input" id="mcSims" value="500" style="max-width:100px;"></div>
+            <button class="btn btn-primary" onclick="runMonteCarlo()">运行模拟</button>
+          </div>
+          <div id="mcResult"><div class="text-secondary">点击"运行模拟"查看结果</div></div>
+        </div>
+      </div>
+
+      <!-- AI 解读 -->
+      <div class="card q-section" id="aiCard" style="display:none;">
+        <div class="card-header"><span>🤖 AI 量化解读</span><span class="text-sm text-secondary">量化指标的白话解释</span></div>
+        <div class="card-body" id="aiBody"></div>
+      </div>
+
+    </div>
+  </main>
+</div>
+<script src="js/common.js"></script>
+<script>
+initPage('quant', '量化分析');
+
+// ==================== 页面初始化 ====================
+(async function init() {
+  try {
+    const data = await apiGet('/api/quant/portfolio-risk');
+    if (data.error) {
+      document.getElementById('kpiGrid').innerHTML = '<div class="card"><div class="card-body text-secondary">' + data.error + ' — 请先在持仓页添加股票</div></div>';
+      return;
+    }
+    renderRiskKPIs(data);
+    renderCorrelation(data.correlation);
+  } catch (e) {
+    document.getElementById('kpiGrid').innerHTML = '<div class="card"><div class="card-body text-secondary">风控数据加载失败: ' + e.message + '</div></div>';
+  }
+})();
+
+// ==================== 风控 KPI ====================
+function renderRiskKPIs(data) {
+  document.getElementById('kpSharpe').textContent = data.sharpe != null ? data.sharpe.toFixed(2) : '--';
+  document.getElementById('kpMaxDD').textContent = data.max_drawdown != null ? (data.max_drawdown * 100).toFixed(1) + '%' : '--';
+  document.getElementById('kpVol').textContent = data.volatility != null ? (data.volatility * 100).toFixed(1) + '%' : '--';
+  document.getElementById('kpBeta').textContent = data.beta != null ? data.beta.toFixed(2) : '--';
+
+  if (data.max_drawdown < -0.20) document.getElementById('kpMaxDD').style.color = '#ef4444';
+  if (data.beta > 1.5) document.getElementById('kpBeta').style.color = '#f59e0b';
+}
+
+// ==================== 相关性热力图 ====================
+function renderCorrelation(corr) {
+  var body = document.getElementById('corrBody');
+  var countEl = document.getElementById('corrCount');
+
+  if (!corr || !corr.stocks || corr.stocks.length < 2) {
+    body.innerHTML = '<div class="text-secondary">需要 ≥2 只有效数据的持仓</div>';
+    countEl.textContent = corr && corr.stocks ? '(' + corr.stocks.length + ' 只)' : '';
+    return;
+  }
+
+  countEl.textContent = '(' + corr.stocks.length + ' 只)';
+  var stocks = corr.stocks;
+  var matrix = corr.matrix;
+
+  var html = '<div style="overflow-x:auto;">';
+  // Header row
+  html += '<div class="q-heat-row"><span style="width:60px;flex-shrink:0;"></span>';
+  stocks.forEach(function(s) { html += '<span style="width:40px;text-align:center;font-size:10px;color:var(--text-muted);">' + s + '</span>'; });
+  html += '</div>';
+
+  // Data rows
+  for (var i = 0; i < stocks.length; i++) {
+    html += '<div class="q-heat-row"><span style="width:60px;flex-shrink:0;font-size:11px;color:var(--text-secondary);">' + stocks[i] + '</span>';
+    for (var j = 0; j < stocks.length; j++) {
+      var v = matrix[i][j];
+      var bg = v == null ? 'transparent' : 'rgba(' + (v > 0 ? '34,197,94' : '239,68,68') + ',' + Math.abs(v) * 0.6 + ')';
+      html += '<span class="q-heat-cell" style="background:' + bg + ';color:#fff;">' + (v != null ? v.toFixed(1) : '--') + '</span>';
+    }
+    html += '</div>';
+  }
+  html += '</div>';
+  body.innerHTML = html;
+}
+
+// ==================== DCA 回测 ====================
+async function runBacktest() {
+  var body = document.getElementById('btResult');
+  body.innerHTML = '<div class="text-secondary">计算中…</div>';
+
+  try {
+    var data = await apiPost('/api/quant/backtest', {
+      code: document.getElementById('btCode').value,
+      amount: parseFloat(document.getElementById('btAmount').value) || 2000,
+      freq: document.getElementById('btFreq').value,
+      start_date: document.getElementById('btStart').value,
+      end_date: document.getElementById('btEnd').value || ''
+    });
+
+    var dcaRet = data.total_return * 100;
+    var lumpRet = data.lump_sum_return * 100;
+    var better = dcaRet > lumpRet ? '定投胜出' : '一次性买入胜出';
+
+    body.innerHTML = '<div class="q-backtest-result">' +
+      '<div class="q-result-row">' +
+        '<div class="q-result-item"><div class="q-result-val">¥' + formatNum(data.total_invested) + '</div><div class="q-result-label">总投入</div></div>' +
+        '<div class="q-result-item"><div class="q-result-val">¥' + formatNum(data.final_value) + '</div><div class="q-result-label">终值</div></div>' +
+        '<div class="q-result-item"><div class="q-result-val" style="color:' + (dcaRet >= 0 ? '#22c55e' : '#ef4444') + '">' + dcaRet.toFixed(1) + '%</div><div class="q-result-label">定投总回报</div></div>' +
+        '<div class="q-result-item"><div class="q-result-val">' + (data.annual_return * 100).toFixed(1) + '%</div><div class="q-result-label">年化收益</div></div>' +
+        '<div class="q-result-item"><div class="q-result-val" style="color:var(--text-secondary)">' + lumpRet.toFixed(1) + '%</div><div class="q-result-label">一次性买入</div></div>' +
+        '<div class="q-result-item"><div class="q-result-val" style="font-size:14px;">' + better + '</div><div class="q-result-label">结论</div></div>' +
+      '</div>' +
+      '<div style="margin-top:12px;font-size:12px;color:var(--text-muted);">共 ' + data.num_purchases + ' 次买入 · 终价 ¥' + data.final_price.toFixed(2) + '</div>' +
+      '</div>';
+  } catch (e) {
+    body.innerHTML = '<div class="text-error">回测失败: ' + e.message + '</div>';
+  }
+}
+
+// ==================== 策略对比 ====================
+async function runCompare() {
+  var grid = document.getElementById('stratGrid');
+  grid.innerHTML = '<div class="text-secondary">计算中…</div>';
+
+  try {
+    var data = await apiPost('/api/quant/compare', {
+      code: document.getElementById('scCode').value,
+      amount: parseFloat(document.getElementById('scAmount').value) || 2000,
+      start_date: document.getElementById('scStart').value,
+      end_date: document.getElementById('scEnd').value || ''
+    });
+
+    var names = { dca: '定期定额', value_avg: '价值平均', fixed_shares: '固定股数', dip_buy: '下跌加仓' };
+    var colors = { dca: '#3b82f6', value_avg: '#22c55e', fixed_shares: '#f59e0b', dip_buy: '#a855f7' };
+
+    var items = [];
+    for (var key in data.strategies) {
+      var s = data.strategies[key];
+      if (s.error) continue;
+      items.push({ key: key, ret: s.return, invested: s.total_invested, final: s.final_value });
+    }
+    items.sort(function(a, b) { return b.ret - a.ret; });
+
+    var maxRet = Math.max.apply(null, items.map(function(i) { return Math.abs(i.ret); }));
+
+    grid.innerHTML = items.map(function(item) {
+      var retPct = item.ret * 100;
+      var barWidth = maxRet > 0 ? Math.abs(item.ret) / maxRet * 100 : 0;
+      return '<div class="q-strat-card">' +
+        '<div class="q-strat-name" style="color:' + (colors[item.key] || '#fff') + '">' + (names[item.key] || item.key) + '</div>' +
+        '<div class="q-strat-ret" style="color:' + (retPct >= 0 ? '#22c55e' : '#ef4444') + '">' + retPct.toFixed(1) + '%</div>' +
+        '<div class="chart-bar"><div class="chart-bar-track"><div class="chart-bar-fill" style="width:' + barWidth + '%;background:' + (colors[item.key] || '#fff') + '"></div></div></div>' +
+        '<div class="q-strat-info">投入 ¥' + formatNum(item.invested) + ' · 终值 ¥' + formatNum(item.final) + '</div>' +
+        '</div>';
+    }).join('');
+  } catch (e) {
+    grid.innerHTML = '<div class="text-error">策略对比失败: ' + e.message + '</div>';
+  }
+}
+
+// ==================== 蒙特卡洛 ====================
+async function runMonteCarlo() {
+  var body = document.getElementById('mcResult');
+  body.innerHTML = '<div class="text-secondary">模拟中…</div>';
+
+  try {
+    var data = await apiPost('/api/quant/monte-carlo', {
+      code: document.getElementById('mcCode').value,
+      days: parseInt(document.getElementById('mcDays').value) || 252,
+      sims: parseInt(document.getElementById('mcSims').value) || 500
+    });
+
+    // 柱状图：把价格分桶
+    var paths = data.simulations_data || [];
+    var allFinals = [];
+    paths.forEach(function(p) { allFinals.push(p[p.length - 1]); });
+    allFinals.sort(function(a, b) { return a - b; });
+
+    var nBins = 15;
+    if (!allFinals.length) { body.innerHTML = '<div class="text-secondary">无模拟数据</div>'; return; }
+
+    var minP = allFinals[0], maxP = allFinals[allFinals.length - 1];
+    var binW = (maxP - minP) / nBins || 0.01;
+    var bins = new Array(nBins).fill(0);
+    allFinals.forEach(function(p) {
+      var idx = Math.min(Math.floor((p - minP) / binW), nBins - 1);
+      bins[idx]++;
+    });
+    var maxBin = Math.max.apply(null, bins);
+
+    var html = '<div class="q-result-row" style="margin-bottom:12px;">';
+    html += '<div class="q-result-item"><div class="q-result-val">' + data.current_price.toFixed(2) + '</div><div class="q-result-label">当前价格</div></div>';
+    html += '<div class="q-result-item"><div class="q-result-val">' + data.mean_final.toFixed(2) + '</div><div class="q-result-label">模拟均值</div></div>';
+    html += '<div class="q-result-item"><div class="q-result-val" style="color:#ef4444">' + (data.prob_loss * 100).toFixed(1) + '%</div><div class="q-result-label">亏损概率</div></div>';
+    html += '<div class="q-result-item"><div class="q-result-val" style="color:#ef4444">' + (data.prob_loss_15pct * 100).toFixed(1) + '%</div><div class="q-result-label">亏损>15%概率</div></div>';
+    html += '</div>';
+
+    // Histogram
+    html += '<div class="q-mc-bars">';
+    bins.forEach(function(count, i) {
+      var h = count / maxBin * 100;
+      var price = minP + binW * (i + 0.5);
+      html += '<div class="q-mc-bar' + (price < data.current_price ? ' below' : '') + '" style="height:' + h + '%;" title="¥' + price.toFixed(1) + ': ' + count + '次"></div>';
+    });
+    html += '</div>';
+    html += '<div style="display:flex;justify-content:space-between;font-size:11px;color:var(--text-muted);"><span>¥' + minP.toFixed(1) + '</span><span>终价分布 (共' + data.simulations + '次模拟)</span><span>¥' + maxP.toFixed(1) + '</span></div>';
+
+    body.innerHTML = html;
+  } catch (e) {
+    body.innerHTML = '<div class="text-error">模拟失败: ' + e.message + '</div>';
+  }
+}
+
+// 数字格式化
+function formatNum(n) {
+  if (n >= 10000) return (n / 10000).toFixed(2) + '万';
+  return n.toFixed(2);
+}
+</script>
+</body>
+</html>
