@@ -58,20 +58,40 @@ function showError(container, err, retryFn) {
   </div>`;
 }
 
+// ==================== 共享 SVG 图标 (Heroicons MIT) ====================
+var STOCKAI_ICONS = {
+  holdings:   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M3 9h18M9 3v18"/></svg>',
+  watchlist:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15 9 22 9 16 14 18 22 12 17 6 22 8 14 2 9 9 9"/></svg>',
+  market:     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>',
+  global:     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15 15 0 000 20"/></svg>',
+  review:     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 012-2h2a2 2 0 012 2M9 14l2 2 4-4"/></svg>',
+  skills:     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="20" rx="5"/><path d="M7 8h10M7 12h10M7 16h6"/></svg>',
+  transactions: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 1l4 4-4 4"/><path d="M3 11V9a4 4 0 014-4h14"/><path d="M7 23l-4-4 4-4"/><path d="M21 13v2a4 4 0 01-4 4H3"/></svg>',
+  settings:   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M1 12h2M21 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4"/></svg>',
+  ai:         '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>',
+  success:    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>',
+  error:      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>',
+  warning:    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>',
+  info:       '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>',
+  close:      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>',
+  more:       '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg>',
+};
+
 // ==================== 侧边栏 ====================
 function renderSidebar(activePage) {
-  const pages = [
-    { id: 'holdings',   href: 'index.html',           icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M3 9h18M9 3v18"/></svg>', label: '我的持仓' },
-    { id: 'watchlist',  href: 'watchlist.html',       icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15 9 22 9 16 14 18 22 12 17 6 22 8 14 2 9 9 9"/></svg>', label: '自选股' },
-    { id: 'market',     href: 'market.html',          icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>', label: '大盘指数' },
-    { id: 'global',     href: 'global-news.html',    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15 15 0 000 20"/></svg>', label: '全球资讯' },
-    { id: 'review',     href: 'review.html',          icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 012-2h2a2 2 0 012 2M9 14l2 2 4-4"/></svg>', label: 'AI 复盘' },
-    { id: 'skills',     href: 'skills.html',          icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="20" rx="5"/><path d="M7 8h10M7 12h10M7 16h6"/></svg>', label: 'Agent 工坊' },
-    { id: 'transactions', href: 'transactions.html',  icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 1l4 4-4 4"/><path d="M3 11V9a4 4 0 014-4h14"/><path d="M7 23l-4-4 4-4"/><path d="M21 13v2a4 4 0 01-4 4H3"/></svg>', label: '交易记录' },
+  var I = STOCKAI_ICONS;
+  var pages = [
+    { id: 'holdings',   href: 'index.html',           icon: I.holdings, label: '我的持仓' },
+    { id: 'watchlist',  href: 'watchlist.html',       icon: I.watchlist, label: '自选股' },
+    { id: 'market',     href: 'market.html',          icon: I.market, label: '大盘指数' },
+    { id: 'global',     href: 'global-news.html',    icon: I.global, label: '全球资讯' },
+    { id: 'review',     href: 'review.html',          icon: I.review, label: 'AI 复盘' },
+    { id: 'skills',     href: 'skills.html',          icon: I.skills, label: 'Agent 工坊' },
+    { id: 'transactions', href: 'transactions.html',  icon: I.transactions, label: '交易记录' },
   ];
-  const bottomPages = [
-    { id: 'settings',   href: 'settings.html',        icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M1 12h2M21 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4"/></svg>', label: '设置' },
-    { id: 'ai-chat',    href: 'ai-assistant.html',    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>', label: 'AI 对话' },
+  var bottomPages = [
+    { id: 'settings',   href: 'settings.html',        icon: I.settings, label: '设置' },
+    { id: 'ai-chat',    href: 'ai-assistant.html',    icon: I.ai, label: 'AI 对话' },
   ];
 
   const navItems = pages.map(p =>
@@ -110,26 +130,29 @@ function renderHeader(title) {
 
 // ==================== 移动端底部导航 ====================
 function renderMobileNav(activePage) {
-  const mainTabs = [
-    { id: 'holdings',   href: 'index.html',           icon: '📊', label: '持仓' },
-    { id: 'watchlist',  href: 'watchlist.html',       icon: '⭐', label: '自选' },
-    { id: 'ai',         href: 'ai-assistant.html',    icon: '🤖', label: 'AI' },
-    { id: 'more',       href: '#',                    icon: '⋯', label: '更多', isMore: true },
+  var I = STOCKAI_ICONS;
+  var mainTabs = [
+    { id: 'holdings',   href: 'index.html',           icon: I.holdings, label: '持仓' },
+    { id: 'watchlist',  href: 'watchlist.html',       icon: I.watchlist, label: '自选' },
+    { id: 'ai',         href: 'ai-assistant.html',    icon: I.ai, label: 'AI' },
+    { id: 'more',       href: '#',                    icon: I.more, label: '更多', isMore: true },
   ];
 
-  const moreItems = [
-    { id: 'market',       href: 'market.html',         icon: '💹', label: '大盘指数' },
-    { id: 'global',       href: 'global-news.html',    icon: '🌍', label: '全球资讯' },
-    { id: 'skills',       href: 'skills.html',         icon: '🧩', label: 'Agent 工坊' },
-    { id: 'transactions', href: 'transactions.html',   icon: '📝', label: '交易记录' },
+  var moreItems = [
+    { id: 'market',       href: 'market.html',         icon: I.market, label: '大盘指数' },
+    { id: 'global',       href: 'global-news.html',    icon: I.global, label: '全球资讯' },
+    { id: 'review',       href: 'review.html',         icon: I.review, label: 'AI 复盘' },
+    { id: 'skills',       href: 'skills.html',         icon: I.skills, label: 'Agent 工坊' },
+    { id: 'transactions', href: 'transactions.html',   icon: I.transactions, label: '交易记录' },
     { id: 'divider',      href: '',                    icon: '',    label: '', isDivider: true },
-    { id: 'settings',     href: 'settings.html',       icon: '⚙️', label: '设置' },
+    { id: 'settings',     href: 'settings.html',       icon: I.settings, label: '设置' },
   ];
 
   const navHTML = mainTabs.map(t => {
-    const isActive = activePage === t.id || (t.isMore && ['market','global','skills','transactions','settings'].includes(activePage));
+    const isActive = activePage === t.id || (t.isMore && ['market','global','review','skills','transactions','settings'].includes(activePage));
     if (t.isMore) {
-      return `<button class="nav-tab${isActive ? ' active' : ''}" onclick="toggleMoreMenu()"><span class="tab-icon">${t.icon}</span>${t.label}</button>`;
+      const morePages = ['market','global','review','skills','transactions','settings'];
+      return `<button class="nav-tab${morePages.includes(activePage) ? ' active' : ''}" onclick="toggleMoreMenu()"><span class="tab-icon">${t.icon}</span>${t.label}</button>`;
     }
     return `<a href="${t.href}" class="nav-tab${isActive ? ' active' : ''}"><span class="tab-icon">${t.icon}</span>${t.label}</a>`;
   }).join('');
@@ -204,54 +227,6 @@ function codeToMarket(code) {
   return 'SZ';
 }
 
-// ==================== AI 对话 ====================
-function setupAIChat() {
-  const messages = document.getElementById('aiMessages');
-  const input = document.getElementById('aiInput');
-  const sendBtn = document.getElementById('aiSend');
-  if (!input || !sendBtn || !messages) return;
-  let conversationId = null;
-
-  function addMessage(text, role) {
-    const div = document.createElement('div');
-    div.className = 'ai-msg ' + role;
-    div.textContent = text;
-    messages.appendChild(div);
-    messages.scrollTop = messages.scrollHeight;
-  }
-
-  async function handleSend() {
-    const query = input.value.trim();
-    if (!query) return;
-    addMessage(query, 'user');
-    input.value = '';
-
-    const aiConfig = getAIConfig();
-    if (!aiConfig.apiKey) {
-      addMessage('请先在 <a href="settings.html">设置页</a> 配置 API Key', 'assistant');
-      return;
-    }
-
-    try {
-      const data = await apiPost('/api/ai/chat', {
-        message: query,
-        conversationId,
-        provider: aiConfig.provider,
-        apiKey: aiConfig.apiKey,
-        model: aiConfig.model,
-        baseUrl: aiConfig.baseUrl || '',
-      });
-      conversationId = data.conversationId;
-      addMessage(data.reply, 'assistant');
-    } catch (err) {
-      addMessage('发送失败: ' + err.message, 'assistant');
-    }
-  }
-
-  sendBtn.addEventListener('click', handleSend);
-  input.addEventListener('keydown', e => { if (e.key === 'Enter') handleSend(); });
-}
-
 // ==================== Dialog/Confirm/Prompt ====================
 function showDialog(title, msg, onOk) {
   const overlay = document.createElement('div');
@@ -307,8 +282,13 @@ function showToast(msg, type = 'info', duration = 3000) {
   }
   const toast = document.createElement('div');
   toast.className = `toast toast-${type}`;
-  const icons = { success: '✓', error: '✕', warning: '⚠', info: 'ℹ' };
-  toast.innerHTML = `<span class="toast-icon">${icons[type] || icons.info}</span><span class="toast-msg">${msg}</span><span class="toast-close" onclick="this.closest('.toast').remove()">×</span>`;
+  const icons = {
+    success: '<span class="toast-icon-svg">' + STOCKAI_ICONS.success + '</span>',
+    error:   '<span class="toast-icon-svg">' + STOCKAI_ICONS.error + '</span>',
+    warning: '<span class="toast-icon-svg">' + STOCKAI_ICONS.warning + '</span>',
+    info:    '<span class="toast-icon-svg">' + STOCKAI_ICONS.info + '</span>',
+  };
+  toast.innerHTML = `${icons[type] || icons.info}<span class="toast-msg">${msg}</span><span class="toast-close" onclick="this.closest('.toast').remove()">${STOCKAI_ICONS.close}</span>`;
   container.appendChild(toast);
   if (duration > 0) {
     setTimeout(() => {
@@ -333,7 +313,8 @@ document.addEventListener('keydown', function(e) {
   // Two-key shortcuts: G + H/M/A
   if (e.key === 'g' || e.key === 'G') {
     window._shortcutPrefix = 'g';
-    setTimeout(function() { window._shortcutPrefix = null; }, 1500);
+    clearTimeout(window._shortcutTimer);
+    window._shortcutTimer = setTimeout(function() { window._shortcutPrefix = null; }, 1500);
     return;
   }
   if (window._shortcutPrefix === 'g') {

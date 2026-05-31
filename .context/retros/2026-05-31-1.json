@@ -1,0 +1,51 @@
+{
+  "date": "2026-05-31",
+  "window": "7d",
+  "metrics": {
+    "commits": 1,
+    "contributors": 1,
+    "prs_merged": 0,
+    "insertions": 17182,
+    "deletions": 0,
+    "net_loc": 17182,
+    "test_loc": 0,
+    "test_ratio": 0.0,
+    "active_days": 1,
+    "sessions": 1,
+    "deep_sessions": 1,
+    "avg_session_minutes": 0,
+    "loc_per_session_hour": 0,
+    "feat_pct": 0.0,
+    "fix_pct": 0.0,
+    "peak_hour": 11,
+    "ai_assisted_commits": 0
+  },
+  "unshipped_local": {
+    "commits": 15,
+    "insertions": 4887,
+    "deletions": 279,
+    "net_loc": 4608,
+    "test_loc": 251,
+    "test_ratio": 0.051,
+    "sessions": 2,
+    "deep_sessions": 1,
+    "active_dates": ["2026-05-30"],
+    "feat_pct": 0.73,
+    "fix_pct": 0.07,
+    "peak_hour": 22,
+    "ai_assisted_commits": 0
+  },
+  "authors": {
+    "L71615": { "commits": 1, "insertions": 17182, "deletions": 0, "test_ratio": 0.0, "top_area": "backend/" }
+  },
+  "version_range": [],
+  "streak_days": 1,
+  "tweetable": "Week of May 24: 初始提交上线, +17.2k LOC · 15 个未推送 commits (复盘引擎 + 测试框架 + UI polish) · 独行侠项目起步",
+  "backlog": {
+    "total_open": 8,
+    "p0_p1": 0,
+    "p2": 0,
+    "completed_this_period": 0,
+    "added_this_period": 8
+  }
+}

@@ -11,6 +11,9 @@
 <link rel="manifest" href="./manifest.json">
 <script>if('serviceWorker' in navigator){navigator.serviceWorker.register('./service-worker.js').catch(function(){})}</script>
 <link rel="stylesheet" href="css/common.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
   .news-item { padding: 10px 0; border-bottom: 1px solid var(--border-light); }
   .news-item:last-child { border-bottom: none; }
@@ -368,7 +371,7 @@
 </div>
 <script src="js/common.js"></script>
 <script>
-initPage('holdings', '📊 我的持仓');
+initPage('holdings', '我的持仓');
 
 let _currentPfId = '';
 let _journalMap = {};
@@ -1437,7 +1440,13 @@ async function confirmImport() {
 
 async function loadAISummary() {
   try {
-    var summaryRes = await apiPost('/api/stocks/review/structured', { report_type: 'daily' });
+    var cfg = getAIConfig();
+    var summaryRes = await apiPost('/api/stocks/review/structured', {
+      report_type: 'daily',
+      provider: cfg.provider,
+      api_key: cfg.apiKey,
+      model: cfg.model,
+    });
     var bar = document.getElementById('aiSummaryBar');
     if (bar && summaryRes.summary && !summaryRes.cold_start) {
       bar.innerHTML = '<div class="ai-insight-bar">' +
@@ -1454,7 +1463,6 @@ async function loadAISummary() {
 
 loadPortfolios();
 loadHoldings();
-loadAISummary();
 </script>
 </body>
 </html>

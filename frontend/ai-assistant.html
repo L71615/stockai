@@ -11,6 +11,9 @@
 <link rel="manifest" href="./manifest.json">
 <script>if('serviceWorker' in navigator){navigator.serviceWorker.register('./service-worker.js').catch(function(){})}</script>
 <link rel="stylesheet" href="css/common.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
   .ai-toolbar { display: flex; gap: 10px; align-items: center; padding: 10px 16px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
   .ai-toolbar select { width: auto; min-width: 160px; }
@@ -59,9 +62,8 @@
 </div>
 <script src="js/common.js"></script>
 <script>
-initPage('ai', '🤖 AI 助手');
+initPage('ai', 'AI 助手');
 
-let conversationId = null;
 let currentAgentPrompt = '';
 let currentAgentId = null;
 

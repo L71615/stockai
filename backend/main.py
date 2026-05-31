@@ -8,9 +8,21 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
+from fastapi.staticfiles import StaticFiles as _StaticFiles
 
 from config import PORT, ENV, FRONTEND_DIR
+
+
+class StaticFiles(_StaticFiles):
+    """StaticFiles with no-cache headers for development."""
+    async def __call__(self, scope, receive, send):
+        async def send_wrapper(message):
+            if message["type"] == "http.response.start":
+                headers = dict(message.get("headers", []))
+                headers[b"cache-control"] = b"no-cache, no-store, must-revalidate"
+                message["headers"] = list(headers.items())
+            await send(message)
+        await super().__call__(scope, receive, send_wrapper)
 from routers import auth, stocks, skills, ai, agents, memory, dca, settings as settings_router
 
 app = FastAPI(title="StockAI", version="0.2.0", docs_url="/api/docs")

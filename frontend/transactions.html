@@ -11,6 +11,9 @@
 <link rel="manifest" href="./manifest.json">
 <script>if('serviceWorker' in navigator){navigator.serviceWorker.register('./service-worker.js').catch(function(){})}</script>
 <link rel="stylesheet" href="css/common.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 </head>
 <body>
 <div class="app-layout">
@@ -71,7 +74,7 @@
 </div>
 <script src="js/common.js"></script>
 <script>
-initPage('transactions', '📝 交易记录');
+initPage('transactions', '交易记录');
 
 async function loadTransactions() {
   const stats = document.getElementById('statsRow');

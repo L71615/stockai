@@ -11,6 +11,9 @@
 <link rel="manifest" href="./manifest.json">
 <script>if('serviceWorker' in navigator){navigator.serviceWorker.register('./service-worker.js').catch(function(){})}</script>
 <link rel="stylesheet" href="css/common.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
   .agent-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; }
   .agent-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; transition: .15s; }
@@ -104,7 +107,7 @@
 </div>
 <script src="js/common.js"></script>
 <script>
-initPage('skills', '🤖 Agent 工坊');
+initPage('skills', 'Agent 工坊');
 
 async function loadAgents() {
   const container = document.getElementById('agentList');

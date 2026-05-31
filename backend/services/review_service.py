@@ -5,6 +5,7 @@
 import asyncio
 import json
 import re
+from datetime import datetime as dt
 
 from database import query_all
 
@@ -42,17 +43,30 @@ def aggregate_transactions(user_id: int = 1) -> dict:
         if t["direction"] == "buy":
             if t["stock_code"] not in buy_records:
                 buy_records[t["stock_code"]] = []
-            buy_records[t["stock_code"]].append(t)
+            buy_records[t["stock_code"]].append(dict(t))
         elif t["direction"] == "sell":
             sells = buy_records.get(t["stock_code"], [])
-            if sells:
-                buy = sells.pop(0)
-                buy_amount = buy["price"] * buy["quantity"]
-                sell_amount = t["price"] * t["quantity"]
-                pnl = round(sell_amount - buy_amount, 2)
-                from datetime import datetime as dt
+            sell_qty = t["quantity"]
+            sell_amount = t["price"] * sell_qty
+            matched_qty = 0
+            matched_buy_amount = 0
+            matched_buy = None
+            while sells and matched_qty < sell_qty:
+                buy = sells[0]
+                remaining = sell_qty - matched_qty
+                if buy["quantity"] <= remaining:
+                    sells.pop(0)
+                    matched_buy_amount += buy["price"] * buy["quantity"]
+                    matched_qty += buy["quantity"]
+                else:
+                    buy["quantity"] -= remaining
+                    matched_buy_amount += buy["price"] * remaining
+                    matched_qty += remaining
+                matched_buy = buy
+            if matched_qty > 0:
+                pnl = round(sell_amount - matched_buy_amount, 2)
                 try:
-                    buy_date = dt.strptime(buy["traded_at"], "%Y-%m-%d")
+                    buy_date = dt.strptime(matched_buy["traded_at"], "%Y-%m-%d")
                     sell_date = dt.strptime(t["traded_at"], "%Y-%m-%d")
                     hold_days = (sell_date - buy_date).days
                 except Exception:
@@ -68,7 +82,8 @@ def aggregate_transactions(user_id: int = 1) -> dict:
     win_count = sum(1 for s in sell_records if s["pnl"] > 0)
     lose_count = sum(1 for s in sell_records if s["pnl"] < 0)
     total_trades = len(sell_records)
-    win_rate = round(win_count / total_trades * 100, 1) if total_trades > 0 else 0
+    resolved = win_count + lose_count
+    win_rate = round(win_count / resolved * 100, 1) if resolved > 0 else 0
     total_pnl = sum(s["pnl"] for s in sell_records)
     avg_hold_days = round(sum(s["hold_days"] for s in sell_records) / total_trades, 1) if total_trades > 0 else 0
 
@@ -86,10 +101,11 @@ def aggregate_transactions(user_id: int = 1) -> dict:
     } for h in holdings]
 
     # Enrich transactions with PnL info
+    sell_by_id = {s["id"]: s for s in sell_records}
     enriched_transactions = []
     for t in trades:
         enriched = dict(t)
-        matching_sell = next((s for s in sell_records if s["id"] == t["id"]), None)
+        matching_sell = sell_by_id.get(t["id"])
         enriched["pnl"] = matching_sell["pnl"] if matching_sell else 0
         enriched["hold_days"] = matching_sell["hold_days"] if matching_sell else None
         enriched_transactions.append(enriched)
@@ -315,8 +331,8 @@ async def generate_review_report(
             ),
             timeout=60.0,
         )
-    except asyncio.TimeoutError:
-        # Retry once
+    except (asyncio.TimeoutError, ConnectionError, OSError):
+        # Retry once on transient errors
         try:
             raw = await asyncio.wait_for(
                 ai_chat(
@@ -328,7 +344,7 @@ async def generate_review_report(
                 ),
                 timeout=60.0,
             )
-        except asyncio.TimeoutError:
+        except Exception:
             raw = ""
     except Exception:
         raw = ""

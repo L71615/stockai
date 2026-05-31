@@ -111,6 +111,13 @@ def fetch_news_jsonp(keyword: str, page: int = 1, page_size: int = 5) -> list[di
                 "source": a.get("mediaName", ""),
                 "url": a.get("url", a.get("content", "")),
             })
+        # 按日期降序排列（东方财富 API sort 参数不总是生效）
+        results.sort(key=lambda x: x.get("date", ""), reverse=True)
+        # 只保留最近 5 天的新闻
+        from datetime import datetime, timedelta
+        cutoff = datetime.now() - timedelta(days=5)
+        cutoff_str = cutoff.strftime("%Y-%m-%d")
+        results = [r for r in results if r.get("date", "") >= cutoff_str]
         return results
     except Exception as e:
         print(f"[News Error] keyword={keyword}: {e}")

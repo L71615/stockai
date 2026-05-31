@@ -24,7 +24,9 @@ class TestAggregateTransactions:
         count = query_all("SELECT count(*) as c FROM transactions WHERE user_id = 1")
         if count[0]["c"] == 0:
             import subprocess
-            subprocess.run(["python", "backend/seed_demo_data.py"], check=True)
+            from pathlib import Path
+            seed_script = Path(__file__).resolve().parent.parent / "backend" / "seed_demo_data.py"
+            subprocess.run(["python", str(seed_script)], check=True)
 
         result = aggregate_transactions(user_id=1)
         assert result["total_trades"] >= 4

@@ -5,6 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>AI 投资复盘 — StockAI</title>
 <link rel="stylesheet" href="css/common.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
   .review-container { max-width: 900px; margin: 0 auto; }
   .review-hero {
@@ -70,7 +73,7 @@
     display: none;
   }
   .suggestion-card .sug-reasoning::before {
-    content: "为什么这么说? "; font-style: normal; font-weight: 500; color: #c4b5fd;
+    content: "为什么这么说? "; font-style: normal; font-weight: 500; color: var(--ai-accent);
   }
   .suggestion-card.open .sug-reasoning { display: block; }
   .sug-toggle {
@@ -135,19 +138,22 @@ var state = {
 };
 
 // ==================== Init ====================
-document.getElementById('sidebar').innerHTML = renderSidebar('review');
-document.getElementById('header').innerHTML = renderHeader('AI 投资复盘');
-document.getElementById('mobileNav').innerHTML = renderMobileNav('review');
+initPage('review', 'AI 投资复盘');
 
-loadLatestReport();
-loadHistory();
+loadLatestReport().then(function() { loadHistory(); });
 
 // ==================== Data Loading ====================
 async function loadLatestReport() {
   state.loading = true;
   render();
   try {
-    var res = await apiPost('/api/stocks/review/structured', { report_type: 'daily' });
+    var aiConfig = getAIConfig();
+    var res = await apiPost('/api/stocks/review/structured', {
+      report_type: 'daily',
+      provider: aiConfig.provider,
+      api_key: aiConfig.apiKey,
+      model: aiConfig.model,
+    });
     state.report = res;
     state.error = null;
   } catch (err) {
@@ -172,7 +178,13 @@ async function generateReport() {
   state.error = null;
   render();
   try {
-    var res = await apiPost('/api/stocks/review/structured', { report_type: 'daily' });
+    var aiConfig = getAIConfig();
+    var res = await apiPost('/api/stocks/review/structured', {
+      report_type: 'daily',
+      provider: aiConfig.provider,
+      api_key: aiConfig.apiKey,
+      model: aiConfig.model,
+    });
     state.report = res;
   } catch (err) {
     state.error = err;
@@ -297,14 +309,30 @@ function renderHistory() {
   container.insertAdjacentHTML('beforeend', html);
 }
 
-function loadReportById(id) {
+async function loadReportById(id) {
   window.scrollTo({ top: 0, behavior: 'smooth' });
-  generateReport();
+  state.loading = true;
+  render();
+  try {
+    var report = await apiGet('/api/stocks/reviews/' + id);
+    if (report.error) {
+      state.error = new Error(report.error);
+      state.report = null;
+    } else {
+      state.report = report;
+      state.error = null;
+    }
+  } catch (err) {
+    state.error = err;
+    state.report = null;
+  }
+  state.loading = false;
+  render();
 }
 
 function escHtml(s) {
   if (!s) return '';
-  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
 </script>
 </body>

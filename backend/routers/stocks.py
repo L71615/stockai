@@ -1041,7 +1041,7 @@ def get_global_news(region: str):
     keyword = _REGION_KEYWORDS.get(region)
     if not keyword:
         raise HTTPException(404, f"未知区域: {region}")
-    articles = fetch_news_jsonp(keyword, page=1, page_size=8)
+    articles = fetch_news_jsonp(keyword, page=1, page_size=15)
     return {"region": region, "keyword": keyword, "news": articles}
 
 
@@ -1438,3 +1438,49 @@ def list_reviews(user_id: int = 1, limit: int = 20, offset: int = 0):
            LIMIT ? OFFSET ?""",
         (user_id, limit, offset),
     )
+
+
+@router.get("/reviews/{review_id}")
+def get_review(review_id: int):
+    """返回单条历史复盘报告的完整数据"""
+    import json as _json
+    from database import query_one
+
+    row = query_one(
+        """SELECT id, report_type, period_start, period_end, transactions_count,
+                  score_data, ai_response, summary, created_at
+           FROM review_reports
+           WHERE id = ?""",
+        (review_id,),
+    )
+    if not row:
+        return {"error": "报告不存在"}
+
+    report = {
+        "id": row["id"],
+        "report_type": row["report_type"],
+        "transactions_count": row["transactions_count"],
+        "summary": row["summary"] or "",
+        "created_at": str(row["created_at"]) if row["created_at"] else "",
+    }
+
+    # Parse dimensions and suggestions from stored AI response
+    raw = row["ai_response"] or ""
+    if raw:
+        from services.review_service import parse_review_response
+        parsed = parse_review_response(raw)
+        report["dimensions"] = parsed.get("dimensions", [])
+        report["suggestions"] = parsed.get("suggestions", [])
+    else:
+        report["dimensions"] = []
+        report["suggestions"] = []
+
+    # Parse score_data
+    score_data = row.get("score_data") or "{}"
+    try:
+        scores = _json.loads(score_data) if isinstance(score_data, str) else score_data
+    except (_json.JSONDecodeError, TypeError):
+        scores = {}
+    report["avg_score"] = round(sum(scores.values()) / len(scores)) if scores else 0
+
+    return report

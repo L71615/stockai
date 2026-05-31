@@ -1,5 +1,5 @@
 // StockAI Service Worker — 离线缓存 + 后台更新
-const CACHE_STATIC = 'stockai-static-v2';
+const CACHE_STATIC = 'stockai-static-v3';
 const CACHE_DYNAMIC = 'stockai-dynamic-v2';
 
 const STATIC_FILES = [
@@ -58,8 +58,8 @@ self.addEventListener('fetch', e => {
     return;
   }
 
-  // 静态文件: 缓存优先
-  e.respondWith(cacheFirst(e.request));
+  // 静态文件: 网络优先，离线时缓存兜底
+  e.respondWith(networkFirst(e.request));
 });
 
 async function cacheFirst(request) {

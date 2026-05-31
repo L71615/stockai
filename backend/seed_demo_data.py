@@ -14,7 +14,13 @@ if not existing:
         "INSERT INTO users (id, username, email, password) VALUES (1, 'demo', 'demo@stockai.local', '$2b$12$LJ3m4ys3Gql.ZhkBARVOceOKVsS5DXPKP5lJSdFNhWXbFkx2YqPCG')"
     )
 
-# Clear existing demo data for idempotent re-runs
+# 保护用户数据：已有持仓时跳过，避免覆盖真实数据
+existing_holdings = query_one("SELECT COUNT(*) as cnt FROM holdings WHERE user_id = 1")
+if existing_holdings and existing_holdings["cnt"] > 0:
+    print(f"❌ 用户已有 {existing_holdings['cnt']} 条真实持仓，跳过 demo 数据注入。")
+    print("   如需重置为 demo 数据，请先手动清空 holdings/transactions/watchlist 表。")
+    sys.exit(0)
+
 execute("DELETE FROM transactions WHERE user_id = 1")
 execute("DELETE FROM holdings WHERE user_id = 1")
 execute("DELETE FROM watchlist WHERE user_id = 1")

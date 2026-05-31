@@ -11,6 +11,9 @@
 <link rel="manifest" href="./manifest.json">
 <script>if('serviceWorker' in navigator){navigator.serviceWorker.register('./service-worker.js').catch(function(){})}</script>
 <link rel="stylesheet" href="css/common.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
   .indices-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; padding: 16px; }
   .idx-card {
@@ -60,7 +63,7 @@
 </div>
 <script src="js/common.js"></script>
 <script>
-initPage('market', '💹 全球指数');
+initPage('market', '全球指数');
 
 async function loadMarket() {
   const container = document.getElementById('marketContent');
