@@ -25,6 +25,12 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 MINIMAX_API_KEY = os.getenv("MINIMAX_API_KEY", "")
 MINIMAX_MODEL = os.getenv("MINIMAX_MODEL", "MiniMax-M2.7")
 MINIMAX_BASE_URL = os.getenv("MINIMAX_BASE_URL", "https://api.minimax.chat/v1")
+DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
+DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
+DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1")
+XIAOMI_API_KEY = os.getenv("XIAOMI_API_KEY", "")
+XIAOMI_MODEL = os.getenv("XIAOMI_MODEL", "mixtral-8x7b")
+XIAOMI_BASE_URL = os.getenv("XIAOMI_BASE_URL", "")
 
 # 爬虫
 CRAWLER_UA = "StockAI-Bot/1.0"

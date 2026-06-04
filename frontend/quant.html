@@ -51,6 +51,43 @@
     <div class="header"></div>
     <div class="content">
 
+      <!-- ====== 个股透视 ====== -->
+      <div class="card q-section">
+        <div class="card-header">
+          <span>🔍 个股透视</span>
+          <span class="text-sm text-secondary" id="insightTitle"></span>
+        </div>
+        <div class="card-body" style="padding:12px 16px;">
+          <!-- 选股栏 -->
+          <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;margin-bottom:12px;">
+            <div><label class="form-label">股票代码</label>
+              <input type="text" class="form-input" id="insCode" placeholder="600519" style="width:100px;" onkeydown="if(event.key==='Enter')loadInsight()"></div>
+            <div><label class="form-label">周期</label>
+              <select class="form-input" id="insDays" style="width:100px;">
+                <option value="60">60 天</option>
+                <option value="120" selected>120 天</option>
+                <option value="252">1 年</option>
+                <option value="504">2 年</option>
+              </select></div>
+            <button class="btn btn-primary" onclick="loadInsight()">查看</button>
+            <span id="insMeta" class="text-sm text-secondary" style="margin-left:8px;"></span>
+          </div>
+          <!-- K线图 -->
+          <div style="position:relative;background:var(--bg-secondary);border-radius:6px;overflow:hidden;">
+            <canvas id="insCanvas" width="900" height="340" style="width:100%;min-height:340px;display:block;"></canvas>
+            <div id="insTooltip" style="display:none;position:absolute;top:4px;left:4px;background:rgba(0,0,0,0.85);color:#fff;font-size:11px;font-family:'JetBrains Mono',monospace;padding:6px 10px;border-radius:4px;pointer-events:none;z-index:2;"></div>
+          </div>
+          <!-- 成交量图 -->
+          <div style="position:relative;">
+            <canvas id="volCanvas" width="900" height="70" style="width:100%;height:70px;display:block;border-top:1px solid var(--border);"></canvas>
+          </div>
+          <!-- 指标面板 -->
+          <div id="insSignals" style="display:flex;gap:16px;flex-wrap:wrap;padding:8px 0;font-size:12px;font-family:'JetBrains Mono',monospace;"></div>
+          <!-- 因子行 -->
+          <div id="insFactors" style="display:flex;gap:20px;flex-wrap:wrap;padding:6px 0;font-size:13px;border-top:1px solid var(--border-light);"></div>
+        </div>
+      </div>
+
       <!-- 风控 KPI -->
       <div class="q-kpi-grid" id="kpiGrid">
         <div class="q-kpi-card"><div class="q-kpi-label">Sharpe 比率</div><div class="q-kpi-value" id="kpSharpe">--</div><div class="q-kpi-note">风险调整后收益</div></div>
@@ -122,6 +159,29 @@
         </div>
       </div>
 
+      <!-- AI 策略对抗 -->
+      <div class="card q-section">
+        <div class="card-header"><span>⚔️ AI 实盘对抗</span><span class="text-sm text-secondary" id="duelRoundInfo"></span></div>
+        <div class="card-body">
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:6px;">
+            <span style="font-size:11px;color:var(--text-muted);">参战:</span>
+            <label style="font-size:12px;cursor:pointer;"><input type="checkbox" id="duelMiniMax" checked> MiniMax</label>
+            <label style="font-size:12px;cursor:pointer;"><input type="checkbox" id="duelDeepSeek" checked> DeepSeek</label>
+            <label style="font-size:12px;cursor:pointer;"><input type="checkbox" id="duelXiaomi"> 小米</label>
+            <label style="font-size:12px;cursor:pointer;"><input type="checkbox" id="duelClaude"> Claude</label>
+            <select class="form-input" id="duelDays" style="width:70px;">
+              <option value="7">7天</option>
+              <option value="30">30天</option>
+            </select>
+            <button class="btn btn-primary btn-sm" onclick="startAIDuel()" id="duelBtn">⚔️ 开局</button>
+            <button class="btn btn-outline btn-sm" onclick="refreshDuel()" id="duelRefresh" style="display:none;">🔄 刷新</button>
+            <button class="btn btn-outline btn-sm" onclick="rebalanceDuel()" id="duelRebalance" style="display:none;color:var(--accent-light);">📋 AI调仓</button>
+            <span id="duelWindow" style="font-size:11px;color:var(--text-muted);"></span>
+          </div>
+          <div id="duelResult"><div class="text-secondary" style="font-size:12px;">勾选AI → 设周期 → 点"开局" — 每人随机分配一种投资风格（价值/成长/逆向/动量...），各选6只股，10万均分买入</div></div>
+        </div>
+      </div>
+
       <!-- AI 解读 -->
       <div class="card q-section" id="aiCard" style="display:none;">
         <div class="card-header"><span>🤖 AI 量化解读</span><span class="text-sm text-secondary">量化指标的白话解释</span></div>
@@ -141,6 +201,8 @@ initPage('quant', '量化分析');
     const data = await apiGet('/api/quant/portfolio-risk');
     if (data.error) {
       document.getElementById('kpiGrid').innerHTML = '<div class="card"><div class="card-body text-secondary">' + data.error + ' — 请先在持仓页添加股票</div></div>';
+      document.getElementById('corrBody').innerHTML = '<div class="text-secondary">暂无数据 — 需要至少2只持仓</div>';
+      document.getElementById('corrCount').textContent = '';
       return;
     }
     renderRiskKPIs(data);
@@ -328,6 +390,489 @@ async function runMonteCarlo() {
 function formatNum(n) {
   if (n >= 10000) return (n / 10000).toFixed(2) + '万';
   return n.toFixed(2);
+}
+
+// ==================== 个股透视 ====================
+
+let _insightData = null;
+
+async function loadInsight() {
+  const code = document.getElementById('insCode').value.trim() || '600519';
+  const days = parseInt(document.getElementById('insDays').value) || 120;
+  document.getElementById('insCode').value = code;
+  document.getElementById('insMeta').textContent = '加载中…';
+
+  try {
+    const data = await apiGet('/api/quant/stock-insight/' + code + '?days=' + days);
+    _insightData = data;
+    document.getElementById('insightTitle').textContent = data.name || code;
+
+    // 现价 + 涨跌
+    const pct = data.change_pct;
+    const pctCls = pct >= 0 ? 'var(--red)' : 'var(--green)';
+    const pctSign = pct >= 0 ? '+' : '';
+    document.getElementById('insMeta').innerHTML =
+      '<span style="font-size:16px;font-weight:600;">' + (data.price || '--') + '</span> ' +
+      '<span style="color:' + pctCls + ';">' + (pct != null ? pctSign + pct.toFixed(2) + '%' : '--') + '</span>';
+
+    // 画图
+    if (data.kline && data.kline.dates && data.kline.dates.length > 0) {
+      drawKline(document.getElementById('insCanvas'), data.kline, data.indicators);
+      drawVolume(document.getElementById('volCanvas'), data.kline);
+    }
+
+    // 技术指标
+    renderInsightSignals(data.indicators);
+
+    // 因子数据
+    renderInsightFactors(data.factors);
+
+  } catch (e) {
+    document.getElementById('insMeta').textContent = '加载失败: ' + e.message;
+  }
+}
+
+function setupCanvas(canvas, W, H) {
+  var dpr = window.devicePixelRatio || 1;
+  var rect = canvas.getBoundingClientRect();
+  var dw = rect.width || W;
+  canvas.width = dw * dpr;
+  canvas.height = H * dpr;
+  canvas.style.width = dw + 'px';
+  canvas.style.height = H + 'px';
+  var ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr);
+  ctx.clearRect(0, 0, dw, H);
+  ctx.fillStyle = '#141722'; ctx.fillRect(0, 0, dw, H);
+  return { ctx: ctx, W: dw, H: H };
+}
+
+function drawKline(canvas, kl, ind) {
+  var r = setupCanvas(canvas, 900, 340);
+  var ctx = r.ctx, W = r.W, H = r.H;
+
+  const dates = kl.dates, opens = kl.opens, closes = kl.closes, highs = kl.highs, lows = kl.lows;
+  const n = dates.length;
+  if (n < 2) return;
+
+  // 布局参数
+  const pad = { top: 30, bottom: 30, left: 60, right: 20 };
+  const chartW = W - pad.left - pad.right;
+  const chartH = H - pad.top - pad.bottom;
+  const candleW = Math.max(1, Math.min(8, chartW / n * 0.7));
+  const gap = chartW / n - candleW;
+
+  // 价格范围
+  let minP = Infinity, maxP = -Infinity;
+  for (let i = 0; i < n; i++) {
+    if (highs[i] > maxP) maxP = highs[i];
+    if (lows[i] < minP) minP = lows[i];
+  }
+  // 加 MA 值到范围
+  const mas = ind && ind.MA ? ind.MA : {};
+  for (const k of ['MA5','MA10','MA20','MA60']) {
+    if (mas[k] != null) { if (mas[k] > maxP) maxP = mas[k]; if (mas[k] < minP) minP = mas[k]; }
+  }
+  const priceRange = maxP - minP || 1;
+  minP -= priceRange * 0.02; maxP += priceRange * 0.02;
+
+  const x = (i) => pad.left + i * (chartW / n);
+  const y = (p) => pad.top + chartH * (1 - (p - minP) / (maxP - minP));
+
+  // 背景网格
+  ctx.strokeStyle = 'rgba(255,255,255,0.04)';
+  ctx.lineWidth = 0.5;
+  for (let i = 0; i < 5; i++) {
+    const gy = pad.top + chartH * i / 4;
+    ctx.beginPath(); ctx.moveTo(pad.left, gy); ctx.lineTo(W - pad.right, gy); ctx.stroke();
+    const price = maxP - (maxP - minP) * i / 4;
+    ctx.fillStyle = '#6b7280'; ctx.font = '10px JetBrains Mono';
+    ctx.textAlign = 'right'; ctx.fillText(price.toFixed(2), pad.left - 4, gy + 3);
+  }
+
+  // 蜡烛图
+  for (let i = 0; i < n; i++) {
+    const cx = x(i) + gap / 2;
+    const isUp = closes[i] >= opens[i];
+    const color = isUp ? '#ef4444' : '#22c55e';
+    ctx.strokeStyle = color;
+    ctx.fillStyle = isUp ? '#ef4444' : 'transparent';
+    // 影线
+    ctx.beginPath();
+    ctx.moveTo(cx + candleW / 2, y(highs[i]));
+    ctx.lineTo(cx + candleW / 2, y(lows[i]));
+    ctx.stroke();
+    // 实体
+    const bodyTop = y(isUp ? closes[i] : opens[i]);
+    const bodyBot = y(isUp ? opens[i] : closes[i]);
+    const bodyH = Math.max(1, bodyBot - bodyTop);
+    ctx.fillRect(cx, bodyTop, candleW, bodyH);
+    if (!isUp) ctx.strokeRect(cx, bodyTop, candleW, bodyH);
+  }
+
+  // MA 线
+  const maColors = { MA5: '#fbbf24', MA10: '#f59e0b', MA20: '#c084fc', MA60: '#60a5fa' };
+  const maData = {};
+  if (ind && ind.MA) {
+    // 均线从 kline 计算：用 closes 实时算
+    for (const [label, period] of [['MA5',5],['MA10',10],['MA20',20],['MA60',60]]) {
+      const vals = [];
+      for (let i = 0; i < n; i++) {
+        if (i < period - 1) { vals.push(null); continue; }
+        let sum = 0;
+        for (let j = i - period + 1; j <= i; j++) sum += closes[j];
+        vals.push(sum / period);
+      }
+      maData[label] = vals;
+    }
+  }
+  for (const [label, color] of Object.entries(maColors)) {
+    const vals = maData[label];
+    if (!vals) continue;
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    let started = false;
+    for (let i = 0; i < n; i++) {
+      if (vals[i] === null) { started = false; continue; }
+      const px = x(i) + candleW / 2 + gap / 2;
+      const py = y(vals[i]);
+      if (!started) { ctx.moveTo(px, py); started = true; }
+      else ctx.lineTo(px, py);
+    }
+    ctx.stroke();
+  }
+
+  // 图例
+  let legendX = pad.left;
+  for (const [label, color] of Object.entries(maColors)) {
+    ctx.fillStyle = color; ctx.font = '10px JetBrains Mono'; ctx.textAlign = 'left';
+    ctx.fillText(label, legendX, 16);
+    legendX += ctx.measureText(label).width + 14;
+  }
+
+  // 日期标签
+  ctx.fillStyle = '#6b7280'; ctx.font = '9px JetBrains Mono'; ctx.textAlign = 'center';
+  const dateStep = Math.max(1, Math.floor(n / 6));
+  for (let i = 0; i < n; i += dateStep) {
+    ctx.fillText(dates[i].slice(5), x(i) + candleW / 2 + gap / 2, H - 6);
+  }
+
+  // 鼠标悬浮
+  canvas.onmousemove = function(e) {
+    var rect = canvas.getBoundingClientRect();
+    var scaleX = W / rect.width;
+    var mx = (e.clientX - rect.left) * scaleX;
+    const i = Math.floor((mx - pad.left) / (chartW / n));
+    if (i < 0 || i >= n) { document.getElementById('insTooltip').style.display = 'none'; return; }
+    const tip = document.getElementById('insTooltip');
+    tip.style.display = 'block';
+    tip.style.left = Math.min(e.clientX - rect.left + 10, rect.width - 180) + 'px';
+    tip.style.top = '4px';
+    const o = opens[i], c = closes[i], h = highs[i], l = lows[i];
+    const chg = ((c - o) / o * 100).toFixed(2);
+    tip.innerHTML = dates[i] +
+      '<br>开 ' + o.toFixed(2) + ' 高 ' + h.toFixed(2) +
+      '<br>收 ' + c.toFixed(2) + ' 低 ' + l.toFixed(2) +
+      '<br>涨跌 <span style="color:' + (c >= o ? '#ef4444' : '#22c55e') + '">' + (chg >= 0 ? '+' : '') + chg + '%</span>';
+  };
+  canvas.onmouseleave = function() { document.getElementById('insTooltip').style.display = 'none'; };
+}
+
+function drawVolume(canvas, kl, hoverIdx) {
+  var r = setupCanvas(canvas, 900, 70);
+  var ctx = r.ctx, W = r.W, H = r.H;
+
+  var dates = kl.dates, opens = kl.opens, closes = kl.closes, volumes = kl.volumes;
+  if (!volumes || !volumes.length) {
+    ctx.fillStyle = '#6b7280'; ctx.font = '11px sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText('ETF/指数无成交量明细', W/2, H/2 + 4);
+    canvas._volLayout = null;
+    return;
+  }
+
+  // Filter valid numbers
+  var validVols = [];
+  for (var vi = 0; vi < volumes.length; vi++) {
+    var vv = volumes[vi];
+    if (vv != null && !isNaN(vv) && vv > 0) validVols.push(vv);
+  }
+  if (!validVols.length) {
+    ctx.fillStyle = '#6b7280'; ctx.font = '11px sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText('成交量数据不可用', W/2, H/2 + 4);
+    canvas._volLayout = null;
+    return;
+  }
+
+  var maxV = Math.max.apply(null, validVols);
+  var pad = { top: 4, bottom: 14, left: 60, right: 20 };
+  var chartW = W - pad.left - pad.right;
+  var chartH = H - pad.top - pad.bottom;
+  var n = dates.length;
+  var barW = Math.max(2, chartW / n * 0.7);
+  var gap = chartW / n - barW;
+
+  for (var i = 0; i < n; i++) {
+    var v = volumes[i];
+    if (v == null || isNaN(v) || v <= 0) continue;
+    var bx = pad.left + i * (chartW / n) + gap / 2;
+    var barH = Math.max(1, (v / maxV) * chartH);
+    var isUp = closes[i] >= opens[i];
+    var isHover = (i === hoverIdx);
+    ctx.fillStyle = isHover
+      ? (isUp ? '#ef4444' : '#22c55e')
+      : (isUp ? 'rgba(239,68,68,0.65)' : 'rgba(34,197,94,0.55)');
+    ctx.fillRect(bx, pad.top + chartH - barH, barW, barH);
+    if (isHover) {
+      ctx.strokeStyle = '#fff'; ctx.lineWidth = 1;
+      ctx.strokeRect(bx, pad.top + chartH - barH, barW, barH);
+    }
+  }
+
+  // Labels
+  ctx.fillStyle = '#6b7280'; ctx.font = '9px JetBrains Mono'; ctx.textAlign = 'right';
+  ctx.fillText('VOL', pad.left - 4, pad.top + 9);
+  ctx.textAlign = 'left';
+  var maxLabel = maxV >= 1e8 ? (maxV/1e8).toFixed(1)+'亿' : maxV >= 1e4 ? (maxV/1e4).toFixed(0)+'万' : maxV.toFixed(0);
+  ctx.fillText(maxLabel, pad.left + 2, pad.top + 9);
+
+  // 存储布局参数供 hover 使用
+  canvas._volLayout = { pad: pad, chartW: chartW, chartH: chartH, n: n, maxV: maxV, barW: barW, gap: gap, volumes: volumes, opens: opens, closes: closes, dates: dates, W: W };
+}
+
+// 成交量 hover（在 drawKline 调用后绑定一次）
+(function setupVolHover() {
+  const volCanvas = document.getElementById('volCanvas');
+  if (!volCanvas || volCanvas._hoverSetup) return;
+  volCanvas._hoverSetup = true;
+
+  const volTooltip = document.createElement('div');
+  volTooltip.id = 'volTooltip';
+  volTooltip.style.cssText = 'display:none;position:absolute;background:rgba(0,0,0,0.88);color:#fff;font-size:11px;font-family:JetBrains Mono,monospace;padding:5px 8px;border-radius:4px;pointer-events:none;z-index:3;white-space:nowrap;';
+  volCanvas.parentElement.appendChild(volTooltip);
+
+  volCanvas.addEventListener('mousemove', function(e) {
+    var L = volCanvas._volLayout;
+    if (!L) { volTooltip.style.display = 'none'; return; }
+    var rect = volCanvas.getBoundingClientRect();
+    var scaleX = L.W / rect.width;
+    var mx = (e.clientX - rect.left) * scaleX;
+    var i = Math.floor((mx - L.pad.left) / (L.chartW / L.n));
+
+    if (i < 0 || i >= L.n || !L.volumes[i]) {
+      volTooltip.style.display = 'none';
+      drawVolume(volCanvas, { dates: L.dates, opens: L.opens, closes: L.closes, volumes: L.volumes }, -1);
+      return;
+    }
+
+    drawVolume(volCanvas, { dates: L.dates, opens: L.opens, closes: L.closes, volumes: L.volumes }, i);
+
+    var rawV = L.volumes[i] / 100;
+    var txt = rawV >= 1e6 ? (rawV/1e6).toFixed(2)+'亿手' :
+              rawV >= 1e4 ? (rawV/1e4).toFixed(1)+'万手' :
+              rawV.toFixed(0)+'手';
+    var isUp = L.closes[i] >= L.opens[i];
+    volTooltip.innerHTML = '<b>' + L.dates[i] + '</b>  VOL <b style="color:' + (isUp ? '#ef4444' : '#22c55e') + '">' + txt + '</b>';
+    volTooltip.style.display = 'block';
+    volTooltip.style.left = Math.min(e.clientX - rect.left + 14, rect.width - 160) + 'px';
+    volTooltip.style.top = '2px';
+  });
+
+  volCanvas.addEventListener('mouseleave', function() {
+    volTooltip.style.display = 'none';
+    var L = volCanvas._volLayout;
+    if (L) drawVolume(volCanvas, { dates: L.dates, opens: L.opens, closes: L.closes, volumes: L.volumes }, -1);
+  });
+})();
+
+function renderInsightSignals(ind) {
+  if (!ind) return;
+  const div = document.getElementById('insSignals');
+  const ma = ind.MA || {}, macd = ind.MACD || {}, kdj = ind.KDJ || {};
+  const rsi = ind.RSI;
+  const cls = (v) => v >= 0 ? 'color:var(--red)' : 'color:var(--green)';
+  let html = '';
+  if (ma.MA5 != null) html += '<span>MA5 <b>' + ma.MA5.toFixed(2) + '</b></span>';
+  if (ma.MA20 != null) html += '<span>MA20 <b>' + ma.MA20.toFixed(2) + '</b></span>';
+  if (ma.MA60 != null) html += '<span>MA60 <b>' + ma.MA60.toFixed(2) + '</b></span>';
+  if (macd.DIF != null) html += '<span>MACD <b style="' + cls(macd.DIF) + '">' + macd.DIF.toFixed(2) + '</b></span>';
+  if (kdj.K != null) html += '<span>KDJ K<b>' + kdj.K.toFixed(1) + '</b> D<b>' + kdj.D.toFixed(1) + '</b></span>';
+  if (rsi != null) {
+    const rsiCls = rsi > 70 ? '#ef4444' : rsi < 30 ? '#22c55e' : '#e8eaed';
+    html += '<span>RSI <b style="color:' + rsiCls + '">' + rsi + '</b></span>';
+  }
+  if (ind.signal) html += '<span style="color:var(--text-secondary);">📡 ' + ind.signal + '</span>';
+  div.innerHTML = html;
+}
+
+function renderInsightFactors(f) {
+  if (!f) return;
+  const div = document.getElementById('insFactors');
+  let html = '';
+  if (f.industry) html += '<span>🏭 ' + f.industry + ' <span style="color:var(--text-muted);font-size:11px;">' + (f.industry_type || '') + '</span></span>';
+  if (f.pe != null) html += '<span>PE <b>' + f.pe + '</b></span>';
+  if (f.roe != null) html += '<span>ROE <b style="color:' + (f.roe > 15 ? 'var(--red)' : 'var(--text)') + '">' + f.roe + '%</b></span>';
+  if (f.eps != null) html += '<span>EPS <b>' + f.eps + '</b></span>';
+  if (f.market_cap_billion != null) html += '<span>市值 <b>' + f.market_cap_billion + '亿</b></span>';
+  div.innerHTML = html || '<span class="text-muted">暂无因子数据</span>';
+}
+
+// 页面加载时自动展示默认股票
+setTimeout(function() { loadInsight(); }, 500);
+
+// ==================== AI 实盘对抗 ====================
+
+var _currentDuelRound = null;
+
+async function startAIDuel() {
+  var btn = document.getElementById('duelBtn');
+  btn.disabled = true; btn.textContent = 'AI选股中…';
+
+  var providers = [];
+  if (document.getElementById('duelMiniMax').checked) providers.push('minimax');
+  if (document.getElementById('duelDeepSeek').checked) providers.push('deepseek');
+  if (document.getElementById('duelXiaomi').checked) providers.push('xiaomi');
+  if (document.getElementById('duelClaude').checked) providers.push('claude');
+  if (!providers.length) {
+    document.getElementById('duelResult').innerHTML = '<div class="text-secondary">请至少选择一个AI参战</div>';
+    btn.disabled = false; btn.textContent = '⚔️ 开局'; return;
+  }
+
+  try {
+    var resp = await apiPost('/api/quant/ai-duel/start', {
+      providers: providers,
+      period_days: parseInt(document.getElementById('duelDays').value) || 7,
+      capital: 100000
+    });
+    _currentDuelRound = resp.round_id;
+    renderDuel(resp);
+    document.getElementById('duelRoundInfo').textContent = '第' + resp.round_id + '轮 · ' + resp.period_days + '天';
+    document.getElementById('duelRefresh').style.display = '';
+    document.getElementById('duelRebalance').style.display = '';
+    btn.textContent = '✅ 已开局';
+  } catch (e) {
+    document.getElementById('duelResult').innerHTML = '<div class="text-error">开局失败: ' + e.message + '</div>';
+    btn.disabled = false; btn.textContent = '⚔️ 开局';
+  }
+}
+
+async function refreshDuel() {
+  if (!_currentDuelRound) return;
+  try {
+    var resp = await apiGet('/api/quant/ai-duel/status/' + _currentDuelRound);
+    renderDuelStatus(resp);
+  } catch (e) {}
+}
+
+async function rebalanceDuel() {
+  if (!_currentDuelRound) return;
+  var btn = document.getElementById('duelRebalance');
+  btn.disabled = true; btn.textContent = 'AI思考中…';
+  try {
+    var resp = await apiPost('/api/quant/ai-duel/rebalance/' + _currentDuelRound, {});
+    if (resp.error) {
+      showToast(resp.error, 'warning');
+      btn.disabled = false; btn.textContent = '📋 AI调仓'; return;
+    }
+    var html = '<div style="font-size:12px;font-weight:500;margin-bottom:8px;">📋 AI 调仓建议</div>';
+    var results = resp.results || [];
+    for (var i = 0; i < results.length; i++) {
+      var r = results[i];
+      html += '<div style="margin-bottom:6px;"><b>' + r.provider.toUpperCase() + '</b>';
+      if (r.error) { html += ' <span style="color:#ef4444;">' + r.error + '</span></div>'; continue; }
+      if (r.summary) html += '<div style="font-size:11px;color:var(--text-secondary);">' + r.summary + '</div>';
+      var decisions = r.decisions || [];
+      for (var j = 0; j < decisions.length; j++) {
+        var d = decisions[j];
+        var actClr = d.action === 'sell' ? '#ef4444' : d.action === 'add' ? '#22c55e' : d.action === 'reduce' ? '#f59e0b' : 'var(--text-secondary)';
+        html += '<span style="font-size:11px;margin-right:8px;">' + d.code + ' <b style="color:' + actClr + '">' + d.action + '</b> ' + (d.reason || '') + '</span>';
+      }
+      html += '</div>';
+    }
+    var tmp = document.createElement('div');
+    tmp.innerHTML = html;
+    tmp.style.cssText = 'background:var(--bg-secondary);border:1px solid var(--accent);border-radius:8px;padding:12px;margin-bottom:8px;';
+    var resultDiv = document.getElementById('duelResult');
+    resultDiv.insertBefore(tmp, resultDiv.firstChild);
+    btn.textContent = '📋 AI调仓 ✓';
+  } catch (e) {
+    showToast('调仓失败: ' + e.message, 'error');
+  }
+  btn.disabled = false;
+}
+
+function renderDuel(resp) {
+  var html = '';
+  var players = resp.players || [];
+  for (var i = 0; i < players.length; i++) {
+    var p = players[i];
+    var personaTag = p.persona ? '<span style="background:rgba(124,138,224,0.15);color:var(--accent-light);font-size:10px;padding:2px 8px;border-radius:10px;margin-left:4px;">🎭 ' + p.persona + '</span>' : '';
+    html += '<div style="background:var(--bg-secondary);border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:6px;">';
+    html += '<b style="font-size:14px;">' + p.provider.toUpperCase() + '</b>' + personaTag;
+    if (p.error) {
+      html += '<div style="color:#ef4444;font-size:12px;margin-top:4px;">❌ ' + p.error + '</div></div>'; continue;
+    }
+    if (p.logic) html += '<div style="font-size:11px;color:var(--text-secondary);margin:2px 0;">💡 ' + p.logic + '</div>';
+    if (p.picks.length) {
+      html += '<table style="width:100%;font-size:11px;margin-top:2px;"><tr style="color:var(--text-muted);"><th style="text-align:left;">股票</th><th style="text-align:right;">买入价</th><th style="text-align:right;">数量</th><th style="text-align:right;">投入</th></tr>';
+      for (var j = 0; j < p.picks.length; j++) {
+        var pk = p.picks[j];
+        html += '<tr><td><b>' + pk.code + '</b> ' + (pk.name || '') + '</td>' +
+          '<td style="text-align:right;">' + pk.price.toFixed(2) + '</td>' +
+          '<td style="text-align:right;">' + pk.quantity + '</td>' +
+          '<td style="text-align:right;">' + formatMoney(pk.invested) + '</td></tr>';
+      }
+      html += '</table>';
+    }
+    html += '</div>';
+  }
+  document.getElementById('duelResult').innerHTML = html || '<div class="text-secondary">所有AI未能选出有效股票</div>';
+}
+
+function renderDuelStatus(resp) {
+  // 交易窗口提示
+  var winText = resp.trading_window ? '🟢 交易窗口开放中' : '⏸ 非交易窗口';
+  var winClr = resp.trading_window ? 'var(--green)' : 'var(--text-muted)';
+  document.getElementById('duelWindow').innerHTML = '<span style="color:' + winClr + ';">' + winText + '</span>';
+
+  var html = '<div style="font-size:11px;color:var(--text-muted);margin-bottom:6px;">' + (resp.started_at || '--') + ' · ' + resp.period_days + '天 · 调仓窗口: 11:00-11:30 / 14:30-15:00</div>';
+  var players = resp.players || [];
+  for (var i = 0; i < players.length; i++) {
+    var p = players[i];
+    var totalPnl = p.current_value - p.total_invested;
+    var totalPnlPct = p.total_invested > 0 ? (totalPnl / p.total_invested * 100) : 0;
+    var pnlClr = totalPnl >= 0 ? 'var(--red)' : 'var(--green)';
+    var isWinner = p.winner;
+
+    html += '<div style="background:' + (isWinner ? 'rgba(124,138,224,0.08)' : 'var(--bg-secondary)') +
+      ';border:1px solid ' + (isWinner ? 'var(--accent)' : 'var(--border)') +
+      ';border-radius:8px;padding:10px;margin-bottom:6px;">';
+    html += '<div style="display:flex;align-items:center;gap:6px;">';
+    html += '<b>' + p.provider.toUpperCase() + '</b>';
+    if (isWinner) html += '<span style="background:var(--accent);color:#fff;font-size:10px;padding:1px 7px;border-radius:10px;">🏆</span>';
+    html += '<span style="margin-left:auto;font-family:JetBrains Mono,monospace;font-size:12px;">投' + formatMoney(p.total_invested) + '</span>';
+    html += '<span style="font-family:JetBrains Mono,monospace;font-size:12px;">→' + formatMoney(p.current_value) + '</span>';
+    html += '<span style="font-family:JetBrains Mono,monospace;font-size:13px;color:' + pnlClr + ';font-weight:600;">' + (totalPnl >= 0 ? '+' : '') + formatMoney(totalPnl) + '</span>';
+    html += '</div>';
+
+    if (p.picks.length) {
+      html += '<table style="width:100%;font-size:10px;margin-top:4px;border-collapse:collapse;">';
+      for (var j = 0; j < p.picks.length; j++) {
+        var pk = p.picks[j];
+        var clr = pk.pnl >= 0 ? 'var(--red)' : 'var(--green)';
+        html += '<tr style="border-top:1px solid var(--border-light);">';
+        html += '<td><b>' + pk.code + '</b></td>';
+        html += '<td style="text-align:right;">' + pk.buy_price.toFixed(2) + '</td>';
+        html += '<td style="text-align:right;">→' + (pk.current_price||0).toFixed(2) + '</td>';
+        html += '<td style="text-align:right;color:' + clr + ';">' + (pk.pnl_pct>=0?'+':'') + pk.pnl_pct.toFixed(1) + '%</td>';
+        if (pk.alert) html += '<td style="color:' + (pk.alert.indexOf('止损')>=0?'#ef4444':'#22c55e') + ';font-size:10px;">' + pk.alert + '</td>';
+        html += '</tr>';
+      }
+      html += '</table>';
+    }
+    html += '</div>';
+  }
+  document.getElementById('duelResult').innerHTML = html || '<div class="text-secondary">无数据</div>';
 }
 </script>
 </body>

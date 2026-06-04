@@ -62,27 +62,6 @@ self.addEventListener('fetch', e => {
   e.respondWith(networkFirst(e.request));
 });
 
-async function cacheFirst(request) {
-  const cached = await caches.match(request);
-  if (cached) return cached;
-
-  try {
-    const res = await fetch(request);
-    if (res.ok) {
-      const cache = await caches.open(CACHE_DYNAMIC);
-      cache.put(request, res.clone());
-    }
-    return res;
-  } catch (err) {
-    // 导航请求回退到 index.html (SPA)
-    if (request.mode === 'navigate') {
-      const fallback = await caches.match('./index.html');
-      if (fallback) return fallback;
-    }
-    throw err;
-  }
-}
-
 async function networkFirst(request) {
   try {
     const res = await fetch(request);

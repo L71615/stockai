@@ -244,6 +244,28 @@ def init_db():
             score_data TEXT DEFAULT '{}',
             created_at TEXT DEFAULT (datetime('now','localtime'))
         )""")
+        # AI 策略对抗 — 对战回合 + 选股记录
+        conn.execute("""CREATE TABLE IF NOT EXISTS ai_duel_rounds (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            period_days INTEGER NOT NULL DEFAULT 7,
+            initial_capital REAL NOT NULL DEFAULT 100000,
+            started_at TEXT DEFAULT (datetime('now','localtime')),
+            ended_at TEXT,
+            status TEXT DEFAULT 'active'
+        )""")
+        conn.execute("""CREATE TABLE IF NOT EXISTS ai_duel_picks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            round_id INTEGER NOT NULL REFERENCES ai_duel_rounds(id) ON DELETE CASCADE,
+            provider TEXT NOT NULL,
+            stock_code TEXT NOT NULL,
+            stock_name TEXT DEFAULT '',
+            buy_price REAL NOT NULL,
+            quantity INTEGER NOT NULL,
+            invested REAL NOT NULL,
+            reason TEXT DEFAULT '',
+            style TEXT DEFAULT '',
+            created_at TEXT DEFAULT (datetime('now','localtime'))
+        )""")
         conn.commit()
     finally:
         conn.close()

@@ -26,11 +26,16 @@ const apiDelete = (path) => api(path, { method: 'DELETE' });
 
 // ==================== AI 配置 ====================
 function getAIConfig() {
+  // 优先从 localStorage 读（快速），同时返回标记表示是否已配置
   try {
     const saved = localStorage.getItem('stockai_ai_config');
-    if (saved) return JSON.parse(saved);
+    if (saved) {
+      const cfg = JSON.parse(saved);
+      if (cfg.apiKey) return cfg;
+    }
   } catch (e) {}
-  return { provider: 'minimax', apiKey: '', model: 'MiniMax-M2.7' };
+  // 返回空配置，后端会从 settings 表读取已保存的 Key
+  return { provider: '', apiKey: '', model: '' };
 }
 
 // ==================== Loading / Empty / Error 状态 ====================

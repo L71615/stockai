@@ -23,7 +23,7 @@ class StaticFiles(_StaticFiles):
                 message["headers"] = list(headers.items())
             await send(message)
         await super().__call__(scope, receive, send_wrapper)
-from routers import auth, stocks, skills, ai, agents, memory, dca, settings as settings_router, quant
+from routers import auth, stocks, skills, ai, agents, memory, dca, settings as settings_router, quant, holdings, transactions
 
 app = FastAPI(title="StockAI", version="0.2.0", docs_url="/api/docs")
 
@@ -39,6 +39,8 @@ app.add_middleware(
 # API 路由
 app.include_router(auth.router, prefix="/api/auth", tags=["Auth"])
 app.include_router(stocks.router, prefix="/api/stocks", tags=["Stocks"])
+app.include_router(holdings.router, prefix="/api/stocks", tags=["Holdings"])
+app.include_router(transactions.router, prefix="/api/stocks", tags=["Transactions"])
 app.include_router(skills.router, prefix="/api/skills", tags=["Skills"])
 app.include_router(agents.router, prefix="/api/agents", tags=["Agents"])
 app.include_router(memory.router, prefix="/api", tags=["Memory"])

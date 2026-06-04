@@ -45,14 +45,6 @@ def _symbol(code: str) -> str:
     return f"sz{c}"
 
 
-def _index_symbol(code: str) -> str:
-    """指数代码转腾讯格式"""
-    c = code.strip()
-    if c.startswith(("60", "68", "000")):
-        return f"s_sh{c}"
-    return f"s_sz{c}"
-
-
 # ==================== 个股行情 ====================
 
 def _parse_tencent_quote(raw: str) -> Optional[dict]:
@@ -117,91 +109,94 @@ def get_quote(code: str) -> Optional[dict]:
     return None
 
 
-def get_quotes_batch(codes: list[str]) -> dict[str, dict]:
-    """批量获取行情"""
-    results = {}
-    if not codes:
-        return results
-
-    # 腾讯 API 支持批量，最多约 50 个
-    now = time.time()
-    uncached = []
-    for c in codes:
-        if c in _QUOTE_CACHE:
-            ts, data = _QUOTE_CACHE[c]
-            if now - ts < _QUOTE_TTL:
-                results[c] = data
-            else:
-                uncached.append(c)
-        else:
-            uncached.append(c)
-
-    if uncached:
-        symbols = ",".join(_symbol(c) for c in uncached)
-        try:
-            raw = _http_get(f"https://qt.gtimg.cn/q={symbols}")
-            # 多个返回值用换行分隔
-            lines = raw.strip().split("\n")
-            for line in lines:
-                q = _parse_tencent_quote(line)
-                if q:
-                    c = q["code"]
-                    results[c] = q
-                    _QUOTE_CACHE[c] = (now, q)
-        except Exception as e:
-            logger.warning(f"get_quotes_batch: {e}")
-
-    return results
-
-
 def get_stock_name(code: str) -> str:
     """获取股票名称"""
     q = get_quote(code)
     return q["name"] if q else ""
 
 
-# ==================== 指数行情 ====================
-
-def get_index_quote(code: str) -> Optional[dict]:
-    """获取单个 A 股指数行情"""
-    now = time.time()
-    if code in _INDEX_CACHE:
-        ts, data = _INDEX_CACHE[code]
-        if now - ts < _INDEX_TTL:
-            return data
-
-    try:
-        raw = _http_get(f"https://qt.gtimg.cn/q={_index_symbol(code)}")
-        q = _parse_tencent_quote(raw)
-        if q:
-            _INDEX_CACHE[code] = (now, q)
-            return q
-    except Exception as e:
-        logger.warning(f"get_index_quote({code}): {e}")
-    return None
+# 腾讯 API 全球指数符号映射: 短代码 → (腾讯符号, 名称, 地区)
+_TENCENT_GLOBAL_MAP: dict[str, tuple[str, str, str]] = {
+    # A股
+    "000001": ("s_sh000001", "上证指数", "中国"),
+    "399001": ("s_sz399001", "深证成指", "中国"),
+    "399006": ("s_sz399006", "创业板指", "中国"),
+    # 港股
+    "HSI":    ("s_hkHSI",  "恒生指数", "中国香港"),
+    # 美股
+    "IXIC":   ("s_usIXIC", "纳斯达克", "美国"),
+    "INX":    ("s_usINX",  "标普500",  "美国"),
+    "DJI":    ("s_usDJI",  "道琼斯",   "美国"),
+}
 
 
 def get_global_indices() -> list[dict]:
-    """获取 A 股三大指数行情（使用腾讯 API）"""
-    results = []
+    """获取全球主要指数行情（腾讯 API 批量请求）
 
-    for idx_code, name, region in [
-        ("000001", "上证指数", "中国"),
-        ("399001", "深证成指", "中国"),
-        ("399006", "创业板指", "中国"),
-    ]:
-        q = get_index_quote(idx_code)
-        if q:
-            results.append({
-                "code": idx_code,
-                "name": q.get("name") or name,
-                "region": region,
-                "price": q.get("price"),
-                "change": q.get("change"),
-                "change_pct": q.get("change_pct"),
-            })
+    腾讯 API 支持约 7 个全球指数（A股3 + 港股1 + 美股3）。
+    其余指数（日经/韩国/欧洲/印度/巴西/新加坡/台湾）暂无免费数据源，
+    stocks.py 的 get_global_indices 会为缺失指数生成 price=null 的占位卡片。
+    """
+    if not _TENCENT_GLOBAL_MAP:
+        return []
+
+    now = time.time()
+    results: list[dict] = []
+    uncached_symbols: list[str] = []
+    uncached_codes: list[str] = []
+
+    # 检查缓存
+    for short_code, (tencent_sym, name, region) in _TENCENT_GLOBAL_MAP.items():
+        if short_code in _INDEX_CACHE:
+            ts, data = _INDEX_CACHE[short_code]
+            if now - ts < _INDEX_TTL:
+                results.append(_make_index_result(short_code, name, region, data))
+                continue
+        uncached_symbols.append(tencent_sym)
+        uncached_codes.append(short_code)
+
+    if not uncached_symbols:
+        return results
+
+    # 批量请求腾讯 API（换行分隔多个返回值）
+    try:
+        syms = ",".join(uncached_symbols)
+        raw = _http_get(f"https://qt.gtimg.cn/q={syms}", encoding="gbk")
+        lines = raw.strip().split("\n")
+
+        # 解析每一行，建立 规范化代码 → 行情 的临时映射
+        # 注意：美国指数返回的 code 带前导 "."（如 ".IXIC"），需要 strip
+        sym_to_quote: dict[str, dict] = {}
+        for line in lines:
+            q = _parse_tencent_quote(line)
+            if q:
+                raw_code = q.get("code", "")
+                normalized = raw_code.lstrip(".")  # .IXIC → IXIC, HSI → HSI
+                sym_to_quote[normalized] = q
+
+        # 匹配回 uncached 列表
+        for i, short_code in enumerate(uncached_codes):
+            q = sym_to_quote.get(short_code)
+            if q:
+                _INDEX_CACHE[short_code] = (now, q)
+                name, region = _TENCENT_GLOBAL_MAP[short_code][1], _TENCENT_GLOBAL_MAP[short_code][2]
+                results.append(_make_index_result(short_code, name, region, q))
+    except Exception as e:
+        logger.warning(f"get_global_indices batch: {e}")
 
     return results
+
+
+def _make_index_result(code: str, name: str, region: str, quote: dict) -> dict:
+    """组装标准化的指数结果"""
+    return {
+        "code": code,
+        "name": quote.get("name") or name,
+        "region": region,
+        "price": quote.get("price"),
+        "change": quote.get("change"),
+        "change_pct": quote.get("change_pct"),
+    }
 
 
 # ==================== K 线 ====================
@@ -334,15 +329,8 @@ def _f(val) -> Optional[float]:
 
 
 def _detect_type(code: str) -> str:
-    if code.startswith(("510", "511", "512", "513", "514", "515", "516", "517", "518",
-                        "159", "588", "560", "561", "562", "563", "564", "565", "566",
-                        "567", "568", "569")):
-        return "etf"
-    if code.startswith(("60", "68", "30", "002")):
-        return "stock"
-    if code.startswith("00"):
-        return "fund"
-    return "fund"
+    from services.utils import detect_asset_type
+    return detect_asset_type(code)
 
 
 def _market_label(code: str) -> str:

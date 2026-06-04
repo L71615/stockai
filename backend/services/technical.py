@@ -7,8 +7,17 @@ from services.utils import run_curl, get_market
 
 
 def fetch_kline(code: str, market: str = None, days: int = 120) -> dict[str, Any]:
-    """获取日K线数据（AKShare 优先，东方财富兜底）"""
-    # 优先 AKShare
+    """获取日K线数据（Baostock → 腾讯 → 东方财富，多源兜底）"""
+    # 1. Baostock（15年历史数据，前复权，最可靠）
+    try:
+        from services.baostock_adapter import get_kline as bs_kline
+        result = bs_kline(code, days)
+        if result and "error" not in result:
+            return result
+    except Exception:
+        pass
+
+    # 2. 腾讯财经 API（实时性好，备份）
     try:
         from services.akshare_adapter import get_kline
         result = get_kline(code, days)
@@ -17,7 +26,7 @@ def fetch_kline(code: str, market: str = None, days: int = 120) -> dict[str, Any
     except Exception:
         pass
 
-    # 兜底：东方财富 push2his
+    # 3. 东方财富 push2his（最后兜底，IPv6 不稳定）
     if market is None:
         market = get_market(code)
     secid = f"{market}.{code}"

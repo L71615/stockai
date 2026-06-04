@@ -139,13 +139,6 @@ a:hover { text-decoration: underline; }
 .nav-section {
   padding: 0 0 8px;
 }
-.nav-section-title {
-  font-size: var(--text-xs);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  color: var(--text-muted);
-  padding: 8px 20px 4px;
-}
 .nav-item {
   display: flex;
   align-items: center;
@@ -172,14 +165,6 @@ a:hover { text-decoration: underline; }
   width: 18px;
   text-align: center;
   font-size: var(--text-base);
-}
-.nav-badge {
-  margin-left: auto;
-  font-size: 10px;
-  padding: 2px 7px;
-  border-radius: 10px;
-  background: var(--accent-bg);
-  color: var(--accent-light);
 }
 .nav-divider {
   margin: 8px 20px;
@@ -409,24 +394,6 @@ a:hover { text-decoration: underline; }
   flex-direction: column;
   gap: 12px;
 }
-.ai-msg {
-  font-size: var(--text-sm);
-  line-height: 1.6;
-  padding: 10px 14px;
-  border-radius: var(--radius-sm);
-  max-width: 85%;
-  word-break: break-word;
-}
-.ai-msg.user {
-  align-self: flex-end;
-  background: var(--accent);
-  color: #fff;
-}
-.ai-msg.assistant {
-  align-self: flex-start;
-  background: var(--bg-secondary);
-  border: 1px solid var(--border);
-}
 .ai-input-row {
   display: flex;
   border-top: 1px solid var(--border);
@@ -454,61 +421,6 @@ a:hover { text-decoration: underline; }
   transition: .15s;
 }
 .ai-input-row button:hover { filter: brightness(1.15); }
-
-/* ==================== SKILLS ==================== */
-.skills-list {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: var(--space-md);
-}
-.skill-card {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 20px;
-  transition: .15s;
-}
-.skill-card:hover { border-color: var(--accent); }
-.skill-card-header {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 10px;
-}
-.skill-icon {
-  width: 40px; height: 40px;
-  border-radius: var(--radius-sm);
-  background: var(--bg-secondary);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: var(--text-xl);
-}
-.skill-name { font-weight: 500; }
-.skill-desc { font-size: 12px; color: var(--text-secondary); line-height: 1.5; margin-bottom: 14px; }
-.skill-action { display: flex; justify-content: space-between; align-items: center; }
-.skill-tags-row {
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
-  padding: 0 20px 14px;
-}
-.skill-tag-inline {
-  font-size: var(--text-xs);
-  padding: 3px 10px;
-  border-radius: 20px;
-  background: var(--bg-primary);
-  border: 1px solid var(--border);
-  color: var(--text-secondary);
-  cursor: pointer;
-  transition: .15s;
-  white-space: nowrap;
-}
-.skill-tag-inline:hover, .skill-tag-inline.installed {
-  border-color: var(--accent);
-  color: var(--accent-light);
-  background: var(--accent-bg);
-}
 
 /* ==================== TOGGLE SWITCH ==================== */
 .toggle {
@@ -850,7 +762,6 @@ a:hover { text-decoration: underline; }
 .skeleton-row { display: flex; gap: 12px; margin-bottom: 12px; }
 .skeleton-cell { height: 14px; flex: 1; }
 .skeleton-cell-sm { height: 14px; flex: 1; max-width: 80px; }
-.skeleton-cell-lg { height: 32px; flex: 1; }
 
 /* ==================== Button: Retry ==================== */
 .btn-retry {
@@ -958,44 +869,4 @@ a:hover { text-decoration: underline; }
   color: var(--text-secondary);
 }
 
-/* AI insight body text (editorial style) */
-.ai-insight-bar .ai-body {
-  font-size: var(--text-base);
-  color: var(--text-secondary);
-  line-height: 1.7;
-  max-width: 600px;
-  margin-top: var(--space-sm);
-}
 
-/* AI insight reasoning (collapsible analysis) */
-.ai-insight-bar .ai-reasoning {
-  margin-top: var(--space-md);
-  padding: var(--space-md);
-  background: var(--bg-primary);
-  border-radius: var(--radius-sm);
-  font-size: var(--text-sm);
-  color: var(--text-muted);
-  font-style: italic;
-  line-height: 1.6;
-}
-.ai-insight-bar .ai-reasoning::before {
-  content: "为什么这么说? ";
-  color: var(--ai-accent);
-  font-style: normal;
-  font-weight: 500;
-}
-
-/* ==================== Freshness Indicator ==================== */
-.freshness-dot {
-  display: inline-block;
-  width: 6px; height: 6px;
-  border-radius: 50%;
-  margin-right: 4px;
-  vertical-align: middle;
-}
-.freshness-dot.live { background: var(--green); }
-.freshness-dot.stale { background: var(--text-muted); }
-.data-freshness {
-  font-size: var(--text-xs);
-  color: var(--text-muted);
-}

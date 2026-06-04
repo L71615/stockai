@@ -14,9 +14,9 @@ class ChatRequest(BaseModel):
     message: str
     conversationId: int | None = None
     agentId: int | None = None     # 选择的 Agent ID，用于加载记忆
-    provider: str = ""       # minimax / openai / claude / custom
-    apiKey: str = ""         # 前端传入，不落地存储
-    model: str = ""          # 模型名，为空则用默认
+    provider: str = ""       # 留空从 settings 读取
+    apiKey: str = ""         # 留空从 settings 读取（推荐：保存后不传）
+    model: str = ""          # 留空使用默认模型
     baseUrl: str = ""        # 自定义 base URL（provider=custom 时使用）
     systemPrompt: str = ""   # Agent 系统提示词
 

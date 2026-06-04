@@ -105,19 +105,17 @@ def toggle_dca(plan_id: int):
 
 
 class MemoRequest(BaseModel):
-    provider: str = ""    # AI 供应商
-    apiKey: str = ""      # API Key（前端传入）
-    model: str = ""       # 模型名
+    provider: str = ""    # 留空从 settings 读取
+    apiKey: str = ""      # 留空从 settings 读取
+    model: str = ""       # 留空使用默认
 
 
 @router.post("/dca/{plan_id}/memo")
 async def generate_memo(plan_id: int, body: MemoRequest):
-    """为定投计划生成 AI 备忘录"""
+    """为定投计划生成 AI 备忘录（apiKey 留空则使用已保存的配置）"""
     plan = query_one("SELECT * FROM dca_plans WHERE id = ? AND user_id = 1", (plan_id,))
     if not plan:
         raise HTTPException(404, "定投计划不存在")
-    if not body.apiKey:
-        raise HTTPException(400, "请先在设置页配置 AI 供应商和 API Key")
 
     # 获取实时行情（AKShare 优先，东方财富兜底）
     code = plan["stock_code"]

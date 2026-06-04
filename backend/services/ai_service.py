@@ -9,6 +9,8 @@ from openai import AsyncOpenAI
 from config import (
     AI_PROVIDER, CLAUDE_API_KEY, CLAUDE_MODEL,
     OPENAI_API_KEY, MINIMAX_API_KEY, MINIMAX_MODEL, MINIMAX_BASE_URL,
+    DEEPSEEK_API_KEY, DEEPSEEK_MODEL, DEEPSEEK_BASE_URL,
+    XIAOMI_API_KEY, XIAOMI_MODEL, XIAOMI_BASE_URL,
 )
 
 _openai_clients: dict[str, AsyncOpenAI] = {}
@@ -48,6 +50,8 @@ async def _chat_openai_compatible(
 
 PROVIDER_DEFAULTS = {
     "minimax":  (MINIMAX_API_KEY, MINIMAX_MODEL, MINIMAX_BASE_URL, "MiniMax"),
+    "deepseek": (DEEPSEEK_API_KEY, DEEPSEEK_MODEL, DEEPSEEK_BASE_URL, "DeepSeek"),
+    "xiaomi":   (XIAOMI_API_KEY, XIAOMI_MODEL, XIAOMI_BASE_URL, "小米"),
     "openai":   (OPENAI_API_KEY, "gpt-4o", "https://api.openai.com/v1", "OpenAI"),
 }
 
@@ -98,9 +102,21 @@ async def ai_chat(
     base_url: str = "",
     system_prompt: str = "",
 ) -> str:
-    """统一的 AI 对话入口（多供应商调度）"""
+    """统一的 AI 对话入口（多供应商调度）
+
+    api_key/provider/model 为空时，自动从 settings 表读取已保存的配置。
+    这样前端无需每次请求都传 API Key。
+    """
     messages = list(conversation_history or [])
     messages.append({"role": "user", "content": message})
+
+    # 参数为空时，从服务端 settings 表读取该供应商的配置
+    p = provider or AI_PROVIDER
+    if not api_key or not model:
+        stored = _load_stored_ai_config(p)
+        api_key = api_key or stored.get("api_key", "")
+        model = model or stored.get("model", "")
+        base_url = base_url or stored.get("base_url", "")
 
     p = provider or AI_PROVIDER
 
@@ -118,3 +134,40 @@ async def ai_chat(
             return f"（自定义 API 调用失败: {e}）"
     else:
         return f"（不支持的 AI 供应商: {p}）"
+
+
+def _load_stored_ai_config(provider: str = "") -> dict:
+    """从 settings 表读取已保存的 AI 配置
+
+    - 多供应商模式: {"minimax": {"api_key":"...","model":"..."}, "deepseek": {...}}
+    - 旧版单配置:   {"provider":"minimax","api_key":"...","model":"..."}
+    - 指定 provider 时，只返回该供应商的配置
+    """
+    try:
+        from database import query_one
+        row = query_one("SELECT value FROM settings WHERE key = 'ai_config'")
+        if row and row.get("value"):
+            import json as _json
+            cfg = _json.loads(row["value"])
+            if isinstance(cfg, dict):
+                # 多供应商模式
+                if provider and provider in cfg and isinstance(cfg[provider], dict):
+                    return cfg[provider]
+                if provider and "api_key" in cfg:
+                    # 旧版单配置，直接返回
+                    return cfg if cfg.get("provider") == provider else {}
+                # 不指定 provider，返回原始数据
+                return cfg
+    except Exception:
+        pass
+    return {}
+
+
+def save_stored_ai_config(config: dict) -> None:
+    """保存 AI 配置到 settings 表（支持单配置或多供应商字典）"""
+    from database import execute
+    import json as _json
+    execute(
+        "INSERT OR REPLACE INTO settings (key, value) VALUES ('ai_config', ?)",
+        (_json.dumps(config, ensure_ascii=False),),
+    )
