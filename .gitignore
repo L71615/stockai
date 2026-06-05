@@ -9,3 +9,27 @@ node_modules/
 .DS_Store
 Thumbs.db
 .gstack/
+
+# --- 本地开发工具 ---
+.claude/
+.context/
+skills/
+tests/
+CLAUDE.md
+SKILLS.md
+TODOS.md
+PROJECT_PLAN.md
+pytest.ini
+requirements-dev.txt
+start.bat
+
+# --- Docker（仅本地使用）---
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+# --- 私密数据 ---
+backend/memory/
+
+# --- dev 计划文件 ---
+docs/superpowers/
