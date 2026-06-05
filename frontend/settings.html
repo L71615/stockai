@@ -103,7 +103,7 @@ function renderAIProviders() {
     html += '<div style="font-weight:500;margin-bottom:8px;">' + p.name + '</div>';
     html += '<div style="display:flex;gap:8px;flex-wrap:wrap;">';
     html += '<div style="flex:1;min-width:180px;"><label class="form-label">API Key</label>';
-    html += '<input type="password" class="form-input" id="key_' + p.id + '" placeholder="sk-..." style="width:100%;"></div>';
+    html += '<input type="password" class="form-input" id="key_' + p.id + '" placeholder="sk-..." autocomplete="off" style="width:100%;"></div>';
     html += '<div style="flex:1;min-width:150px;"><label class="form-label">模型</label>';
     html += '<input type="text" class="form-input" id="model_' + p.id + '" placeholder="' + p.defaultModel + '" style="width:100%;"></div>';
     if (p.defaultBaseUrl !== undefined) {

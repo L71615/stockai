@@ -464,24 +464,24 @@ async function loadHoldings() {
     kpiRow.innerHTML = `
       <div class="kpi-card">
         <div class="kpi-label">持仓总市值</div>
-        <div class="kpi-value">${formatMoney(summary.total_value)}</div>
-        <div class="kpi-sub ${summary.total_pnl >= 0 ? 'up' : 'down'}">
+        <div class="kpi-value" id="kpiTotalValue">${formatMoney(summary.total_value)}</div>
+        <div class="kpi-sub ${summary.total_pnl >= 0 ? 'up' : 'down'}" id="kpiTotalPnl">
           ${formatMoney(summary.total_pnl)} (${formatPercent(summary.total_pnl_pct)})
         </div>
       </div>
       <div class="kpi-card">
         <div class="kpi-label">持仓总成本</div>
-        <div class="kpi-value">${formatMoney(summary.total_cost)}</div>
+        <div class="kpi-value" id="kpiTotalCost">${formatMoney(summary.total_cost)}</div>
         <div class="kpi-sub">${typeLabel || holdings.length + ' 只'}</div>
       </div>
       <div class="kpi-card">
         <div class="kpi-label">今日盈亏</div>
-        <div class="kpi-value ${summary.today_pnl >= 0 ? 'up' : 'down'}">${formatMoney(summary.today_pnl)}</div>
+        <div class="kpi-value ${summary.today_pnl >= 0 ? 'up' : 'down'}" id="kpiTodayPnl">${formatMoney(summary.today_pnl)}</div>
         <div class="kpi-sub text-secondary">基金为估算值</div>
       </div>
       <div class="kpi-card">
         <div class="kpi-label">年化收益 (XIRR)</div>
-        <div class="kpi-value ${(xirrData.total_xirr || 0) >= 0 ? 'up' : 'down'}">
+        <div class="kpi-value ${(xirrData.total_xirr || 0) >= 0 ? 'up' : 'down'}" id="kpiXirr">
           ${xirrData.total_xirr != null ? (xirrData.total_xirr >= 0 ? '+' : '') + (xirrData.total_xirr * 100).toFixed(2) + '%' : '--'}
         </div>
         <div class="kpi-sub text-secondary">资金加权年化回报</div>
@@ -494,10 +494,10 @@ async function loadHoldings() {
       const typeTag = at === 'etf' ? '<span class="tag tag-sz">ETF</span>' : at === 'fund' ? '<span class="tag" style="background:rgba(59,130,246,0.15);color:#3b82f6;">基金</span>' : '';
 
       const qtyLabel = at === 'fund' ? '份' : '股';
-      const costLabel = at === 'fund' ? '成本净值' : '成本价';
+      const costLabel = (at === 'fund' || at === 'etf') ? '成本净值' : '成本价';
       const qty = h.quantity || (h.shares || 0);
       const cost = h.cost_price || 0;
-      const price = h.current_price != null ? h.current_price.toFixed(at === 'fund' ? 4 : 2) : '--';
+      const price = h.current_price != null ? h.current_price.toFixed((at === 'fund' || at === 'etf') ? 4 : 2) : '--';
       const changePct = h.change_pct != null ? (h.change_pct > 0 ? '+' : '') + h.change_pct.toFixed(2) + '%' : '--';
       const changeCls = (h.change_pct || 0) >= 0 ? 'up' : 'down';
       const marketVal = formatMoney(h.market_value);
@@ -528,19 +528,19 @@ async function loadHoldings() {
       const divNote = `<div style="font-size:10px;color:${divAmount > 0 ? 'var(--green)' : 'var(--text-muted)'};margin-top:2px;cursor:pointer;" onclick="event.stopPropagation();showDivForm('${h.stock_code}','${h.stock_name}',${qty})" title="点击记录股息">${divAmount > 0 ? '累计股息 ' + formatMoney(divAmount) : '＋ 记录股息'}</div>`;
 
       return `
-        <tr>
+        <tr data-hid="${h.id}">
           <td>
             <div class="stock-name">${alertIcon} ${h.stock_name} ${typeTag}</div>
             <div class="stock-code">${h.stock_code} ${getMarketTag(h.market)}${estLabel}</div>
             ${at !== 'fund' ? divNote : ''}
           </td>
-          <td>${qty}<span style="font-size:10px;color:var(--text-muted);">${qtyLabel}</span></td>
-          <td style="cursor:pointer;color:var(--accent-light);text-decoration:underline;" onclick="showLots(${h.id},'${h.stock_code}','${h.stock_name}','${at}')" title="点击查看买入批次">${cost.toFixed(at === 'fund' ? 4 : 2)}</td>
-          <td class="font-mono">${price}${estLabel}</td>
-          <td>${marketVal}</td>
-          <td class="${changeCls}">${changePct}</td>
-          <td class="${profitCls}">${profit}</td>
-          <td>${at !== 'fund' ? dcaCell : '<span style="font-size:11px;color:var(--text-muted);">不适用</span>'}</td>
+          <td class="qty-cell">${qty}<span style="font-size:10px;color:var(--text-muted);">${qtyLabel}</span></td>
+          <td style="cursor:pointer;color:var(--accent-light);text-decoration:underline;" onclick="showLots(${h.id},'${h.stock_code}','${h.stock_name}','${at}')" title="点击查看买入批次">${cost.toFixed((at === 'fund' || at === 'etf') ? 4 : 2)}</td>
+          <td class="font-mono price-cell">${price}${estLabel}</td>
+          <td class="mktval-cell">${marketVal}</td>
+          <td class="change-cell ${changeCls}">${changePct}</td>
+          <td class="pnl-cell ${profitCls}">${profit}</td>
+          <td>${dcaCell}</td>
           <td>
             ${at !== 'fund' ? `<button class="btn btn-outline btn-sm" onclick="showIndicators('${h.stock_code}','${h.stock_name}')" title="技术指标">📈</button>` : ''}
             <button class="btn btn-outline btn-sm" onclick="editJournal(${h.id})" title="持仓笔记" style="${(h.journal||'') ? 'color:var(--green);' : ''}">📝</button>
@@ -555,7 +555,7 @@ async function loadHoldings() {
     table.innerHTML = `
       <table class="data-table">
         <thead>
-          <tr><th>资产</th><th>持仓</th><th>${holdings[0] && holdings[0].asset_type === 'fund' ? '成本净值' : '成本价'}</th><th>现价/净值</th><th>市值</th><th>今日涨跌</th><th>持仓盈亏</th><th>定投</th><th>操作</th></tr>
+          <tr><th>资产</th><th>持仓</th><th>${holdings[0] && (holdings[0].asset_type === 'fund' || holdings[0].asset_type === 'etf') ? '成本净值' : '成本价'}</th><th>现价/净值</th><th>市值</th><th>今日涨跌</th><th>持仓盈亏</th><th>定投</th><th>操作</th></tr>
         </thead>
         <tbody>${rows}</tbody>
       </table>
@@ -600,7 +600,7 @@ async function onCodeInput() {
       const TYPE_TAGS = {stock:'tag tag-sh', etf:'tag tag-sz', fund:'tag tag-bj'};
       lpType.textContent = TYPE_LABELS[data.type] || data.type;
       lpType.className = TYPE_TAGS[data.type] || '';
-      lpPrice.textContent = data.price != null ? '¥' + Number(data.price).toFixed(data.type==='fund'?4:2) : '';
+      lpPrice.textContent = data.price != null ? '¥' + Number(data.price).toFixed((data.type==='fund'||data.type==='etf')?4:2) : '';
       const pct = data.change_pct;
       lpChange.textContent = pct != null ? (pct>=0?'+':'') + Number(pct).toFixed(2) + '%' : '';
       lpChange.className = getChangeClass(pct);
@@ -1024,26 +1024,10 @@ async function loadDiversification() {
     badge.textContent = data.risk_level;
     badge.style.cssText = `background:${riskBg[data.risk_level]||'var(--bg-secondary)'};color:${riskColors[data.risk_level]||'var(--text)'};font-size:12px;`;
 
-    // 行业分布柱状图
-    const maxIndPct = data.by_industry[0] ? data.by_industry[0].pct : 0;
-    document.getElementById('industryChart').innerHTML = data.by_industry.map(item => {
-      const color = item.pct > 40 ? 'red' : item.pct > 20 ? 'yellow' : 'green';
-      return `<div class="bar-row">
-        <span class="bar-label">${item.name}</span>
-        <span class="bar-track"><span class="bar-fill ${color}" style="width:${item.pct}%"></span></span>
-        <span class="bar-pct">${item.pct}%</span>
-      </div>`;
-    }).join('') || '<div class="text-secondary">无数据</div>';
-
-    // 市场分布柱状图
-    document.getElementById('marketChart').innerHTML = data.by_market.map(item => {
-      const color = item.pct > 70 ? 'red' : item.pct > 40 ? 'yellow' : 'green';
-      return `<div class="bar-row">
-        <span class="bar-label">${item.name}</span>
-        <span class="bar-track"><span class="bar-fill ${color}" style="width:${item.pct}%"></span></span>
-        <span class="bar-pct">${item.pct}%</span>
-      </div>`;
-    }).join('') || '<div class="text-secondary">无数据</div>';
+    // 行业分布环形图
+    drawDonut('industryChart', data.by_industry);
+    // 市场分布环形图
+    drawDonut('marketChart', data.by_market);
 
     // 风险提示
     const warning = document.getElementById('riskWarning');
@@ -1058,6 +1042,71 @@ async function loadDiversification() {
   } catch(err) {
     document.getElementById('diversCard').style.display = 'none';
   }
+}
+
+// ========================= 环形饼图 =========================
+function drawDonut(containerId, items) {
+  const container = document.getElementById(containerId);
+  container.innerHTML = '';
+  if (!items || !items.length) {
+    container.innerHTML = '<div class="text-secondary text-sm">无数据</div>';
+    return;
+  }
+
+  const colors = ['#7c8ae0','#26a69a','#ef5350','#f59e0b','#3b82f6',
+                  '#c4b5fd','#60a5fa','#f87171','#a78bfa','#34d399'];
+  const size = 180;
+  const radius = 65;
+  const hole = 35;
+
+  const canvas = document.createElement('canvas');
+  canvas.width = size * 2;
+  canvas.height = size;
+  canvas.style.width = size * 2 + 'px';
+  canvas.style.height = size + 'px';
+  canvas.style.display = 'block';
+  container.appendChild(canvas);
+  const ctx = canvas.getContext('2d');
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = size * 2 * dpr;
+  canvas.height = size * dpr;
+  ctx.scale(dpr, dpr);
+
+  const cx = radius + 15, cy = size / 2;
+  const total = items.reduce((s, i) => s + i.pct, 0) || 100;
+  let angle = -Math.PI / 2;
+
+  // 画饼
+  items.forEach((item, idx) => {
+    const slice = (item.pct / total) * Math.PI * 2;
+    ctx.beginPath();
+    ctx.moveTo(cx, cy);
+    ctx.arc(cx, cy, radius, angle, angle + slice);
+    ctx.closePath();
+    ctx.fillStyle = colors[idx % colors.length];
+    ctx.fill();
+    angle += slice;
+  });
+
+  // 挖空
+  ctx.beginPath();
+  ctx.arc(cx, cy, hole, 0, Math.PI * 2);
+  ctx.fillStyle = '#0a0c14';
+  ctx.fill();
+
+  // 图例
+  const legendX = cx + radius + 20;
+  items.forEach((item, idx) => {
+    const y = 12 + idx * 28;
+    ctx.fillStyle = colors[idx % colors.length];
+    ctx.fillRect(legendX, y - 5, 10, 10);
+    ctx.fillStyle = '#e8eaed';
+    ctx.font = '12px -apple-system, PingFang SC, sans-serif';
+    ctx.fillText(item.name, legendX + 15, y + 4);
+    ctx.fillStyle = '#9ca3af';
+    ctx.font = '11px JetBrains Mono, monospace';
+    ctx.fillText(item.pct + '%', legendX + 15, y + 16);
+  });
 }
 
 function toggleNews() {
@@ -1219,7 +1268,7 @@ async function showLots(holdingId, stockCode, stockName, assetType) {
       content.innerHTML = '<div class="empty-state"><p>暂无买入记录</p></div>';
       return;
     }
-    const isFund = assetType === 'fund';
+    const isFundOrETF = (assetType === 'fund' || assetType === 'etf');
     const currentCost = data.current_cost;
     const currentQty = data.current_quantity;
     content.innerHTML = `
@@ -1228,8 +1277,8 @@ async function showLots(holdingId, stockCode, stockName, assetType) {
           <tr style="color:var(--text-secondary);">
             <th style="text-align:left;padding:4px 8px;">日期</th>
             <th style="text-align:right;padding:4px 8px;">金额</th>
-            <th style="text-align:right;padding:4px 8px;">${isFund ? '净值' : '单价'}</th>
-            <th style="text-align:right;padding:4px 8px;">${isFund ? '份额' : '数量'}</th>
+            <th style="text-align:right;padding:4px 8px;">${isFundOrETF ? '净值' : '单价'}</th>
+            <th style="text-align:right;padding:4px 8px;">${isFundOrETF ? '份额' : '数量'}</th>
             <th style="text-align:left;padding:4px 8px;">备注</th>
           </tr>
         </thead>
@@ -1238,7 +1287,7 @@ async function showLots(holdingId, stockCode, stockName, assetType) {
             <tr style="border-top:1px solid var(--border-light);">
               <td style="padding:6px 8px;">${l.traded_at}</td>
               <td style="padding:6px 8px;text-align:right;font-variant-numeric:tabular-nums;">${formatMoney(l.amount)}</td>
-              <td style="padding:6px 8px;text-align:right;font-variant-numeric:tabular-nums;">${l.price.toFixed(isFund ? 4 : 2)}</td>
+              <td style="padding:6px 8px;text-align:right;font-variant-numeric:tabular-nums;">${l.price.toFixed(isFundOrETF ? 4 : 2)}</td>
               <td style="padding:6px 8px;text-align:right;font-variant-numeric:tabular-nums;">${l.quantity}</td>
               <td style="padding:6px 8px;font-size:11px;color:var(--text-muted);">${l.note || ''}</td>
             </tr>
@@ -1246,8 +1295,8 @@ async function showLots(holdingId, stockCode, stockName, assetType) {
         </tbody>
       </table>
       <div style="margin-top:12px;padding:8px 12px;background:var(--bg-secondary);border-radius:6px;font-size:12px;display:flex;gap:24px;">
-        <span>总${isFund ? '份额' : '股数'} <b>${currentQty}</b></span>
-        <span>加权成本 <b>${currentCost.toFixed(isFund ? 4 : 2)}</b></span>
+        <span>总${isFundOrETF ? '份额' : '股数'} <b>${currentQty}</b></span>
+        <span>加权成本 <b>${currentCost.toFixed(isFundOrETF ? 4 : 2)}</b></span>
         <span>当前市值 <b>${formatMoney(currentCost * currentQty)}</b></span>
       </div>
     `;
@@ -1459,10 +1508,78 @@ async function loadAISummary() {
   } catch (e) {}
 }
 
+// ========================= 差价刷新（不重建DOM） =========================
+async function refreshPrices() {
+  try {
+    const url = _currentPfId ? '/api/stocks/holdings/with-pnl?portfolio_id=' + _currentPfId : '/api/stocks/holdings/with-pnl';
+    const data = await apiGet(url);
+    const holdings = data.holdings;
+    const summary = data.summary;
+
+    if (!holdings || !holdings.length) return;
+
+    // 更新 KPI 卡片
+    const tv = document.getElementById('kpiTotalValue');
+    if (tv) tv.textContent = formatMoney(summary.total_value);
+    const tp = document.getElementById('kpiTotalPnl');
+    if (tp) {
+      tp.textContent = formatMoney(summary.total_pnl) + ' (' + formatPercent(summary.total_pnl_pct) + ')';
+      tp.className = 'kpi-sub ' + (summary.total_pnl >= 0 ? 'up' : 'down');
+    }
+    const tdp = document.getElementById('kpiTodayPnl');
+    if (tdp) {
+      tdp.textContent = formatMoney(summary.today_pnl);
+      tdp.className = 'kpi-value ' + (summary.today_pnl >= 0 ? 'up' : 'down');
+    }
+
+    // 更新每行持仓
+    holdings.forEach(h => {
+      const at = h.asset_type || 'stock';
+      const row = document.querySelector('tr[data-hid="' + h.id + '"]');
+      if (!row) return;
+
+      const priceEl = row.querySelector('.price-cell');
+      const mktValEl = row.querySelector('.mktval-cell');
+      const changeEl = row.querySelector('.change-cell');
+      const pnlEl = row.querySelector('.pnl-cell');
+
+      if (priceEl) {
+        const p = h.current_price;
+        const prec = (at === 'fund' || at === 'etf') ? 4 : 2;
+        priceEl.textContent = p != null ? Number(p).toFixed(prec) : '--';
+      }
+      if (mktValEl) mktValEl.textContent = formatMoney(h.market_value);
+      if (changeEl) {
+        const cp = h.change_pct;
+        changeEl.textContent = cp != null ? (cp > 0 ? '+' : '') + cp.toFixed(2) + '%' : '--';
+        changeEl.className = 'change-cell ' + ((cp || 0) >= 0 ? 'up' : 'down');
+      }
+      if (pnlEl) {
+        pnlEl.textContent = formatMoney(h.pnl);
+        pnlEl.className = 'pnl-cell ' + (h.pnl >= 0 ? 'up' : 'down');
+      }
+    });
+
+    // 更新更新时间
+    updateClock();
+  } catch(e) { /* 忽略刷新错误 */ }
+}
+
+// 自动刷新：交易日 9-15 点每 20 秒，其余每 5 分钟
+function autoRefreshLoop() {
+  const now = new Date();
+  const hour = now.getHours();
+  const isWeekday = now.getDay() >= 1 && now.getDay() <= 5;
+  const inMarketHours = isWeekday && hour >= 9 && hour < 15;
+  refreshPrices();
+  setTimeout(autoRefreshLoop, inMarketHours ? 20000 : 300000);
+}
+
 // ========================= 启动 =========================
 
 loadPortfolios();
 loadHoldings();
+setTimeout(autoRefreshLoop, 10000);  // 10 秒后开始自动刷新
 </script>
 </body>
 </html>

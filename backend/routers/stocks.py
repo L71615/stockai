@@ -118,9 +118,26 @@ def get_quote(code: str):
                 "nav_date": nav.get("nav_date"), "asset_type": "fund",
             }
         raise HTTPException(500, "获取基金净值失败")
+
+    # ETF: 优先用天天基金净值（腾讯接口对部分ETF返回错误数据）
+    if at == "etf":
+        fund_info = get_fund_nav(code)
+        # 如果是交易日盘中，用估算净值；非交易时间用单位净值
+        est = fund_info.get("est_nav", 0) if fund_info else 0
+        nav_val = fund_info.get("nav", 0) if fund_info else 0
+        price = est if est > 0 else nav_val
+
     result = _cached_quote(code)
     if "error" in result:
         raise HTTPException(500, result["error"])
+
+    # ETF: 用天天基金净值覆盖腾讯的假数据
+    if at == "etf" and fund_info and price > 0:
+        result["name"] = fund_info.get("name", result.get("name", ""))
+        result["price"] = price
+        result["nav"] = fund_info.get("nav")
+        result["est_nav"] = fund_info.get("est_nav")
+
     return result
 
 
@@ -136,7 +153,13 @@ def lookup(code: str):
     nav = None if try_quote_first else get_fund_nav(code)
 
     if q and "error" not in q:
-        return {"code": code, "name": q.get("name", ""), "type": at,
+        # ETF: 天天基金的名字更准确，优先使用
+        name = q.get("name", "")
+        if at == "etf":
+            fund_info = get_fund_nav(code)
+            if fund_info and fund_info.get("name"):
+                name = fund_info["name"]
+        return {"code": code, "name": name, "type": at,
                 "price": q.get("price"), "change_pct": q.get("change_pct")}
     if nav:
         return {"code": code, "name": nav.get("name", ""), "type": "fund",
@@ -151,8 +174,14 @@ def lookup(code: str):
     else:
         q = _cached_quote(code)
         if q and "error" not in q:
-            return {"code": code, "name": q.get("name", ""),
-                    "type": "etf" if code.startswith(("51", "159", "588", "56")) else "stock",
+            name = q.get("name", "")
+            at2 = "etf" if code.startswith(("51", "159", "588", "56")) else "stock"
+            if at2 == "etf":
+                fund_info = get_fund_nav(code)
+                if fund_info and fund_info.get("name"):
+                    name = fund_info["name"]
+            return {"code": code, "name": name,
+                    "type": at2,
                     "price": q.get("price"), "change_pct": q.get("change_pct")}
 
     raise HTTPException(404, f"未找到 {code} 的信息")
@@ -542,6 +571,32 @@ async def generate_review(body: ReviewRequest):
 
 # ==================== 分散度分析 ====================
 
+def _classify_fund(name: str, code: str) -> tuple[str, str]:
+    """根据基金名称和代码分类，返回 (分类, 市场区域)"""
+    n = name or ""
+    c = code or ""
+    # QDII 分类
+    if "纳斯达克" in n or "纳指" in n:
+        return ("美股科技", "美股")
+    if "标普500" in n or "标普" in n:
+        return ("美股大盘", "美股")
+    if "全球精选" in n or "全球" in n:
+        return ("全球股票", "全球")
+    # 行业/主题分类（场内外均适用）
+    if "机器人" in n:
+        return ("AI/机器人", "A股")
+    if "卫星" in n or "航天" in n or "军工" in n:
+        return ("航天军工", "A股")
+    if "电力" in n or "公用" in n or "绿色" in n:
+        return ("公用事业", "A股")
+    if "A500" in n or "沪深300" in n or "上证50" in n or "中证500" in n:
+        return ("A股宽基", "A股")
+    if "业绩驱动" in n or "混合" in n or "灵活" in n:
+        return ("主动混合", "A股")
+    if c.startswith("0") and len(c) == 6:
+        return ("其他基金", "A股")
+    return ("其他", "未知")
+
 @router.get("/diversification")
 def get_diversification():
     """持仓分散度分析：行业占比、市场占比、集中风险"""
@@ -553,25 +608,33 @@ def get_diversification():
     results = []
     total_value = 0.0
     for h in holdings:
+        at = h.get("asset_type", "")
         mkt = get_market(h["stock_code"])
-        q = _cached_quote(h["stock_code"], mkt)
+        name = h.get("stock_name", "")
 
-        # 当前价格
-        if q and "error" not in q:
-            price = q.get("price") or h["cost_price"]
-            ind_raw = q.get("industry", "")
-            region = q.get("region", "")
+        if at in ("fund", "etf"):
+            # 基金/ETF：用天天基金净值（腾讯接口对部分ETF返回假数据）
+            nav_info = get_fund_nav(h["stock_code"])
+            price = (nav_info.get("est_nav") or nav_info.get("nav")) if nav_info else h["cost_price"]
+            cat, region = _classify_fund(name, h["stock_code"])
+            ind_raw = cat
         else:
-            price = h["cost_price"]
-            ind_raw = ""
-            region = ""
+            q = _cached_quote(h["stock_code"], mkt)
+            if q and "error" not in q:
+                price = q.get("price") or h["cost_price"]
+                ind_raw = q.get("industry", "")
+                region = q.get("region", "")
+            else:
+                price = h["cost_price"]
+                ind_raw = ""
+                region = ""
 
-        mv = price * h["quantity"]
+        mv = price * (h.get("shares") or h.get("quantity") or 0)
         total_value += mv
         results.append({
             "code": h["stock_code"],
-            "name": h["stock_name"],
-            "industry": _industry_keyword(ind_raw) if ind_raw else "",
+            "name": name,
+            "industry": _industry_keyword(ind_raw) if ind_raw and at not in ("fund", "etf") else (cat if at in ("fund", "etf") else ""),
             "region": region,
             "market": h.get("market", ""),
             "market_value": mv,
@@ -594,11 +657,12 @@ def get_diversification():
         item["pct"] = round(item["market_value"] / total_value * 100, 1)
         item["market_value"] = round(item["market_value"], 2)
 
-    # 按市场聚合
+    # 按市场聚合（基金/ETF用分类区域，股票用交易所）
     market_map: dict[str, dict] = {}
     for r in results:
-        mkt = r["market"] or "未知"
-        mkt_label = {"SH": "上海", "SZ": "深圳", "BJ": "北京"}.get(mkt, mkt)
+        mkt = r.get("region") or r["market"] or "未知"
+        mkt_label = {"SH": "上海", "SZ": "深圳", "BJ": "北京",
+                     "美股": "美股", "A股": "A股", "全球": "全球"}.get(mkt, mkt)
         if mkt_label not in market_map:
             market_map[mkt_label] = {"name": mkt_label, "count": 0, "market_value": 0.0}
         market_map[mkt_label]["count"] += 1
@@ -631,8 +695,8 @@ def get_diversification():
 
 @router.get("/peer-comparison")
 def get_peer_comparison():
-    """持仓 vs 大盘指数对比"""
-    holdings = query_all("SELECT * FROM holdings WHERE user_id = 1")
+    """持仓 vs 大盘指数对比（仅股票和ETF，基金不参与）"""
+    holdings = query_all("SELECT * FROM holdings WHERE user_id = 1 AND asset_type IN ('stock', 'etf', '')")
     if not holdings:
         return {"items": [], "indices": {}}
 
@@ -665,16 +729,6 @@ def get_peer_comparison():
                 "bench_pct": bench_pct,
                 "excess": excess,
                 "tag": "跑赢" if excess > 0 else ("持平" if excess == 0 else "跑输"),
-            })
-        else:
-            items.append({
-                "code": h["stock_code"],
-                "name": h["stock_name"],
-                "my_pct": None,
-                "bench_name": bench_name,
-                "bench_pct": bench_pct,
-                "excess": None,
-                "tag": "无数据",
             })
 
     return {"items": items, "indices": indices}
