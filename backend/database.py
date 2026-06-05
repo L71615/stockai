@@ -282,6 +282,11 @@ def ensure_admin_user():
     else:
         pwd = ADMIN_PASSWORD
 
+    # bcrypt 限制 72 字节，超出截断并警告
+    if len(pwd.encode('utf-8')) > 72:
+        print(f"[WARNING] ADMIN_PASSWORD 超过 bcrypt 72 字节限制，将截断处理")
+        pwd = pwd.encode('utf-8')[:72].decode('utf-8', errors='ignore')
+
     conn = get_db()
     try:
         row = conn.execute(
