@@ -43,5 +43,13 @@ SMTP_PORT = int(os.getenv("SMTP_PORT", "465"))
 SMTP_USER = os.getenv("SMTP_USER", "")
 SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")
 
+# 管理员账号（不开放注册，启动时自动创建）
+ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "admin@stockai.com")
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")
+
+# 登录限流
+LOGIN_RATE_LIMIT = int(os.getenv("LOGIN_RATE_LIMIT", "5"))       # 允许失败次数
+LOGIN_LOCK_MINUTES = int(os.getenv("LOGIN_LOCK_MINUTES", "15"))  # 锁定分钟数
+
 # 前端目录
 FRONTEND_DIR = PROJECT_DIR / "frontend"

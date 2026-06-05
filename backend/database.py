@@ -270,3 +270,40 @@ def init_db():
     finally:
         conn.close()
 
+
+def ensure_admin_user():
+    """启动时确保管理员账号存在（不开放注册，唯一用户）"""
+    from config import ADMIN_EMAIL, ADMIN_PASSWORD
+    from passlib.hash import bcrypt
+
+    if not ADMIN_PASSWORD:
+        print("[WARNING] ADMIN_PASSWORD 未设置，使用默认密码 admin123 — 请立即修改！")
+        pwd = "admin123"
+    else:
+        pwd = ADMIN_PASSWORD
+
+    conn = get_db()
+    try:
+        row = conn.execute(
+            "SELECT id, password FROM users WHERE email = ?", (ADMIN_EMAIL,)
+        ).fetchone()
+        if row:
+            # 用户已存在，检查密码是否与 .env 一致（不一致则更新）
+            if bcrypt.verify(pwd, row["password"]):
+                print(f"[AUTH] 管理员账号已存在: {ADMIN_EMAIL}")
+            else:
+                hashed = bcrypt.hash(pwd)
+                conn.execute("UPDATE users SET password = ? WHERE id = ?", (hashed, row["id"]))
+                conn.commit()
+                print(f"[AUTH] 管理员密码已更新: {ADMIN_EMAIL}")
+        else:
+            hashed = bcrypt.hash(pwd)
+            conn.execute(
+                "INSERT INTO users (username, email, password) VALUES (?, ?, ?)",
+                ("admin", ADMIN_EMAIL, hashed),
+            )
+            conn.commit()
+            print(f"[AUTH] 管理员账号已创建: {ADMIN_EMAIL}")
+    finally:
+        conn.close()
+

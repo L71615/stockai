@@ -15,3 +15,4 @@ httpx>=0.28
 
 # Auth
 passlib[bcrypt]>=1.7
+pyjwt>=2.8

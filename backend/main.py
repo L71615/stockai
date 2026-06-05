@@ -60,10 +60,47 @@ if FRONTEND_DIR.exists():
 
 @app.on_event("startup")
 def startup():
-    from database import init_db
+    from database import init_db, ensure_admin_user
     init_db()
+    ensure_admin_user()
     from services.scheduler import start_dca_reminder_thread
     start_dca_reminder_thread()
+
+
+# ── 认证中间件：保护所有 /api/ 路由（登录接口除外）──
+from fastapi import Request
+from fastapi.responses import JSONResponse
+import jwt as pyjwt
+from config import JWT_SECRET
+
+# 不需要认证的接口
+PUBLIC_APIS = {"/api/auth/login", "/api/auth/register", "/api/health", "/api/docs", "/api/openapi.json"}
+
+@app.middleware("http")
+async def auth_middleware(request: Request, call_next):
+    path = request.url.path
+
+    # 非 API 路由不拦截（前端静态文件）
+    if not path.startswith("/api/"):
+        return await call_next(request)
+
+    # 公开接口放行
+    if path in PUBLIC_APIS or path.startswith("/api/docs") or path.startswith("/api/openapi"):
+        return await call_next(request)
+
+    # 验证 JWT
+    token = request.headers.get("Authorization", "").removeprefix("Bearer ").strip()
+    if not token:
+        return JSONResponse({"error": "未登录，请先登录"}, status_code=401)
+
+    try:
+        pyjwt.decode(token, JWT_SECRET, algorithms=["HS256"])
+    except pyjwt.ExpiredSignatureError:
+        return JSONResponse({"error": "登录已过期，请重新登录"}, status_code=401)
+    except pyjwt.InvalidTokenError:
+        return JSONResponse({"error": "登录无效，请重新登录"}, status_code=401)
+
+    return await call_next(request)
 
 
 if __name__ == "__main__":

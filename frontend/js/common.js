@@ -5,13 +5,45 @@
 // ==================== 配置 ====================
 const API_BASE = '';
 
+// ==================== 认证 ====================
+function getToken() {
+  try { return localStorage.getItem('stockai_token'); } catch(e) { return null; }
+}
+function setToken(token) {
+  try { localStorage.setItem('stockai_token', token); } catch(e) {}
+}
+function clearToken() {
+  try { localStorage.removeItem('stockai_token'); } catch(e) {}
+}
+
+function requireAuth() {
+  // 登录页不需要重定向
+  if (window.location.pathname.endsWith('login.html')) return;
+  if (!getToken()) {
+    window.location.href = 'login.html';
+  }
+}
+
 // ==================== API 工具 ====================
 async function api(path, options = {}) {
+  const token = getToken();
+  const headers = { 'Content-Type': 'application/json', ...options.headers };
+  if (token) {
+    headers['Authorization'] = 'Bearer ' + token;
+  }
+
   const url = API_BASE + path;
-  const res = await fetch(url, {
-    headers: { 'Content-Type': 'application/json', ...options.headers },
-    ...options,
-  });
+  const res = await fetch(url, { headers, ...options });
+
+  // 401 → 跳转登录页
+  if (res.status === 401) {
+    clearToken();
+    if (!window.location.pathname.endsWith('login.html')) {
+      window.location.href = 'login.html';
+    }
+    throw new Error('未登录');
+  }
+
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.error || `HTTP ${res.status}`);
@@ -183,6 +215,7 @@ function toggleMoreMenu() {
 }
 
 function initPage(activePage, title) {
+  requireAuth();
   const sidebar = document.querySelector('.sidebar');
   const header = document.querySelector('.header');
   if (sidebar) sidebar.innerHTML = renderSidebar(activePage);

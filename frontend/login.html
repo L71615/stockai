@@ -19,48 +19,54 @@
 <div class="login-page">
   <div class="login-card">
     <h1><svg class="logo-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:26px;height:26px;vertical-align:-5px;margin-right:6px"><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/></svg><span>StockAI</span></h1>
-    <p class="subtitle">智能股票追踪 · AI 驱动</p>
+    <p class="subtitle">私有账户 · 仅限授权访问</p>
 
     <div class="form-group">
       <label class="form-label">邮箱</label>
-      <input type="text" class="form-input" id="loginEmail" placeholder="demo@stockai.com">
+      <input type="text" class="form-input" id="loginEmail" placeholder="admin@stockai.com">
     </div>
     <div class="form-group">
       <label class="form-label">密码</label>
-      <input type="password" class="form-input" id="loginPassword" placeholder="任意密码 (demo模式)">
+      <input type="password" class="form-input" id="loginPassword" placeholder="输入密码">
     </div>
     <div id="loginMsg" style="font-size:12px;margin-bottom:12px;"></div>
-    <button class="btn btn-primary" style="width:100%;justify-content:center;padding:11px;font-size:14px;" onclick="doLogin()">登 录</button>
-
-    <div style="display:flex;justify-content:space-between;margin-top:16px;font-size:12px;">
-      <a href="#">忘记密码？</a>
-      <a href="#">注册新账户</a>
-    </div>
-
-    <div style="margin-top:24px;text-align:center;font-size:11px;color:var(--text-muted);">
-      当前为 Demo 模式 — 使用 demo@stockai.com 登录
-    </div>
+    <button class="btn btn-primary" style="width:100%;justify-content:center;padding:11px;font-size:14px;" onclick="doLogin()" id="loginBtn">登 录</button>
   </div>
 </div>
 <script src="js/common.js"></script>
 <script>
+// 已登录则跳转首页
+if (getToken()) {
+  window.location.href = 'index.html';
+}
+
 async function doLogin() {
   const msg = document.getElementById('loginMsg');
+  const btn = document.getElementById('loginBtn');
   msg.style.color = 'var(--text-secondary)';
   msg.textContent = '登录中…';
+  btn.disabled = true;
+
   try {
     const res = await apiPost('/api/auth/login', {
       email: document.getElementById('loginEmail').value,
       password: document.getElementById('loginPassword').value,
     });
-    msg.style.color = 'var(--green)';
+    setToken(res.token);
+    msg.style.color = 'var(--up)';
     msg.textContent = '登录成功，跳转中…';
-    setTimeout(() => { window.location.href = 'index.html'; }, 500);
+    setTimeout(() => { window.location.href = 'index.html'; }, 300);
   } catch (err) {
-    msg.style.color = 'var(--red)';
+    msg.style.color = 'var(--down)';
     msg.textContent = err.message;
+    btn.disabled = false;
   }
 }
+
+// 回车登录
+document.getElementById('loginPassword').addEventListener('keydown', function(e) {
+  if (e.key === 'Enter') doLogin();
+});
 </script>
 </body>
 </html>
