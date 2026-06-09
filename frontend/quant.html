@@ -21,7 +21,12 @@
   .q-kpi-note { font-size: 11px; color: var(--text-secondary); margin-top: 2px; }
   .q-section { margin-bottom: 20px; }
   .q-two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
-  @media (max-width: 768px) { .q-two-col { grid-template-columns: 1fr; } }
+  @media (max-width: 768px) {
+    .q-two-col { grid-template-columns: 1fr; }
+    .q-kpi-grid { grid-template-columns: 1fr 1fr; }
+    .q-kpi-value { font-size: 18px; }
+    canvas { max-width: 100%; height: auto; }
+  }
   .q-heat-cell { display: inline-block; width: 40px; height: 40px; line-height: 40px; text-align: center; font-size: 12px; font-family: 'JetBrains Mono', monospace; border-radius: 4px; margin: 2px; }
   .q-heat-label { font-size: 12px; color: var(--text-secondary); margin: 4px 0; }
   .q-heat-row { display: flex; align-items: center; }
@@ -70,6 +75,7 @@
                 <option value="504">2 年</option>
               </select></div>
             <button class="btn btn-primary" onclick="loadInsight()">查看</button>
+            <button class="btn btn-outline btn-sm" onclick="addToWatchlist()" title="加入自选股">+自选</button>
             <span id="insMeta" class="text-sm text-secondary" style="margin-left:8px;"></span>
           </div>
           <!-- K线图 -->
@@ -195,8 +201,22 @@
 <script>
 initPage('quant', '量化分析');
 
+// ==================== 从 URL 参数自动加载 ====================
+const _qp = new URLSearchParams(location.search);
+const _urlCode = _qp.get('code');
+const _urlName = _qp.get('name');
+
 // ==================== 页面初始化 ====================
 (async function init() {
+  // 如果 URL 带了股票代码，自动填入并加载
+  if (_urlCode) {
+    document.getElementById('insCode').value = _urlCode;
+    if (_urlName) {
+      document.getElementById('insMeta').textContent = _urlName;
+    }
+    loadInsight();
+  }
+
   try {
     const data = await apiGet('/api/quant/portfolio-risk');
     if (data.error) {
@@ -211,6 +231,21 @@ initPage('quant', '量化分析');
     document.getElementById('kpiGrid').innerHTML = '<div class="card"><div class="card-body text-secondary">风控数据加载失败: ' + e.message + '</div></div>';
   }
 })();
+
+// ==================== 加自选 ====================
+async function addToWatchlist() {
+  const code = document.getElementById('insCode').value.trim();
+  const name = document.getElementById('insMeta').textContent.trim();
+  if (!code) return alert('请先输入或选择股票代码');
+  try {
+    const res = await apiPost('/api/screener/watchlist/add', {
+      code, name: name || '', reason: '量化分析添加',
+    });
+    alert(res.message);
+  } catch (e) {
+    alert('添加失败: ' + e.message);
+  }
+}
 
 // ==================== 风控 KPI ====================
 function renderRiskKPIs(data) {

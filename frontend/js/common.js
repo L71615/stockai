@@ -46,7 +46,11 @@ async function api(path, options = {}) {
 
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.error || `HTTP ${res.status}`);
+    // FastAPI 返回 detail，Pydantic 返回 detail[].msg
+    const msg = typeof err.detail === 'string' ? err.detail
+      : Array.isArray(err.detail) ? err.detail.map(d => `${d.loc?.join('.')}: ${d.msg}`).join('; ')
+      : err.error || `HTTP ${res.status}`;
+    throw new Error(msg);
   }
   return res.json();
 }

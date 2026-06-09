@@ -22,7 +22,7 @@ router = APIRouter(prefix="/api/screener", tags=["Screener"])
 
 class ScreenerRequest(BaseModel):
     stock_count: int = 500          # 扫描股票数量：500=沪深300+中证500, 0=全A股
-    max_workers: int = 8            # 并发线程数
+    max_workers: int = 3            # 并发线程数（不宜过高，Baostock 有全局锁）
     industry_neutral: bool = True   # 是否行业中性化
 
 
@@ -45,9 +45,9 @@ class WatchlistAddRequest(BaseModel):
     code: str
     name: str = ""
     reason: str = ""
-    score: float = None
+    score: Optional[float] = None
     backtest_strategy: str = ""
-    backtest_sharpe: float = None
+    backtest_sharpe: Optional[float] = None
 
 
 class AIScreenRequest(BaseModel):
@@ -79,12 +79,10 @@ def run_screener(body: ScreenerRequest):
     _screen_status = {"running": True, "progress": 0, "total": 0, "result": None}
 
     def _run():
-        import time
-        from services.screener_service import run_screener, get_all_stock_list, industry_neutralize
+        from services.screener_service import run_screener as _run_screener, get_all_stock_list, industry_neutralize
 
         stock_list = get_all_stock_list()
         if body.stock_count > 0 and len(stock_list) > body.stock_count:
-            # 混入沪深300 + 中证500 保证覆盖核心池
             stock_list = stock_list[:body.stock_count]
 
         _screen_status["total"] = len(stock_list)
@@ -93,7 +91,7 @@ def run_screener(body: ScreenerRequest):
             _screen_status["progress"] = current
             _screen_status["total"] = total
 
-        result = run_screener(stock_list, max_workers=body.max_workers, progress_callback=progress_cb)
+        result = _run_screener(stock_list, max_workers=body.max_workers, progress_callback=progress_cb)
 
         if body.industry_neutral and "error" not in result:
             result["candidates"] = industry_neutralize(result["candidates"])

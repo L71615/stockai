@@ -10,7 +10,15 @@
 <link rel="stylesheet" href="css/common.css">
 <style>
   .scr-layout { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-  @media (max-width: 900px) { .scr-layout { grid-template-columns: 1fr; } }
+  .scr-table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  @media (max-width: 900px) {
+    .scr-layout { grid-template-columns: 1fr; }
+    .scr-candidate-table { font-size: 11px; }
+    .scr-candidate-table th, .scr-candidate-table td { padding: 6px 6px; }
+    .scr-btn-group { flex-direction: column; }
+    .scr-btn-group .scr-btn { width: 100%; text-align: center; }
+    .scr-status { font-size: 11px; }
+  }
   .scr-status { display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: var(--bg-secondary); border-radius: var(--radius); font-size: 13px; }
   .scr-status-dot { width: 8px; height: 8px; border-radius: 50%; }
   .scr-status-dot.running { background: #22c55e; animation: pulse 1s infinite; }
@@ -24,10 +32,9 @@
   .scr-candidate-table tr:hover td { background: var(--bg-secondary); }
   .scr-score-bar { height: 6px; background: var(--bg-secondary); border-radius: 3px; overflow: hidden; width: 60px; display: inline-block; vertical-align: middle; }
   .scr-score-fill { height: 100%; border-radius: 3px; }
-  .scr-tag { display: inline-block; padding: 2px 6px; border-radius: 3px; font-size: 11px; margin-right: 4px; }
-  .scr-tag-green { background: #dcfce7; color: #166534; }
-  .scr-tag-red { background: #fef2f2; color: #991b1b; }
-  .scr-tag-blue { background: #dbeafe; color: #1e40af; }
+  .scr-tag { display: inline-block; padding: 2px 8px; border-radius: var(--radius-sm); font-size: var(--text-xs); margin-right: 4px; }
+  .scr-tag-positive { background: var(--accent-bg); color: var(--accent-light); }
+  .scr-tag-negative { background: rgba(245,158,11,.12); color: #fbbf24; }
   .scr-btn-group { display: flex; gap: 8px; flex-wrap: wrap; margin: 12px 0; }
   .scr-btn { padding: 8px 16px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-card); cursor: pointer; font-size: 13px; transition: all 0.2s; }
   .scr-btn:hover { border-color: var(--accent); color: var(--accent); }
@@ -165,7 +172,7 @@ async function startScreener() {
   document.getElementById('progressWrap').style.display = 'block';
 
   try {
-    await apiPost('/api/screener/run', { stock_count: 500, max_workers: 8, industry_neutral: true });
+    await apiPost('/api/screener/run', { stock_count: 500, max_workers: 3, industry_neutral: true });
     pollStatus();
   } catch(e) {
     setStatus('idle', '扫描启动失败: ' + e.message);
@@ -196,8 +203,42 @@ function pollStatus() {
 }
 
 // ═══════════════════════════════════════════════
-// 2. 查看扫描结果
+// 因子中文名映射
 // ═══════════════════════════════════════════════
+const FACTOR_NAMES = {
+  ret_5d: ['5日收益', '最近5个交易日的涨跌幅'],
+  ret_20d: ['20日收益', '最近20个交易日（约1个月）的涨跌幅'],
+  ret_60d: ['60日收益', '最近60个交易日（约3个月）的涨跌幅'],
+  rsi_14: ['RSI(14)', '14日相对强弱指标，>70超买 <30超卖'],
+  macd_signal: ['MACD信号', 'MACD柱强度相对价格，正值看多'],
+  ma_disposition: ['均线排列', 'MA5/10/20/60多头排列程度'],
+  hist_vol_20d: ['波动率(20d)', '年化历史波动率，越高越震荡'],
+  atr_14: ['ATR(14)', '14日平均真实波幅，衡量价格波动范围'],
+  amplitude_20d: ['振幅(20d)', '20日内最高最低价差距相对期初价格'],
+  downside_vol: ['下行波动', '只看下跌日的波动率，衡量下跌风险'],
+  vol_ratio: ['量比', '5日均量 / 20日均量，>1放量 <1缩量'],
+  turnover_rate: ['换手率', '日均成交量 / 总股本'],
+  obv_divergence: ['OBV背离', '能量潮与价格的背离程度，正值确认趋势'],
+  price_volume_corr: ['量价相关', '收盘价与成交量的相关系数'],
+  avg_amount: ['日均成交额', '日均成交金额的对数，衡量流动性'],
+  pe_inverse: ['PE倒数', '市盈率的倒数（盈利率），越高估值越低'],
+  pb_inverse: ['PB倒数', '市净率的倒数，越高估值越低'],
+  roe: ['ROE', '净资产收益率，衡量盈利能力'],
+  eps_growth: ['EPS增长', '每股收益增长率'],
+  market_cap_ln: ['对数市值', '总市值的对数，小盘股得分更高'],
+  dividend_yield: ['股息率', '每股分红 / 当前股价'],
+  strength_20d: ['相对强度', '20日涨幅 / 20日波动率，类似夏普比率'],
+  momentum_composite: ['动量综合', '短中长期收益率的加权综合分'],
+};
+
+function factorLabel(factorKey) {
+  const entry = FACTOR_NAMES[factorKey];
+  return entry ? entry[0] : factorKey;
+}
+function factorTip(factorKey) {
+  const entry = FACTOR_NAMES[factorKey];
+  return entry ? entry[1] : '';
+}
 async function loadResults() {
   try {
     const data = await apiGet('/api/screener/results?limit=30');
@@ -216,7 +257,7 @@ function renderCandidates(list) {
     return;
   }
 
-  let html = '<table class="scr-candidate-table"><thead><tr>' +
+  let html = '<div class="scr-table-wrap"><table class="scr-candidate-table"><thead><tr>' +
     '<th>排名</th><th>代码</th><th>名称</th><th>行业</th><th>得分</th><th>主要因子</th><th>操作</th></tr></thead><tbody>';
 
   list.forEach((c, i) => {
@@ -224,8 +265,10 @@ function renderCandidates(list) {
     const scoreColor = c.score > 1 ? '#16a34a' : c.score > 0 ? '#f59e0b' : '#dc2626';
     const tf = (c.top_factors || []).slice(0, 3);
     const factorTags = tf.map(f => {
-      const cls = f.contribution > 0 ? 'scr-tag-green' : 'scr-tag-red';
-      return `<span class="scr-tag ${cls}">${f.factor}</span>`;
+      const cls = f.contribution > 0 ? 'scr-tag-positive' : 'scr-tag-negative';
+      const label = factorLabel(f.factor);
+      const tip = factorTip(f.factor);
+      return `<span class="scr-tag ${cls}" title="${tip}">${label}</span>`;
     }).join('');
 
     html += `<tr>
@@ -239,13 +282,14 @@ function renderCandidates(list) {
       </td>
       <td>${factorTags}</td>
       <td>
+        <button class="scr-btn" style="font-size:11px;padding:2px 6px;" onclick="openQuant('${c.code}','${(c.name||'').replace(/'/g,"\\'")}')">分析</button>
         <button class="scr-btn" style="font-size:11px;padding:2px 6px;" onclick="backtestSingle('${c.code}')">回测</button>
         <button class="scr-btn" style="font-size:11px;padding:2px 6px;" onclick="addWatch('${c.code}','${c.name||''}',${c.score})">+盯盘</button>
       </td>
     </tr>`;
   });
 
-  html += '</tbody></table>';
+  html += '</tbody></table></div>';
   document.getElementById('candidatePool').innerHTML = html;
 }
 
@@ -270,6 +314,7 @@ async function aiScreen() {
         <strong>${i + 1}. ${p.code} ${p.name || ''}</strong>
         ${p.score !== undefined ? ` <span style="color:var(--text-muted);font-size:12px;">得分:${p.score}</span>` : ''}
         <div class="scr-ai-reason">💡 ${p.reason || ''}</div>
+        <button class="scr-btn" style="font-size:11px;padding:2px 8px;margin-top:4px;" onclick="openQuant('${p.code}','${(p.name||'').replace(/'/g,"\\'")}')">量化分析</button>
         <button class="scr-btn" style="font-size:11px;padding:2px 8px;margin-top:4px;" onclick="backtestSingle('${p.code}')">策略回测</button>
         <button class="scr-btn" style="font-size:11px;padding:2px 8px;margin-top:4px;" onclick="addWatch('${p.code}','${p.name||''}',${p.score||0},'${(p.reason||'').replace(/'/g,"\\'")}')">+盯盘</button>
       </div>`;
@@ -338,7 +383,7 @@ async function backtestSingleList(codes) {
 
     const best = results.summary?.best_strategy_per_stock || {};
     let html = '<div class="scr-section-title">📐 批量回测汇总</div>';
-    html += '<table class="scr-candidate-table"><thead><tr><th>代码</th><th>最佳策略</th><th>收益率</th><th>Sharpe</th><th>回撤</th><th>胜率</th><th>操作</th></tr></thead><tbody>';
+    html += '<div class="scr-table-wrap"><table class="scr-candidate-table"><thead><tr><th>代码</th><th>最佳策略</th><th>收益率</th><th>Sharpe</th><th>回撤</th><th>胜率</th><th>操作</th></tr></thead><tbody>';
 
     const grouped = {};
     (results.results || []).forEach(r => {
@@ -359,11 +404,11 @@ async function backtestSingleList(codes) {
         <td>${bestR.sharpe?.toFixed(2)||'N/A'}</td>
         <td>${((bestR.max_drawdown||0)*100).toFixed(1)}%</td>
         <td>${((bestR.win_rate||0)*100).toFixed(0)}%</td>
-        <td><button class="scr-btn" style="font-size:11px;padding:2px 6px;" onclick="addWatch('${code}','',null,'回测${bestR.strategy} Sharpe=${bestR.sharpe?.toFixed(2)}')">+盯盘</button></td>
+        <td><button class="scr-btn" style="font-size:11px;padding:2px 6px;" onclick="addWatch('${code}','',null,'回测${bestR.strategy}','${bestR.strategy}',${bestR.sharpe??null})">+盯盘</button></td>
       </tr>`;
     });
 
-    html += '</tbody></table>';
+    html += '</tbody></table></div>';
     area.innerHTML = html;
   } catch(e) {
     area.innerHTML = `<div class="scr-empty">回测失败: ${e.message}</div>`;
@@ -373,12 +418,13 @@ async function backtestSingleList(codes) {
 // ═══════════════════════════════════════════════
 // 5. 盯盘管理
 // ═══════════════════════════════════════════════
-async function addWatch(code, name, score, reason) {
+async function addWatch(code, name, score, reason, btStrategy = '', btSharpe = null) {
   try {
-    const res = await apiPost('/api/screener/watchlist/add', {
-      code, name: name || '', reason: reason || '', score: score || null,
-      backtest_strategy: '', backtest_sharpe: null,
-    });
+    const body = { code, name: name || '', reason: reason || '' };
+    if (score != null) body.score = score;
+    if (btStrategy) body.backtest_strategy = btStrategy;
+    if (btSharpe != null) body.backtest_sharpe = btSharpe;
+    const res = await apiPost('/api/screener/watchlist/add', body);
     alert(res.message);
     refreshWatchlist();
   } catch(e) {
@@ -414,6 +460,7 @@ async function refreshWatchlist() {
             ${item.backtest_strategy ? `· 策略:${item.backtest_strategy}` : ''}
           </div>
         </div>
+        <button class="scr-btn" style="font-size:11px;padding:2px 8px;" onclick="openQuant('${item.stock_code}','${item.stock_name||''}')">分析</button>
         <button class="scr-btn" style="font-size:11px;padding:2px 8px;" onclick="removeWatch('${item.stock_code}')">移除</button>
       </div>`;
     });
@@ -463,6 +510,7 @@ async function runPipeline() {
         html += `<div class="scr-ai-pick">
           <strong>${i+1}. ${p.code} ${p.name||''}</strong>
           <div class="scr-ai-reason">💡 ${p.reason||''}</div>
+          <button class="scr-btn" style="font-size:11px;padding:2px 8px;margin-top:4px;" onclick="openQuant('${p.code}','${(p.name||'').replace(/'/g,"\\'")}')">量化分析</button>
         </div>`;
       });
       document.getElementById('aiPicks').innerHTML = html;
@@ -471,7 +519,7 @@ async function runPipeline() {
     // 显示回测结果
     if (data.step2_backtest?.results) {
       const best = data.step2_backtest.summary?.best_strategy_per_stock || {};
-      let html = '<div class="scr-section-title">📐 回测结果</div><table class="scr-candidate-table"><thead><tr><th>代码</th><th>策略</th><th>收益</th><th>Sharpe</th></tr></thead><tbody>';
+      let html = '<div class="scr-section-title">📐 回测结果</div><div class="scr-table-wrap"><table class="scr-candidate-table"><thead><tr><th>代码</th><th>策略</th><th>收益</th><th>Sharpe</th></tr></thead><tbody>';
       const seen = new Set();
       (data.step2_backtest.results || []).forEach(r => {
         if (r.error || seen.has(r.code)) return;
@@ -481,7 +529,7 @@ async function runPipeline() {
         const cls = r.total_return >= 0 ? 'pos' : 'neg';
         html += `<tr><td><strong>${r.code}</strong></td><td>${r.strategy}</td><td class="scr-bt-val ${cls}" style="font-size:13px;">${(r.total_return*100).toFixed(2)}%</td><td>${r.sharpe?.toFixed(2)||'N/A'}</td></tr>`;
       });
-      html += '</tbody></table>';
+      html += '</tbody></table></div>';
       document.getElementById('backtestArea').innerHTML = html;
     }
 
@@ -506,17 +554,45 @@ async function runPipeline() {
 // ═══════════════════════════════════════════════
 // 辅助
 // ═══════════════════════════════════════════════
+function openQuant(code, name) {
+  window.open('quant.html?code=' + encodeURIComponent(code) + '&name=' + encodeURIComponent(name), '_blank');
+}
+
 function setStatus(state, text) {
   const dot = document.getElementById('statusDot');
   dot.className = 'scr-status-dot ' + (state === 'running' ? 'running' : 'idle');
   document.getElementById('statusText').textContent = text;
 }
 
-// 初始化
-initPage('screener', 'AI选股');
-requireAuth();
-refreshWatchlist();
-loadResults();
+// ═══════════════════════════════════════════════
+// 页面初始化
+// ═══════════════════════════════════════════════
+async function initScreenerPage() {
+  initPage('screener', 'AI选股');
+  requireAuth();
+  refreshWatchlist();
+
+  // 检查是否有正在运行的扫描（切换页面后恢复进度条）
+  try {
+    const status = await apiGet('/api/screener/status');
+    if (status.running) {
+      document.getElementById('progressWrap').style.display = 'block';
+      document.getElementById('btnRun').disabled = true;
+      document.getElementById('btnRun').textContent = '⏳ 扫描中...';
+      setStatus('running', `扫描中 ${status.progress}/${status.total} (${status.percent}%)`);
+      document.getElementById('progressBar').style.width = status.percent + '%';
+      pollStatus();  // 恢复轮询
+    } else if (status.has_result) {
+      loadResults();
+    } else {
+      loadResults();
+    }
+  } catch (e) {
+    loadResults();
+  }
+}
+
+initScreenerPage();
 </script>
 </body>
 </html>

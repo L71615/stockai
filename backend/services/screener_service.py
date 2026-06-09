@@ -17,6 +17,8 @@ import logging
 from typing import Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+import baostock as bs
+
 from services.factor_service import compute_all_factors, normalize_factors
 from services.technical import fetch_kline
 from services.utils import get_market
@@ -44,52 +46,60 @@ def get_all_stock_list(force_refresh: bool = False) -> list[dict]:
         return _ALL_STOCKS_CACHE
 
     stocks = []
+    index_codes: set[str] = set()
 
-    # 尝试从 Baostock 获取
+    # 1. 沪深300 + 中证500 成分股（akshare，确保核心池优先）
     try:
-        import baostock as bs
-        lg = bs.login()
-        if lg.error_code == "0":
-            rs = bs.query_stock_basic()
-            if rs.error_code == "0":
-                while rs.next():
-                    row = rs.get_row_data()
-                    code = row[0].replace("sh.", "").replace("sz.", "")
-                    # 只保留 A 股股票（type=1），排除指数/ETF
-                    if row[3] == "1" and row[4] == "1":  # type=股票, status=上市
-                        stocks.append({
-                            "code": code,
-                            "name": row[1],
-                            "ipo_date": row[2],
-                        })
-            # 获取行业分类
-            rs_ind = bs.query_stock_industry()
-            if rs_ind.error_code == "0":
-                ind_map: dict[str, dict] = {}
-                while rs_ind.next():
-                    row = rs_ind.get_row_data()
-                    c = row[1].replace("sh.", "").replace("sz.", "")
-                    ind_map[c] = {"industry": row[2] if len(row) > 2 else "",
-                                  "industry_type": row[3] if len(row) > 3 else ""}
-                for s in stocks:
-                    if s["code"] in ind_map:
-                        s.update(ind_map[s["code"]])
-            bs.logout()
+        import akshare as ak
+        for idx_code, idx_name in [("000300", "沪深300"), ("000905", "中证500")]:
+            try:
+                df = ak.index_stock_cons_csindex(idx_code)
+                for _, row in df.iterrows():
+                    code = str(row["成分券代码"])
+                    index_codes.add(code)
+                    stocks.append({"code": code, "name": row.get("成分券名称", "")})
+            except Exception:
+                logger.warning(f"{idx_name} 成分股获取失败")
+    except Exception as e:
+        logger.warning(f"Akshare 不可用: {e}")
+
+    # 2. Baostock 全A股补充（去重，不含已纳入的指数成分股）
+    try:
+        from services.baostock_adapter import _ensure_login, _bs_lock
+
+        with _bs_lock:
+            if _ensure_login():
+                rs = bs.query_stock_basic()
+                if rs.error_code == "0":
+                    while rs.next():
+                        row = rs.get_row_data()
+                        code = row[0].replace("sh.", "").replace("sz.", "")
+                        if row[3] == "1" and row[4] == "1":  # type=股票, status=上市
+                            if code not in index_codes:
+                                stocks.append({
+                                    "code": code,
+                                    "name": row[1],
+                                    "ipo_date": row[2],
+                                })
+                # 获取行业分类（对所有股票）
+                rs_ind = bs.query_stock_industry()
+                if rs_ind.error_code == "0":
+                    ind_map: dict[str, dict] = {}
+                    while rs_ind.next():
+                        row = rs_ind.get_row_data()
+                        c = row[1].replace("sh.", "").replace("sz.", "")
+                        ind_map[c] = {"industry": row[2] if len(row) > 2 else "",
+                                      "industry_type": row[3] if len(row) > 3 else ""}
+                    for s in stocks:
+                        if s["code"] in ind_map and "industry" not in s:
+                            s.update(ind_map[s["code"]])
+                # 注意：不调用 bs.logout() —— 连接由 baostock_adapter 统一管理
     except Exception as e:
         logger.warning(f"Baostock 股票列表获取失败: {e}")
 
-    # 兜底：沪深300 + 中证500 成分股（akshare）
+    # 3. 兜底：Baostock 和 Akshare 都挂了
     if len(stocks) < 100:
-        try:
-            import akshare as ak
-            df = ak.index_stock_cons_csindex("000300")
-            for _, row in df.iterrows():
-                stocks.append({"code": row["成分券代码"], "name": row["成分券名称"]})
-            df2 = ak.index_stock_cons_csindex("000905")
-            for _, row in df2.iterrows():
-                stocks.append({"code": row["成分券代码"], "name": row["成分券名称"]})
-        except Exception as e:
-            logger.warning(f"Akshare 股票列表兜底失败: {e}")
+        logger.error(f"股票池不足100只({len(stocks)})，选股结果不可靠")
 
     if stocks:
         _ALL_STOCKS_CACHE = stocks
@@ -243,7 +253,7 @@ def _process_single_stock(code: str) -> Optional[dict]:
 
 def run_screener(
     stock_list: list[dict] = None,
-    max_workers: int = 8,
+    max_workers: int = 3,
     progress_callback=None,
 ) -> dict:
     """全市场多因子筛选
@@ -408,6 +418,7 @@ def industry_neutralize(candidates: list[dict]) -> list[dict]:
     # 无行业的保持原分数
     for it in others:
         it["score_neutral"] = it["score"]
+    result.extend(others)
 
     # 按中性化分数重新排名
     result.sort(key=lambda x: x.get("score_neutral", x["score"]), reverse=True)

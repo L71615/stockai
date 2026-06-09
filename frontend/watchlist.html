@@ -116,6 +116,7 @@ async function loadWatchlist() {
           <td>${low}</td>
           <td>
             <button class="btn btn-primary btn-sm" onclick="quickAddHolding('${s.stock_code}','${s.stock_name}','${s.market}','${at}')">加入持仓</button>
+            <button class="btn btn-outline btn-sm" onclick="window.open('quant.html?code=${encodeURIComponent(s.stock_code)}&name=${encodeURIComponent(s.stock_name)}','_blank')">分析</button>
             <button class="btn btn-outline btn-sm" onclick="removeStock(${s.id})">移除</button>
           </td>
         </tr>
