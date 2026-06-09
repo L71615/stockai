@@ -266,6 +266,62 @@ def init_db():
             style TEXT DEFAULT '',
             created_at TEXT DEFAULT (datetime('now','localtime'))
         )""")
+
+        # ── 选股系统表 ──
+        conn.execute("""CREATE TABLE IF NOT EXISTS screener_results (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL DEFAULT 1,
+            total_stocks INTEGER DEFAULT 0,
+            scanned INTEGER DEFAULT 0,
+            candidates_json TEXT DEFAULT '[]',
+            factor_weights_json TEXT DEFAULT '{}',
+            market_state TEXT DEFAULT '',
+            created_at TEXT DEFAULT (datetime('now','localtime'))
+        )""")
+        conn.execute("""CREATE TABLE IF NOT EXISTS screener_watchlist (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL DEFAULT 1,
+            stock_code TEXT NOT NULL,
+            stock_name TEXT DEFAULT '',
+            market TEXT DEFAULT '',
+            asset_type TEXT DEFAULT '',
+            status TEXT DEFAULT 'watching',
+            reason TEXT DEFAULT '',
+            score REAL,
+            backtest_strategy TEXT DEFAULT '',
+            backtest_sharpe REAL,
+            added_at TEXT DEFAULT (datetime('now','localtime')),
+            updated_at TEXT DEFAULT (datetime('now','localtime')),
+            UNIQUE(user_id, stock_code)
+        )""")
+        conn.execute("""CREATE TABLE IF NOT EXISTS screener_alerts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL DEFAULT 1,
+            stock_code TEXT NOT NULL,
+            stock_name TEXT DEFAULT '',
+            alert_type TEXT DEFAULT '',
+            severity TEXT DEFAULT 'low',
+            message TEXT DEFAULT '',
+            checked_at TEXT DEFAULT (datetime('now','localtime')),
+            created_at TEXT DEFAULT (datetime('now','localtime'))
+        )""")
+        conn.execute("""CREATE TABLE IF NOT EXISTS backtest_results (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL DEFAULT 1,
+            stock_code TEXT NOT NULL,
+            strategy TEXT NOT NULL,
+            total_return REAL,
+            annual_return REAL,
+            sharpe REAL,
+            max_drawdown REAL,
+            win_rate REAL,
+            profit_factor REAL,
+            num_trades INTEGER DEFAULT 0,
+            initial_cash REAL DEFAULT 100000,
+            final_value REAL,
+            params_json TEXT DEFAULT '{}',
+            created_at TEXT DEFAULT (datetime('now','localtime'))
+        )""")
         conn.commit()
     finally:
         conn.close()

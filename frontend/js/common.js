@@ -125,6 +125,7 @@ function renderSidebar(activePage) {
     { id: 'global',     href: 'global-news.html',    icon: I.global, label: '全球资讯' },
     { id: 'review',     href: 'review.html',          icon: I.review, label: 'AI 复盘' },
     { id: 'quant',      href: 'quant.html',          icon: I.quant, label: '量化分析' },
+    { id: 'screener',   href: 'screener.html',       icon: '🔎', label: 'AI选股' },
     { id: 'skills',     href: 'skills.html',          icon: I.skills, label: 'Agent 工坊' },
     { id: 'transactions', href: 'transactions.html',  icon: I.transactions, label: '交易记录' },
   ];
@@ -182,6 +183,7 @@ function renderMobileNav(activePage) {
     { id: 'global',       href: 'global-news.html',    icon: I.global, label: '全球资讯' },
     { id: 'review',       href: 'review.html',         icon: I.review, label: 'AI 复盘' },
     { id: 'quant',        href: 'quant.html',          icon: I.quant, label: '量化分析' },
+    { id: 'screener',     href: 'screener.html',       icon: '🔎', label: 'AI选股' },
     { id: 'skills',       href: 'skills.html',         icon: I.skills, label: 'Agent 工坊' },
     { id: 'transactions', href: 'transactions.html',   icon: I.transactions, label: '交易记录' },
     { id: 'divider',      href: '',                    icon: '',    label: '', isDivider: true },
@@ -189,9 +191,9 @@ function renderMobileNav(activePage) {
   ];
 
   const navHTML = mainTabs.map(t => {
-    const isActive = activePage === t.id || (t.isMore && ['market','global','review','skills','transactions','settings'].includes(activePage));
+    const isActive = activePage === t.id || (t.isMore && ['market','global','review','screener','skills','transactions','settings'].includes(activePage));
     if (t.isMore) {
-      const morePages = ['market','global','review','skills','transactions','settings'];
+      const morePages = ['market','global','review','screener','skills','transactions','settings'];
       return `<button class="nav-tab${morePages.includes(activePage) ? ' active' : ''}" onclick="toggleMoreMenu()"><span class="tab-icon">${t.icon}</span>${t.label}</button>`;
     }
     return `<a href="${t.href}" class="nav-tab${isActive ? ' active' : ''}"><span class="tab-icon">${t.icon}</span>${t.label}</a>`;
