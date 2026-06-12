@@ -22,20 +22,35 @@ class TransactionBody(BaseModel):
     direction: str
     price: float
     quantity: int
+    fee: float | None = None   # None = 自动计算，有值 = 手动覆盖
     traded_at: str
     note: str = ""
 
 
 @router.post("/transactions")
 def add_transaction(body: TransactionBody):
-    amount = body.price * body.quantity
+    from services.utils import calc_fee
+
     at = body.asset_type or detect_asset_type(body.stock_code)
+
+    # 手续费：手动覆盖 or 自动计算
+    if body.fee is not None:
+        fee = round(body.fee, 2)
+    else:
+        calculated = calc_fee(body.price, body.quantity, body.direction, at)
+        fee = round(calculated, 2) if calculated is not None else 0.0
+
+    if body.direction == "buy":
+        amount = round(body.price * body.quantity + fee, 2)
+    else:
+        amount = round(body.price * body.quantity - fee, 2)
+
     result = execute(
-        """INSERT INTO transactions (user_id, stock_code, stock_name, asset_type, direction, price, quantity, amount, traded_at, note)
-           VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (body.stock_code, body.stock_name, at, body.direction, body.price, body.quantity, amount, body.traded_at, body.note),
+        """INSERT INTO transactions (user_id, stock_code, stock_name, asset_type, direction, price, quantity, amount, fee, traded_at, note)
+           VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (body.stock_code, body.stock_name, at, body.direction, body.price, body.quantity, amount, fee, body.traded_at, body.note),
     )
-    return {"id": result["lastrowid"], "message": "添加成功"}
+    return {"id": result["lastrowid"], "message": "添加成功", "fee": fee, "amount": amount}
 
 
 def _recalc_holding_for_code(stock_code: str):
@@ -106,12 +121,15 @@ class UpdateTransactionBody(BaseModel):
     traded_at: str | None = None
     price: float | None = None
     quantity: float | None = None
+    fee: float | None = None       # None = keep existing / auto-calc
     note: str | None = None
 
 
 @router.put("/transactions/{tx_id}")
 def update_transaction(tx_id: int, body: UpdateTransactionBody):
     """更新交易记录，并重新计算对应持仓成本"""
+    from services.utils import calc_fee
+
     tx = query_one("SELECT * FROM transactions WHERE id = ? AND user_id = 1", (tx_id,))
     if not tx:
         raise HTTPException(404, "交易记录不存在")
@@ -122,12 +140,25 @@ def update_transaction(tx_id: int, body: UpdateTransactionBody):
     quantity = body.quantity if body.quantity is not None else tx["quantity"]
     note = body.note if body.note is not None else tx["note"]
 
-    amount = round(price * quantity, 2)
+    # 手续费：手动指定 > 保留原值 > 自动计算
+    at = tx.get("asset_type") or detect_asset_type(tx["stock_code"])
+    if body.fee is not None:
+        fee = round(body.fee, 2)
+    elif tx.get("fee"):
+        fee = tx["fee"]  # 保留用户之前设置的手动值
+    else:
+        calculated = calc_fee(price, quantity, tx["direction"], at)
+        fee = round(calculated, 2) if calculated is not None else 0.0
+
+    if tx["direction"] == "buy":
+        amount = round(price * quantity + fee, 2)
+    else:
+        amount = round(price * quantity - fee, 2)
 
     execute(
-        """UPDATE transactions SET traded_at = ?, price = ?, quantity = ?, amount = ?, note = ?
+        """UPDATE transactions SET traded_at = ?, price = ?, quantity = ?, amount = ?, fee = ?, note = ?
            WHERE id = ? AND user_id = 1""",
-        (traded_at, price, quantity, amount, note, tx_id),
+        (traded_at, price, quantity, amount, fee, note, tx_id),
     )
 
     holding_result = None
@@ -137,6 +168,8 @@ def update_transaction(tx_id: int, body: UpdateTransactionBody):
     return {
         "message": "已更新",
         "updated_id": tx_id,
+        "fee": fee,
+        "amount": amount,
         "holding_updated": holding_result is not None,
         "holding": holding_result,
     }

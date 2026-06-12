@@ -98,3 +98,33 @@ def api_test_smtp(body: SmtpBody):
     """发送测试邮件"""
     ok, err = test_smtp_connection(body.host, body.port, body.user, body.password)
     return {"ok": ok, "error": err}
+
+
+# ==================== 手续费配置 ====================
+
+class FeeConfigBody(BaseModel):
+    commission_rate: float = 0.00025  # 佣金费率，默认 0.025%
+    commission_min: float = 5.0       # 最低佣金，默认 5 元
+
+
+@router.get("/api/settings/fee-config")
+def api_get_fee_config():
+    """获取手续费配置"""
+    from services.utils import get_fee_config
+    cfg = get_fee_config()
+    return {
+        "commission_rate": cfg.commission_rate,
+        "commission_rate_pct": f"{cfg.commission_rate * 100:.3f}%",
+        "commission_min": cfg.commission_min,
+    }
+
+
+@router.put("/api/settings/fee-config")
+def api_save_fee_config(body: FeeConfigBody):
+    """保存手续费配置"""
+    from services.utils import FeeConfig, save_fee_config
+    save_fee_config(FeeConfig(
+        commission_rate=body.commission_rate,
+        commission_min=body.commission_min,
+    ))
+    return {"ok": True}

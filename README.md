@@ -6,25 +6,40 @@
 
 ```
 stocks/
-├── frontend/                        # 前端 (Vanilla JS SPA + Canvas 图表)
-│   ├── index.html                  # 持仓仪表盘 (KPI/分散度/定投/新闻)
-│   ├── quant.html                  # 量化分析 (K线图/成交量/因子/AI对抗/蒙特卡洛)
-│   ├── review.html                 # AI 复盘报告
-│   ├── watchlist.html              # 自选股
-│   ├── market.html                 # 全球指数 (11/15 覆盖)
-│   ├── ai-assistant.html           # AI 对话助手
-│   ├── skills.html                 # Agent 工坊
-│   ├── transactions.html           # 交易记录
-│   ├── settings.html               # 多供应商 AI 配置
-│   ├── login.html                  # 登录
-│   ├── css/common.css              # 设计系统
-│   └── js/common.js                # 共享 JS (API/Toast/快捷键/SVG图标)
+├── frontend/                        # Next.js 16 + React 19 + shadcn/ui + Tailwind CSS 4
+│   ├── src/
+│   │   ├── app/                     # App Router 页面 (12 页)
+│   │   │   ├── page.tsx             # 持仓概览 (KPI/图表/持仓表)
+│   │   │   ├── market/              # 大盘指数
+│   │   │   ├── global-news/         # 全球资讯 (SVG 地图)
+│   │   │   ├── review/              # AI 复盘
+│   │   │   ├── quant/               # 量化分析 (K线/因子/回测/蒙特卡洛)
+│   │   │   ├── screener/            # AI 选股 (多因子扫描)
+│   │   │   ├── kol/                 # 大佬观点 (X/Twitter 追踪)
+│   │   │   ├── transactions/        # 交易记录
+│   │   │   ├── ai-assistant/        # AI 对话
+│   │   │   ├── skills/              # Agent 工坊
+│   │   │   ├── settings/            # 设置 (AI/SMTP)
+│   │   │   ├── watchlist/           # 自选股
+│   │   │   └── login/               # 登录
+│   │   ├── components/              # shadcn/ui 组件 + 业务组件
+│   │   │   ├── ui/                  # shadcn 基础组件
+│   │   │   ├── app-sidebar.tsx      # 三组折叠侧边栏
+│   │   │   ├── app-layout.tsx       # 布局容器
+│   │   │   ├── site-header.tsx      # 页面顶栏
+│   │   │   ├── section-cards.tsx    # KPI 卡片行
+│   │   │   ├── chart-area-interactive.tsx  # 资产走势图
+│   │   │   └── data-table.tsx       # 持仓数据表格
+│   │   ├── hooks/                   # 自定义 hooks
+│   │   └── lib/                     # 工具函数 (auth/cn)
+│   ├── public/                      # 静态资源
+│   ├── package.json
+│   └── next.config.ts               # API 代理配置
 │
 ├── backend/                         # Python FastAPI 后端
-│   ├── main.py                     # 主入口 (uvicorn)
+│   ├── main.py                     # 主入口 (纯 API, 端口 3000)
 │   ├── config.py                   # 配置 (环境变量)
 │   ├── database.py                 # SQLite 连接 + 查询工具
-│   ├── dependencies.py             # FastAPI 依赖注入
 │   ├── requirements.txt            # Python 依赖
 │   ├── routers/
 │   │   ├── stocks.py               # 行情/指数/新闻/AI复盘/预警
@@ -37,95 +52,94 @@ stocks/
 │   │   ├── dca.py                  # 定投计划
 │   │   ├── agents.py               # Agent 管理
 │   │   ├── memory.py               # Agent 记忆 (.md 文件)
+│   │   ├── screener.py             # AI选股多因子扫描
+│   │   ├── kol.py                  # 大佬观点追踪
 │   │   └── skills.py               # Skills 管理
 │   └── services/
-│       ├── ai_service.py           # 多供应商AI调度 (5个供应商)
-│       ├── quant_service.py        # 量化引擎 (Sharpe/MaxDD/Beta/DCA/蒙特卡洛)
-│       ├── review_service.py       # AI 复盘引擎 (5层降级解析)
-│       ├── technical.py            # 技术指标 (MA/MACD/KDJ/RSI)
-│       ├── baostock_adapter.py     # Baostock (15年K线 + 基本面因子)
-│       ├── akshare_adapter.py      # 腾讯财经 (A股实时行情/K线/搜索)
-│       ├── sina_adapter.py         # 新浪财经 (港股行情 + 全球指数补充)
-│       ├── news_service.py         # 新闻爬取+匹配
+│       ├── ai_service.py           # 多供应商AI调度
+│       ├── quant_service.py        # 量化引擎
+│       ├── review_service.py       # AI 复盘引擎
+│       ├── technical.py            # 技术指标
+│       ├── baostock_adapter.py     # Baostock (15年K线)
+│       ├── akshare_adapter.py      # 腾讯财经 (实时行情)
+│       ├── sina_adapter.py         # 新浪财经 (港股+指数)
+│       ├── news_service.py         # 新闻爬取
 │       ├── email_service.py        # SMTP 邮件
-│       ├── scheduler.py            # DCA 提醒后台线程
-│       └── utils.py                # 共享工具 (行情缓存/XIRR/基金净值)
+│       ├── scheduler.py            # 定时任务
+│       └── utils.py                # 共享工具
 │
-├── database/                        # SQL 表结构 (SQLite WAL模式)
-└── README.md                        # 本文档
+├── database/                        # SQLite + schema
+├── docker/                          # Docker 配置
+├── docs/                            # 归档文档
+├── scripts/                         # 工具脚本
+├── tests/                           # pytest 测试
+├── .claude/                         # Claude Code 配置
+├── DESIGN.md                        # 设计系统
+└── start.bat                        # 一键启动控制面板
 ```
 
 ## 技术栈
 
 | 层面 | 方案 |
 |------|------|
-| 前端 | HTML5 + CSS3 + Vanilla JS + Canvas |
+| 前端 | Next.js 16 App Router + React 19 + TypeScript |
+| UI | shadcn/ui (Radix) + Tailwind CSS 4 |
+| 图表 | recharts |
 | 后端 | Python FastAPI + uvicorn |
 | 数据库 | SQLite (WAL 模式) |
 | AI | MiniMax / DeepSeek / Claude / OpenAI / 小米 (多供应商独立配置) |
 | A股数据 | 腾讯财经 + Baostock (15年前复权) + 新浪财经 |
-| 港股数据 | 新浪财经 rt_hk 接口 |
-| 全球指数 | 腾讯(7) + 新浪(4) = 11/15 覆盖 |
+| 全球指数 | 东方财富 + AKShare + 新浪 (15个主要指数) |
 | 基金净值 | 天天基金 |
-| 测试 | pytest + pytest-asyncio |
 
 ## 快速启动
 
 ```bash
-# 1. 安装依赖
+# 1. 安装后端依赖
 cd backend
 pip install -r requirements.txt
 
-# 2. 启动后端 (自动创建 SQLite 数据库)
+# 2. 安装前端依赖
+cd ../frontend
+npm install
+
+# 3. 启动后端 (端口 3000)
+cd ../backend
 python -m uvicorn main:app --host 0.0.0.0 --port 3000 --reload
 
-# 3. 浏览器打开
-# http://localhost:3000
+# 4. 启动前端 (端口 3001)
+cd ../frontend
+npm run dev
+
+# 5. 浏览器打开
+# http://localhost:3001
 ```
+
+或直接运行 `start.bat` → 选 `[3] Start Both` 一键启动。
 
 ## 页面路由
 
-| 页面 | 文件 | 功能 |
-|------|------|------|
-| 持仓仪表盘 | index.html | 实时盈亏/分散度/定投/股息/新闻 |
-| **量化分析** | quant.html | K线图+成交量/因子数据/AI策略对抗/蒙特卡洛 |
-| AI 复盘 | review.html | 结构化投资复盘报告 |
-| 自选股 | watchlist.html | 自选股实时行情 |
-| 大盘指数 | market.html | 全球15个主要指数 (11个实时) |
-| AI 助手 | ai-assistant.html | 多模型对话 + Agent 记忆 |
-| Agent 工坊 | skills.html | 自定义 AI Agent |
-| 交易记录 | transactions.html | 交易 CRUD + 成本自动重算 |
-| 设置 | settings.html | 多供应商 AI Key 配置 / SMTP |
-
-## 核心功能
-
-### AI 策略对抗
-- 6 种随机人设：价值猎手/成长捕手/逆向抄底/动量追涨/质量精选/红利低波
-- 每人选 6 只 A 股，10 万虚拟资金，按实时行情成交
-- 调仓窗口：交易日 11:00-11:30 / 14:30-15:00
-- 规则兜底：止盈 +30%、止损 -15%
-- 量化回测验证排名
-
-### 量化分析引擎
-- 风控指标：Sharpe / Max Drawdown / Volatility / Beta
-- 持仓相关性热力图
-- DCA 回测 + 4 策略对比
-- 蒙特卡洛价格模拟
-- 基本面因子：PE / ROE / EPS / 市值 / 行业
-
-### 数据透视
-- Canvas K 线图 (蜡烛 + MA5/MA10/MA20/MA60 四均线)
-- 成交量柱状图 (红涨绿跌，悬浮精确数字)
-- 技术指标：MA / MACD / KDJ / RSI + AI 信号解读
-
-### AI 复盘
-- 5 步 pipeline：aggregate → prompt → AI call → parse (5层降级) → store
-- 盈亏归因 / 行为模式 / 风险提示 三维度评分
+| 组 | 页面 | 路由 | 功能 |
+|----|------|------|------|
+| 投资 | 持仓概览 | `/` | KPI/资产走势/持仓表/AI洞察 |
+| 投资 | 自选股 | `/watchlist` | 自选股实时行情+批量报价 |
+| 投资 | 大盘指数 | `/market` | 全球15个主要指数 |
+| 投资 | 全球资讯 | `/global-news` | SVG世界地图+城市财经新闻 |
+| 分析 | AI 复盘 | `/review` | 结构化投资复盘报告 |
+| 分析 | 量化分析 | `/quant` | K线/因子/回测/蒙特卡洛/AI对抗 |
+| 分析 | AI 选股 | `/screener` | 多因子扫描+AI精选+盯盘 |
+| 分析 | 大佬观点 | `/kol` | X/Twitter追踪+AI日报 |
+| 工具 | 交易记录 | `/transactions` | 交易CRUD+成本重算 |
+| 工具 | AI 对话 | `/ai-assistant` | 多模型对话+Agent记忆 |
+| 工具 | Agent 工坊 | `/skills` | 自定义AI Agent |
+| 工具 | 设置 | `/settings` | AI Key配置/SMTP |
 
 ## 环境变量
 
-复制 `.env.example` 为 `.env`，按需填写 AI Key（也可在网页"设置"页配置）：
+复制 `backend/.env.example` 为 `backend/.env`，按需填写：
 
 ```bash
-cp .env.example .env
+cp backend/.env.example backend/.env
 ```
+
+配置项：`ADMIN_EMAIL`, `ADMIN_PASSWORD`, `JWT_SECRET`, AI Key 等。

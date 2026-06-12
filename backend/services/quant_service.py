@@ -29,12 +29,14 @@ def _annualize_return(total_return: float, days: int) -> float:
 
 
 def _fetch_benchmark_returns(benchmark: str = "000300", days: int = 252) -> list[float]:
-    """获取基准指数的日收益率序列（默认沪深300）"""
+    """获取基准指数的日收益率序列（默认沪深300，用 510300 ETF 代理）"""
     try:
         from services.technical import fetch_kline
-        market_map = {"000300": "1", "000905": "1", "399006": "0", "HSI": "100"}
-        mkt = market_map.get(benchmark, "1")
-        kline = fetch_kline(benchmark, mkt, days)
+        # 指数代码本身取不到 K 线，用跟踪该指数的 ETF 代理
+        proxy_map = {"000300": "510300", "000905": "510500", "399006": "159915", "HSI": "513800"}
+        proxy = proxy_map.get(benchmark, benchmark)
+        mkt_map = {"510300": "SH", "510500": "SH", "159915": "SZ", "513800": "SH"}
+        kline = fetch_kline(proxy, mkt_map.get(proxy, "SH"), days)
         if "error" in kline or not kline.get("closes"):
             return []
         return _returns_from_prices(kline["closes"])
@@ -663,22 +665,25 @@ def get_portfolio_risk(user_id: int = 1) -> dict:
         })
 
     # 组合级别指标
-    bench_returns = _fetch_benchmark_returns("000300", 252)
-    if bench_returns and returns_map:
+    port_sharpe = None
+    port_vol = None
+    port_max_dd = None
+    port_beta = None
+
+    if returns_map:
         # 组合日收益 = 各持仓收益的市值加权平均
         port_returns = _portfolio_returns(holdings, prices_map, returns_map)
         port_sharpe = calc_sharpe(port_returns)
         port_vol = calc_volatility(port_returns)
-        port_beta = calc_beta(port_returns, bench_returns) if port_returns and bench_returns else None
 
         # 组合最大回撤
         port_prices = _portfolio_prices(holdings, prices_map)
         port_max_dd = calc_max_drawdown(port_prices)
-    else:
-        port_sharpe = None
-        port_vol = None
-        port_beta = None
-        port_max_dd = None
+
+        # Beta 需要基准指数
+        bench_returns = _fetch_benchmark_returns("000300", 252)
+        if bench_returns:
+            port_beta = calc_beta(port_returns, bench_returns)
 
     # 相关性矩阵
     correlation = calc_correlation_matrix(prices_map)

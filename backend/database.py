@@ -222,6 +222,7 @@ def init_db():
                 pass
         for col, col_def in [
             ("asset_type", "TEXT DEFAULT ''"),
+            ("fee", "REAL DEFAULT 0"),
         ]:
             try:
                 conn.execute(f"ALTER TABLE transactions ADD COLUMN {col} {col_def}")
@@ -322,6 +323,47 @@ def init_db():
             params_json TEXT DEFAULT '{}',
             created_at TEXT DEFAULT (datetime('now','localtime'))
         )""")
+
+        # ── KOL 大佬观点追踪表 ──
+        conn.execute("""CREATE TABLE IF NOT EXISTS kol_accounts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL DEFAULT 1,
+            username TEXT NOT NULL,
+            display_name TEXT DEFAULT '',
+            category TEXT DEFAULT '',
+            market TEXT DEFAULT '',
+            active INTEGER DEFAULT 1,
+            notes TEXT DEFAULT '',
+            last_error TEXT DEFAULT '',
+            created_at TEXT DEFAULT (datetime('now','localtime')),
+            UNIQUE(user_id, username)
+        )""")
+        conn.execute("""CREATE TABLE IF NOT EXISTS kol_posts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT NOT NULL,
+            post_id TEXT NOT NULL,
+            content TEXT NOT NULL,
+            posted_at TEXT,
+            likes INTEGER DEFAULT 0,
+            retweets INTEGER DEFAULT 0,
+            replies INTEGER DEFAULT 0,
+            fetched_at TEXT DEFAULT (datetime('now','localtime')),
+            UNIQUE(post_id)
+        )""")
+        conn.execute("""CREATE TABLE IF NOT EXISTS kol_daily_briefs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL DEFAULT 1,
+            brief_date TEXT NOT NULL,
+            posts_count INTEGER DEFAULT 0,
+            accounts_count INTEGER DEFAULT 0,
+            ai_summary TEXT,
+            key_topics TEXT DEFAULT '[]',
+            sentiment_overview TEXT DEFAULT '{}',
+            mentioned_stocks TEXT DEFAULT '[]',
+            created_at TEXT DEFAULT (datetime('now','localtime')),
+            UNIQUE(user_id, brief_date)
+        )""")
+
         conn.commit()
     finally:
         conn.close()

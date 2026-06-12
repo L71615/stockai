@@ -47,7 +47,7 @@ def aggregate_transactions(user_id: int = 1) -> dict:
         elif t["direction"] == "sell":
             sells = buy_records.get(t["stock_code"], [])
             sell_qty = t["quantity"]
-            sell_amount = t["price"] * sell_qty
+            sell_amount = t.get("amount", 0) or t["price"] * sell_qty  # net proceeds (amount = price*qty - fee)
             matched_qty = 0
             matched_buy_amount = 0
             matched_buy = None
@@ -56,7 +56,7 @@ def aggregate_transactions(user_id: int = 1) -> dict:
                 remaining = sell_qty - matched_qty
                 if buy["quantity"] <= remaining:
                     sells.pop(0)
-                    matched_buy_amount += buy["price"] * buy["quantity"]
+                    matched_buy_amount += buy.get("amount", 0) or buy["price"] * buy["quantity"]  # cost including fee
                     matched_qty += buy["quantity"]
                 else:
                     buy["quantity"] -= remaining
@@ -81,7 +81,7 @@ def aggregate_transactions(user_id: int = 1) -> dict:
 
     win_count = sum(1 for s in sell_records if s["pnl"] > 0)
     lose_count = sum(1 for s in sell_records if s["pnl"] < 0)
-    total_trades = len(sell_records)
+    total_trades = len(trades)
     resolved = win_count + lose_count
     win_rate = round(win_count / resolved * 100, 1) if resolved > 0 else 0
     total_pnl = sum(s["pnl"] for s in sell_records)
@@ -144,7 +144,7 @@ def build_review_prompt(data: dict, quant_context: str = "") -> str:
         for l in data["top_losers"]
     ) if data["top_losers"] else "暂无亏损交易"
 
-    if data["total_trades"] < 5:
+    if data["total_trades"] < 3:
         trades_note = f"（仅 {data['total_trades']} 笔交易，数据不足，分析可能不完整）"
     else:
         trades_note = f"共 {data['total_trades']} 笔交易"
@@ -216,7 +216,13 @@ def build_review_prompt(data: dict, quant_context: str = "") -> str:
 
 
 def parse_review_response(raw: str) -> dict:
-    """Parse AI response into structured dict, with progressive fallback"""
+    """Parse AI review response into structured dict, with progressive fallback.
+
+    Uses shared parse_ai_json() for JSON extraction, then normalizes to
+    review-specific fields (dimensions/summary/suggestions).
+    """
+    from services.utils import parse_ai_json
+
     if not raw or not raw.strip():
         return {
             "dimensions": [],
@@ -226,59 +232,18 @@ def parse_review_response(raw: str) -> dict:
             "raw": "",
         }
 
-    text = raw.strip()
+    data = parse_ai_json(raw)
 
-    # Step 1: Strip markdown code blocks
-    if text.startswith("```"):
-        lines = text.split("\n")
-        # Remove opening ```json or ```
-        if lines[0].startswith("```"):
-            lines = lines[1:]
-        # Remove closing ```
-        if lines and lines[-1].strip() == "```":
-            lines = lines[:-1]
-        text = "\n".join(lines)
+    # If parse failed, return raw fallback
+    if data.get("parse_error"):
+        return {
+            "dimensions": [],
+            "summary": "AI 返回格式异常，以下为原始内容",
+            "suggestions": [],
+            "raw": raw,
+        }
 
-    # Step 2: Try direct parse
-    try:
-        data = json.loads(text)
-        return _normalize_response(data, raw)
-    except json.JSONDecodeError:
-        pass
-
-    # Step 3: Extract JSON fragment between { and }
-    match = re.search(r'\{.*\}', text, re.DOTALL)
-    if match:
-        try:
-            data = json.loads(match.group(0))
-            return _normalize_response(data, raw)
-        except json.JSONDecodeError:
-            pass
-
-    # Step 4: Repair common errors
-    if match:
-        repaired = match.group(0)
-        # Fix missing commas between } and "
-        repaired = re.sub(r'\}\s*"', '}, "', repaired)
-        # Fix missing commas between ] and "
-        repaired = re.sub(r'\]\s*"', '], "', repaired)
-        # Fix missing commas between " and " (adjacent strings in objects)
-        repaired = re.sub(r'"\s+"', '", "', repaired)
-        # Fix missing commas between number and "
-        repaired = re.sub(r'(\d+)\s+"', r'\1, "', repaired)
-        try:
-            data = json.loads(repaired)
-            return _normalize_response(data, raw)
-        except json.JSONDecodeError:
-            pass
-
-    # Step 5: Fallback — return raw text
-    return {
-        "dimensions": [],
-        "summary": "AI 返回格式异常，以下为原始内容",
-        "suggestions": [],
-        "raw": raw,
-    }
+    return _normalize_response(data, raw)
 
 
 def _normalize_response(data: dict, raw_text: str) -> dict:
@@ -345,10 +310,10 @@ async def generate_review_report(
     data = aggregate_transactions(user_id)
 
     # Step 2: Cold start check
-    if data["total_trades"] < 5:
+    if data["total_trades"] < 3:
         return {
             "dimensions": [],
-            "summary": f"已有 {data['total_trades']} 笔交易，至少需要 5 笔交易才能生成 AI 复盘报告。继续记录你的交易吧！",
+            "summary": f"已有 {data['total_trades']} 笔交易，至少需要 3 笔交易才能生成 AI 复盘报告。继续记录你的交易吧！",
             "suggestions": [],
             "cold_start": True,
             "transactions_count": data["total_trades"],
@@ -364,15 +329,39 @@ async def generate_review_report(
         quant_context = ""
     prompt = build_review_prompt(data, quant_context)
 
-    # Step 4: Call AI with retry + fallback
+    # Step 4: Check if AI is configured
+    from services.ai_service import _load_stored_ai_config
+    effective_provider = provider
+    effective_key = api_key
+    effective_model = model
+    if not effective_key:
+        stored = _load_stored_ai_config()
+        # Find first provider with a key
+        for p, c in stored.items():
+            if isinstance(c, dict) and c.get("api_key"):
+                effective_provider = p
+                effective_key = c["api_key"]
+                effective_model = effective_model or c.get("model", "")
+                break
+    if not effective_key:
+        return {
+            "dimensions": [],
+            "summary": "未配置 AI API Key。请先在设置页面配置至少一个 AI 供应商的 Key。",
+            "suggestions": [],
+            "cold_start": True,
+            "transactions_count": data["total_trades"],
+            "raw": "",
+        }
+
+    # Step 5: Call AI with retry + fallback
     raw = ""
     try:
         raw = await asyncio.wait_for(
             ai_chat(
                 prompt,
-                provider=provider,
-                api_key=api_key,
-                model=model,
+                provider=effective_provider,
+                api_key=effective_key,
+                model=effective_model,
                 system_prompt="你是专业的 A 股投资教练。请严格按 JSON 格式输出分析报告。",
             ),
             timeout=60.0,
@@ -383,9 +372,9 @@ async def generate_review_report(
             raw = await asyncio.wait_for(
                 ai_chat(
                     prompt,
-                    provider=provider,
-                    api_key=api_key,
-                    model=model,
+                    provider=effective_provider,
+                    api_key=effective_key,
+                    model=effective_model,
                     system_prompt="你是专业的 A 股投资教练。请严格按 JSON 格式输出分析报告。",
                 ),
                 timeout=60.0,

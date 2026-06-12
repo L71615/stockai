@@ -27,34 +27,48 @@ class HoldingBody(BaseModel):
     cost_price: float = 0.0   # 成本价(股票/ETF) 或 成本净值(基金)
     shares: float | None = None  # 基金份额，数量=份数时等同 quantity
     portfolio_id: int | None = None
+    fee: float | None = None  # None = 自动计算
 
 
 @router.post("/holdings")
 def add_holding(body: HoldingBody):
+    from services.utils import calc_fee
+
     at = body.asset_type or detect_asset_type(body.stock_code)
     qty = body.quantity
     cost = body.cost_price
     if body.shares is not None:
         qty = int(body.shares) if at != "fund" else body.shares
+
+    # 手续费
+    if body.fee is not None:
+        fee = round(body.fee, 2)
+    else:
+        calculated = calc_fee(cost, qty, "buy", at)
+        fee = round(calculated, 2) if calculated is not None else 0.0
+
+    amount = round(qty * cost + fee, 2)
+    # 持仓成本价 = 含手续费均价
+    cost_with_fee = round(amount / qty, 4) if qty > 0 else cost
+
     result = execute(
         """INSERT INTO holdings (user_id, stock_code, stock_name, market, asset_type, quantity, cost_price, shares, portfolio_id)
            VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (body.stock_code, body.stock_name, body.market, at, qty, cost, body.shares, body.portfolio_id),
+        (body.stock_code, body.stock_name, body.market, at, qty, cost_with_fee, body.shares, body.portfolio_id),
     )
     holding_id = result["lastrowid"]
     # 同步创建初始买入交易记录；失败则删除持仓回滚
-    amount = round(qty * cost, 2)
     try:
         execute(
-            """INSERT INTO transactions (user_id, stock_code, stock_name, asset_type, direction, price, quantity, amount, traded_at, note)
-               VALUES (1, ?, ?, ?, 'buy', ?, ?, ?, date('now','localtime'), '初始建仓')""",
-            (body.stock_code, body.stock_name, at, cost, qty, amount),
+            """INSERT INTO transactions (user_id, stock_code, stock_name, asset_type, direction, price, quantity, amount, fee, traded_at, note)
+               VALUES (1, ?, ?, ?, 'buy', ?, ?, ?, ?, date('now','localtime'), '初始建仓')""",
+            (body.stock_code, body.stock_name, at, cost, qty, amount, fee),
         )
     except Exception:
         execute("DELETE FROM holdings WHERE id = ?", (holding_id,))
         raise HTTPException(500, "持仓创建失败，请重试")
 
-    return {"id": holding_id, "message": "添加成功", "asset_type": at}
+    return {"id": holding_id, "message": "添加成功", "asset_type": at, "fee": fee, "amount": amount}
 
 
 @router.put("/holdings/{holding_id}")
@@ -178,6 +192,60 @@ def get_fund_nav_endpoint(code: str):
     return nav
 
 
+@router.get("/holdings/history")
+def get_portfolio_history():
+    """获取组合资产走势数据：从第一笔交易至今的累计成本 + 当前市值"""
+    buys = query_all(
+        """SELECT traded_at, amount FROM transactions
+           WHERE user_id = 1 AND direction = 'buy'
+           ORDER BY traded_at ASC"""
+    )
+    if not buys:
+        return {"data": []}
+
+    # 累计成本日线
+    daily: dict[str, float] = {}
+    for t in buys:
+        date = (t["traded_at"] or "")[:10]
+        daily[date] = daily.get(date, 0) + t["amount"]
+
+    # 按日期排序，计算累计
+    sorted_dates = sorted(daily.keys())
+    cumulative = 0.0
+    data = []
+    for date in sorted_dates:
+        cumulative += daily[date]
+        data.append({"date": date, "cost": round(cumulative, 2)})
+
+    # 最后一天加上当前市值
+    holdings = query_all("SELECT * FROM holdings WHERE user_id = 1")
+    total_market_value = 0.0
+    for h in holdings:
+        at = h.get("asset_type") or detect_asset_type(h["stock_code"])
+        from services.utils import get_market
+        from routers.stocks import _cached_quote
+        if at in ("fund",):
+            from services.utils import get_fund_nav
+            nav = get_fund_nav(h["stock_code"])
+            price = (nav.get("est_nav") or nav.get("nav")) if nav else h["cost_price"]
+        else:
+            mkt = get_market(h["stock_code"])
+            q = _cached_quote(h["stock_code"], mkt)
+            price = q.get("price") if q and "error" not in q else h["cost_price"]
+        qty = h.get("shares") or h["quantity"] or 0
+        total_market_value += round(price * qty, 2)
+
+    # Add today's market value point
+    from datetime import date as dt_date
+    today = dt_date.today().isoformat()
+    if data and data[-1]["date"] == today:
+        data[-1]["value"] = round(total_market_value, 2)
+    else:
+        data.append({"date": today, "cost": data[-1]["cost"] if data else 0, "value": round(total_market_value, 2)})
+
+    return {"data": data}
+
+
 @router.get("/holdings/xirr")
 def get_xirr():
     """按持仓计算 XIRR 年化收益率（基于所有买入交易+当前市值）"""
@@ -248,6 +316,7 @@ class AddLotBody(BaseModel):
     nav: float | None = None  # 净值，基金用；不传则自动获取
     quantity: float = 0    # 买入数量(股/份)，股票用
     price: float = 0       # 买入单价，股票用
+    fee: float | None = None  # None = 自动计算
     note: str = ""
 
 
@@ -322,8 +391,10 @@ def add_lot(holding_id: int, body: AddLotBody):
 
     at = h.get("asset_type") or detect_asset_type(h["stock_code"])
 
+    from services.utils import calc_fee
+
     if at == "fund":
-        # 基金：金额 ÷ 净值 = 份额
+        # 基金：金额 ÷ 净值 = 份额（费率不固定，手动输入）
         if body.amount <= 0:
             raise HTTPException(400, "请填写有效的投入金额")
         price = body.nav
@@ -335,19 +406,25 @@ def add_lot(holding_id: int, body: AddLotBody):
             raise HTTPException(400, "无法获取基金净值，请手动输入")
         qty = round(body.amount / price, 4)
         amount = body.amount
+        fee = round(body.fee, 2) if body.fee is not None else 0.0
     else:
-        # 股票/ETF：数量 × 单价 = 金额
+        # 股票/ETF：数量 × 单价 + 手续费 = 总金额
         if body.quantity <= 0 or body.price <= 0:
             raise HTTPException(400, "请填写有效的买入数量和单价")
         qty = body.quantity
         price = body.price
-        amount = round(qty * price, 2)
+        if body.fee is not None:
+            fee = round(body.fee, 2)
+        else:
+            calculated = calc_fee(price, qty, "buy", at)
+            fee = round(calculated, 2) if calculated is not None else 0.0
+        amount = round(qty * price + fee, 2)
 
     # 创建买入交易记录
     tx_result = execute(
-        """INSERT INTO transactions (user_id, stock_code, stock_name, asset_type, direction, price, quantity, amount, traded_at, note)
-           VALUES (1, ?, ?, ?, 'buy', ?, ?, ?, ?, ?)""",
-        (h["stock_code"], h["stock_name"], at, price, qty, amount, body.traded_at, body.note or "追加买入"),
+        """INSERT INTO transactions (user_id, stock_code, stock_name, asset_type, direction, price, quantity, amount, fee, traded_at, note)
+           VALUES (1, ?, ?, ?, 'buy', ?, ?, ?, ?, ?, ?)""",
+        (h["stock_code"], h["stock_name"], at, price, qty, amount, fee, body.traded_at, body.note or "追加买入"),
     )
 
     # 更新持仓加权成本
@@ -385,6 +462,7 @@ class ImportLotItem(BaseModel):
     traded_at: str       # "2024-01-05"
     amount: float         # 投入金额(元)
     nav: float            # 当日净值
+    fee: float | None = None  # None = 自动计算
 
 
 class ImportLotsBody(BaseModel):
@@ -401,6 +479,8 @@ def import_lots(holding_id: int, body: ImportLotsBody):
 
     if not body.lots:
         raise HTTPException(400, "没有可导入的记录")
+
+    from services.utils import calc_fee
 
     at = h.get("asset_type") or detect_asset_type(h["stock_code"])
     is_fund = (at == "fund")
@@ -424,16 +504,23 @@ def import_lots(holding_id: int, body: ImportLotsBody):
             qty = round(lot.amount / lot.nav, 4)
             amount = lot.amount
             price = lot.nav
+            fee = round(lot.fee, 2) if lot.fee is not None else 0.0
         else:
             qty = lot.amount  # 对股票来说 amount 字段是数量
             price = lot.nav   # nav 字段是单价
-            amount = round(qty * price, 2)
+            if lot.fee is not None:
+                fee = round(lot.fee, 2)
+            else:
+                calculated = calc_fee(price, qty, "buy", at)
+                fee = round(calculated, 2) if calculated is not None else 0.0
+            amount = round(qty * price + fee, 2)
 
         parsed.append({
             "traded_at": lot.traded_at.strip(),
             "price": price,
             "quantity": qty,
             "amount": amount,
+            "fee": fee,
         })
 
     if errors:
@@ -458,9 +545,9 @@ def import_lots(holding_id: int, body: ImportLotsBody):
     statements = []
     for p in parsed:
         statements.append((
-            """INSERT INTO transactions (user_id, stock_code, stock_name, asset_type, direction, price, quantity, amount, traded_at, note)
-               VALUES (1, ?, ?, ?, 'buy', ?, ?, ?, ?, ?)""",
-            (h["stock_code"], h["stock_name"], at, p["price"], p["quantity"], p["amount"], p["traded_at"], body.note),
+            """INSERT INTO transactions (user_id, stock_code, stock_name, asset_type, direction, price, quantity, amount, fee, traded_at, note)
+               VALUES (1, ?, ?, ?, 'buy', ?, ?, ?, ?, ?, ?)""",
+            (h["stock_code"], h["stock_name"], at, p["price"], p["quantity"], p["amount"], p.get("fee", 0), p["traded_at"], body.note),
         ))
 
     if is_fund:
@@ -543,4 +630,86 @@ def add_watchlist(body: WatchlistBody):
 def delete_watchlist(item_id: int):
     execute("DELETE FROM watchlist WHERE id = ? AND user_id = 1", (item_id,))
     return {"message": "已移除"}
+
+
+# ==================== 手续费重算 ====================
+
+@router.post("/recalc-fees")
+def recalc_fees_and_holdings():
+    """用当前配置的费率重新计算所有买入交易的手续费，并更新持仓成本"""
+    from services.utils import calc_fee, get_fee_config
+
+    cfg = get_fee_config()
+    buys = query_all(
+        """SELECT * FROM transactions
+           WHERE user_id = 1 AND direction = 'buy'
+           ORDER BY traded_at ASC"""
+    )
+
+    updated = []
+    for t in buys:
+        at = t.get("asset_type") or detect_asset_type(t["stock_code"])
+        calculated = calc_fee(t["price"], t["quantity"], "buy", at)
+        fee = round(calculated, 2) if calculated is not None else 0.0
+        amount = round(t["price"] * t["quantity"] + fee, 2)
+
+        if abs(fee - (t.get("fee") or 0)) > 0.01 or abs(amount - (t.get("amount") or 0)) > 0.01:
+            execute(
+                """UPDATE transactions SET fee = ?, amount = ? WHERE id = ?""",
+                (fee, amount, t["id"]),
+            )
+            updated.append({
+                "id": t["id"],
+                "stock_code": t["stock_code"],
+                "stock_name": t["stock_name"],
+                "old_amount": t.get("amount", 0),
+                "new_amount": amount,
+                "fee": fee,
+            })
+
+    # 重算所有持仓成本
+    holdings_updated = []
+    holdings = query_all("SELECT * FROM holdings WHERE user_id = 1")
+    for h in holdings:
+        at = h.get("asset_type") or detect_asset_type(h["stock_code"])
+        is_fund = (at == "fund")
+        buys_for_code = query_all(
+            """SELECT * FROM transactions
+               WHERE user_id = 1 AND stock_code = ? AND direction = 'buy'
+               ORDER BY traded_at ASC""",
+            (h["stock_code"],),
+        )
+        if buys_for_code:
+            total_amount = sum(t["amount"] for t in buys_for_code)
+            total_shares = sum(t["quantity"] for t in buys_for_code)
+            new_cost = round(total_amount / total_shares, 4) if total_shares > 0 else 0
+            old_cost = h["cost_price"]
+            if abs(new_cost - old_cost) > 0.0001:
+                if is_fund:
+                    execute(
+                        "UPDATE holdings SET quantity = ?, cost_price = ?, shares = ?, updated_at = datetime('now','localtime') WHERE id = ?",
+                        (round(total_shares, 4), new_cost, round(total_shares, 4), h["id"]),
+                    )
+                else:
+                    execute(
+                        "UPDATE holdings SET quantity = ?, cost_price = ?, updated_at = datetime('now','localtime') WHERE id = ?",
+                        (int(total_shares), new_cost, h["id"]),
+                    )
+                holdings_updated.append({
+                    "stock_code": h["stock_code"],
+                    "stock_name": h["stock_name"],
+                    "old_cost": old_cost,
+                    "new_cost": new_cost,
+                })
+
+    return {
+        "config": {
+            "commission_rate": f"{cfg.commission_rate * 100:.3f}%",
+            "commission_min": f"{cfg.commission_min}元",
+        },
+        "transactions_fixed": len(updated),
+        "details": updated,
+        "holdings_updated": len(holdings_updated),
+        "holdings_details": holdings_updated,
+    }
 

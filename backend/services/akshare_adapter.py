@@ -40,7 +40,8 @@ def _http_get(url: str, timeout: int = 10, encoding: str = "gbk") -> str:
 def _symbol(code: str) -> str:
     """个股代码转腾讯格式 sh600519 / sz000001"""
     c = code.strip()
-    if c.startswith(("60", "68")):
+    # 沪市：60xxxx(主板), 68xxxx(科创板), 51xxxx(ETF), 56xxxx(ETF), 58xxxx(ETF)
+    if c.startswith(("51", "56", "58", "60", "68")):
         return f"sh{c}"
     return f"sz{c}"
 

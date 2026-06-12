@@ -34,6 +34,41 @@ _ALL_STOCKS_TTL = 86400.0  # 24 小时
 _all_stocks_ts = 0.0
 
 
+def _fill_empty_names(stocks: list[dict]) -> None:
+    """补全股票列表中缺失的名称"""
+    need_name = [s for s in stocks if not s.get("name")]
+    if not need_name:
+        return
+    # 1. 尝试从 Baostock 静态列表查找
+    try:
+        from services.baostock_adapter import _ensure_login, _bs_lock
+        with _bs_lock:
+            if _ensure_login():
+                rs = bs.query_stock_basic()
+                if rs.error_code == "0":
+                    name_map: dict[str, str] = {}
+                    while rs.next():
+                        row = rs.get_row_data()
+                        code = row[0].replace("sh.", "").replace("sz.", "")
+                        name_map[code] = row[1]
+                    for s in need_name:
+                        if s["code"] in name_map:
+                            s["name"] = name_map[s["code"]]
+    except Exception:
+        pass
+    # 2. 剩余尝试从 akshare 获取
+    still_need = [s for s in need_name if not s.get("name")]
+    if still_need:
+        try:
+            from services.akshare_adapter import get_stock_name
+            for s in still_need:
+                n = get_stock_name(s["code"])
+                if n:
+                    s["name"] = n
+        except Exception:
+            pass
+
+
 def get_all_stock_list(force_refresh: bool = False) -> list[dict]:
     """获取全A股股票列表（缓存24小时）
 
@@ -57,7 +92,8 @@ def get_all_stock_list(force_refresh: bool = False) -> list[dict]:
                 for _, row in df.iterrows():
                     code = str(row["成分券代码"])
                     index_codes.add(code)
-                    stocks.append({"code": code, "name": row.get("成分券名称", "")})
+                    name = str(row.get("成分券名称", "") or "")
+                    stocks.append({"code": code, "name": name})
             except Exception:
                 logger.warning(f"{idx_name} 成分股获取失败")
     except Exception as e:
@@ -96,6 +132,9 @@ def get_all_stock_list(force_refresh: bool = False) -> list[dict]:
                 # 注意：不调用 bs.logout() —— 连接由 baostock_adapter 统一管理
     except Exception as e:
         logger.warning(f"Baostock 股票列表获取失败: {e}")
+
+    # 1.5 补全空名称：对没有名字的股票，从 Baostock 或行情缓存中查找
+    _fill_empty_names(stocks)
 
     # 3. 兜底：Baostock 和 Akshare 都挂了
     if len(stocks) < 100:
@@ -241,9 +280,9 @@ def _process_single_stock(code: str) -> Optional[dict]:
             fundamentals=fundamentals if "error" not in fundamentals else {},
         )
 
-        # 附上股票名称和行业
-        result["name"] = fundamentals.get("name", "") if isinstance(fundamentals, dict) else ""
-        result["industry"] = fundamentals.get("industry", "") if isinstance(fundamentals, dict) else ""
+        # 附上股票名称和行业（Baostock 优先 → stock_list 兜底）
+        result["name"] = (fundamentals.get("name", "") if isinstance(fundamentals, dict) else "") or ""
+        result["industry"] = (fundamentals.get("industry", "") if isinstance(fundamentals, dict) else "") or ""
         result["price"] = kline["closes"][-1] if kline["closes"] else None
 
         return result
@@ -320,10 +359,12 @@ def run_screener(
     scored = []
     for nf in normalized:
         score = score_stock(nf["factors"], weights)
+        # 名称兜底：processor 没取到的从 stock_list 补
+        stock_name_map = {s["code"]: s for s in stock_list}
         scored.append({
             "code": nf["code"],
-            "name": nf.get("name", ""),
-            "industry": nf.get("industry", ""),
+            "name": nf.get("name", "") or stock_name_map.get(nf["code"], {}).get("name", ""),
+            "industry": nf.get("industry", "") or stock_name_map.get(nf["code"], {}).get("industry", ""),
             "score": score,
             "factors": {k: v for k, v in nf["factors"].items() if v is not None},
             "hit_count": nf["hit_count"],

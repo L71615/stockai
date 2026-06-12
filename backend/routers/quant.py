@@ -90,8 +90,8 @@ def stock_insight(code: str, days: int = 120):
             "MACD": indicators.get("MACD", {}),
             "KDJ": indicators.get("KDJ", {}),
             "RSI": indicators.get("RSI"),
-            "signal": indicators.get("signal", ""),
         },
+        "signal": indicators.get("signal", ""),
         "factors": {
             "pe": factors.get("pe"),
             "roe": factors.get("roe"),

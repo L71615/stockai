@@ -105,6 +105,62 @@ def get_fund_nav(code: str) -> dict | None:
     return None
 
 
+def parse_ai_json(raw: str) -> dict:
+    """通用 AI JSON 响应解析器——渐进降级
+
+    5 步降级策略：
+    1. 去 markdown 代码块包裹
+    2. 直接 json.loads
+    3. 正则截取首个 {} 片段再解析
+    4. 修复常见 JSON 错误（缺逗号等）后再解析
+    5. 降级——返回 raw 原文
+
+    返回: 解析成功的 dict，或 {"raw": raw, "parse_error": True}
+    """
+    if not raw or not raw.strip():
+        return {"raw": "", "parse_error": True}
+
+    text = raw.strip()
+
+    # Step 1: Strip markdown code blocks
+    if text.startswith("```"):
+        lines = text.split("\n")
+        if lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+        text = "\n".join(lines)
+
+    # Step 2: Try direct parse
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+
+    # Step 3: Extract JSON fragment between { and }
+    match = re.search(r'\{.*\}', text, re.DOTALL)
+    if match:
+        try:
+            return json.loads(match.group(0))
+        except json.JSONDecodeError:
+            pass
+
+    # Step 4: Repair common errors
+    if match:
+        repaired = match.group(0)
+        repaired = re.sub(r'\}\s*"', '}, "', repaired)   # missing comma after }
+        repaired = re.sub(r'\]\s*"', '], "', repaired)   # missing comma after ]
+        repaired = re.sub(r'"\s+"', '", "', repaired)    # missing comma between strings
+        repaired = re.sub(r'(\d+)\s+"', r'\1, "', repaired)  # missing comma after number
+        try:
+            return json.loads(repaired)
+        except json.JSONDecodeError:
+            pass
+
+    # Step 5: Fallback — return raw text
+    return {"raw": raw, "parse_error": True}
+
+
 def calc_xirr(cash_flows: list[tuple[str, float]]) -> float | None:
     """XIRR 年化收益率。cash_flows: [(date_str, amount), ...]，负=投入，正=收回"""
     if not cash_flows or all(cf[1] >= 0 for cf in cash_flows):
@@ -156,3 +212,80 @@ def calc_xirr(cash_flows: list[tuple[str, float]]) -> float | None:
         if result is not None:
             return result
     return None
+
+
+# ==================== 交易手续费 ====================
+
+from dataclasses import dataclass
+
+@dataclass
+class FeeConfig:
+    commission_rate: float = 0.00025   # 佣金 0.025%
+    commission_min: float = 5.0        # 最低佣金 5 元
+    transfer_fee_rate: float = 0.00002 # 过户费 0.002%
+    stamp_tax_rate: float = 0.0005     # 印花税 0.05%（仅卖出）
+
+
+def get_fee_config() -> FeeConfig:
+    """从 settings 表读取手续费配置，未配置时返回默认值"""
+    try:
+        from database import query_one
+        import json as _json
+        row = query_one("SELECT value FROM settings WHERE key = 'fee_config'")
+        if row and row.get("value"):
+            data = _json.loads(row["value"])
+            return FeeConfig(
+                commission_rate=float(data.get("commission_rate", FeeConfig.commission_rate)),
+                commission_min=float(data.get("commission_min", FeeConfig.commission_min)),
+            )
+    except Exception:
+        pass
+    return FeeConfig()
+
+
+def save_fee_config(cfg: FeeConfig) -> None:
+    """保存手续费配置到 settings 表"""
+    from database import execute
+    import json as _json
+    execute(
+        "INSERT OR REPLACE INTO settings (key, value) VALUES ('fee_config', ?)",
+        (_json.dumps({"commission_rate": cfg.commission_rate, "commission_min": cfg.commission_min}),),
+    )
+
+
+def calc_fee(price: float, quantity: float, direction: str, asset_type: str) -> float | None:
+    """计算 A 股交易手续费。fund/hk 返回 None（需手动输入）。
+
+    规则：
+      Stock 买入: 佣金 max(费率 * 金额, 最低) + 过户费 0.002% * 金额
+      Stock 卖出: 以上 + 印花税 0.05% * 金额
+      ETF 买/卖:  佣金 max(费率 * 金额, 最低)，无印花税/过户费
+      Fund / HK:  返回 None
+
+    费率从 settings 表 fee_config 读取，默认 0.025% / 最低 5 元。
+    """
+    at = (asset_type or "").strip().lower()
+
+    if at in ("fund", "hk"):
+        return None
+
+    amount = abs(price * quantity)
+    if amount <= 0:
+        return 0.0
+
+    cfg = get_fee_config()
+
+    if at == "etf":
+        commission = max(amount * cfg.commission_rate, cfg.commission_min)
+        return round(commission, 2)
+
+    # Stock：佣金 + 过户费 + (卖出时) 印花税
+    commission = max(amount * cfg.commission_rate, cfg.commission_min)
+    transfer_fee = amount * FeeConfig.transfer_fee_rate
+    fee = commission + transfer_fee
+
+    if direction == "sell":
+        stamp_tax = amount * FeeConfig.stamp_tax_rate
+        fee += stamp_tax
+
+    return round(fee, 2)

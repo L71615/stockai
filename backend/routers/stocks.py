@@ -153,6 +153,12 @@ def lookup(code: str):
     nav = None if try_quote_first else get_fund_nav(code)
 
     if q and "error" not in q:
+        # ETF: 检测假数据（腾讯 API 对部分 ETF 返回 name="北京XXXX" price=100.0）
+        if at == "etf" and q.get("name", "").startswith("北京") and q.get("price") == 100.0:
+            nav = get_fund_nav(code)
+            if nav:
+                return {"code": code, "name": nav.get("name", q.get("name", "")), "type": "etf",
+                        "price": nav.get("nav"), "change_pct": nav.get("est_change_pct")}
         # ETF: 天天基金的名字更准确，优先使用
         name = q.get("name", "")
         if at == "etf":
@@ -169,7 +175,8 @@ def lookup(code: str):
     if try_quote_first:
         nav = get_fund_nav(code)
         if nav:
-            return {"code": code, "name": nav.get("name", ""), "type": "fund",
+            fallback_type = at if at in ("etf", "stock") else "fund"
+            return {"code": code, "name": nav.get("name", ""), "type": fallback_type,
                     "price": nav.get("nav"), "change_pct": nav.get("est_change_pct")}
     else:
         q = _cached_quote(code)
@@ -231,13 +238,35 @@ def get_quotes_batch(body: BatchQuoteBody):
                 results.append(result)
                 time.sleep(0.2)  # 基金 API 限速
         else:
-            # 股票/ETF：走东方财富行情
+            # 股票/ETF：走东方财富行情；ETF 假数据兜底到天天基金净值
             key = _cache_key(code, m)
             entry = _QUOTE_CACHE.get(key)
             if entry and time.time() < entry[0]:
                 results.append(entry[1])
             else:
-                results.append(_fetch_quote_sync(code, m or None))
+                q = _fetch_quote_sync(code, m or None)
+                # ETF：检测腾讯/东方财富返回的假数据，兜底到天天基金
+                if at == "etf":
+                    is_bad = ("error" in q or
+                              (q.get("name", "").startswith("北京") and q.get("price") == 100.0) or
+                              (q.get("name", "").startswith("重庆") and q.get("price") == 100.0))
+                    if is_bad:
+                        nav = get_fund_nav(code)
+                        if nav:
+                            q = {
+                                "code": code,
+                                "name": nav.get("name", q.get("name", "")),
+                                "price": nav.get("nav"),
+                                "est_nav": nav.get("est_nav"),
+                                "change": round(nav.get("est_nav", 0) - nav.get("nav", 0), 4),
+                                "change_pct": nav.get("est_change_pct"),
+                                "high": None,
+                                "low": None,
+                                "volume": None,
+                                "asset_type": "etf",
+                                "nav_date": nav.get("nav_date"),
+                            }
+                results.append(q)
                 _QUOTE_CACHE[key] = (time.time() + _CACHE_TTL, results[-1])
                 time.sleep(0.3)
     return results
