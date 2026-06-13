@@ -596,9 +596,9 @@ export function DataTable({
               ))}
             </TableHeader>
             <TableBody>
-              {table.getRowModel().rows.filter((row) => row.original.pnl.startsWith("-")).length ? (
+              {table.getRowModel().rows.filter((row) => row.original.pnl.includes("¥ -")).length ? (
                 table.getRowModel().rows
-                  .filter((row) => row.original.pnl.startsWith("-"))
+                  .filter((row) => row.original.pnl.includes("¥ -"))
                   .map((row) => (
                     <TableRow key={`loss-${row.id}`}>
                       {row.getVisibleCells().map((cell) => (
