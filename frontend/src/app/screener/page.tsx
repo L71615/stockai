@@ -42,6 +42,13 @@ export default function ScreenerPage() {
   const [loading, setLoading] = useState(true)
   const [aiScreenLoading, setAiScreenLoading] = useState(false)
   const [statusText, setStatusText] = useState("")
+  const [stockPool, setStockPool] = useState(500) // 默认沪深300+中证500
+
+  const POOL_OPTIONS = [
+    { value: 30, label: "快速测试 (30只)" },
+    { value: 500, label: "标准扫描 (沪深300+中证500)" },
+    { value: 0, label: "全市场扫描 (全部A股)" },
+  ]
 
   const pollScan = useCallback(async () => {
     try {
@@ -79,7 +86,8 @@ export default function ScreenerPage() {
 
   const startScan = async () => {
     setScanning(true); setProgress(0)
-    await apiPost("/api/screener/run", { stock_count: 30, max_workers: 4, industry_neutral: true })
+    setStatusText("")
+    await apiPost("/api/screener/run", { stock_count: stockPool, max_workers: 4, industry_neutral: true })
     pollScan()
   }
 
@@ -128,6 +136,16 @@ export default function ScreenerPage() {
         <div className="p-4 lg:p-6 space-y-4">
           {/* Toolbar */}
           <div className="flex items-center gap-2 flex-wrap">
+            <select
+              value={stockPool}
+              onChange={(e) => setStockPool(Number(e.target.value))}
+              className="h-8 rounded-md border border-input bg-background px-2 text-xs"
+              disabled={scanning}
+            >
+              {POOL_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>{opt.label}</option>
+              ))}
+            </select>
             <Button size="sm" onClick={startScan} disabled={scanning}>
               <IconSearch className="size-3.5 mr-1" />
               {scanning ? `扫描中 ${progress}%` : "开始扫描"}
@@ -156,7 +174,7 @@ export default function ScreenerPage() {
                   {loading ? (
                     <div className="p-4 space-y-2"><Skeleton className="h-8 w-full" /><Skeleton className="h-8 w-full" /></div>
                   ) : results.length === 0 ? (
-                    <p className="p-6 text-center text-sm text-muted-foreground">点击"开始扫描"筛选全市场股票</p>
+                    <p className="p-6 text-center text-sm text-muted-foreground">选择股票池范围，点击"开始扫描"启动多因子筛选</p>
                   ) : (
                     <div className="overflow-auto max-h-[500px]">
                       <table className="w-full text-xs">

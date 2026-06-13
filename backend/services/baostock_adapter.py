@@ -169,11 +169,57 @@ def get_stock_basic(code: str) -> Optional[dict]:
 _FIN_CACHE: dict[str, tuple[float, dict]] = {}
 _FIN_TTL = 7200.0  # 财务数据缓存 2 小时
 
+# 全局行业分类缓存（一次查询全市场，避免逐只 Baostock 调用）
+_INDUSTRY_CACHE: dict[str, dict] = {}
+_INDUSTRY_TTL = 86400.0  # 24 小时
+_industry_ts = 0.0
+
+
+def _get_industry_map() -> dict[str, dict]:
+    """获取全市场行业分类映射表（全局缓存 24 小时）
+    Returns: {code: {industry, industry_type}}
+    """
+    global _INDUSTRY_CACHE, _industry_ts
+    now = time.time()
+    if _INDUSTRY_CACHE and (now - _industry_ts) < _INDUSTRY_TTL:
+        return _INDUSTRY_CACHE
+
+    with _bs_lock:
+        if not _ensure_login():
+            return _INDUSTRY_CACHE or {}
+        try:
+            rs = bs.query_stock_industry()
+            if rs.error_code == "0":
+                new_map: dict[str, dict] = {}
+                while rs.next():
+                    row = rs.get_row_data()
+                    code = row[1].replace("sh.", "").replace("sz.", "")
+                    new_map[code] = {
+                        "industry": row[2] if len(row) > 2 else "",
+                        "industry_type": row[3] if len(row) > 3 else "",
+                    }
+                _INDUSTRY_CACHE = new_map
+                _industry_ts = now
+        except Exception:
+            pass
+    return _INDUSTRY_CACHE
+
+
+def _bs_locked(fn):
+    """在 Baostock 锁内执行 fn()，自动确保登录。fn 在锁保护下运行。"""
+    with _bs_lock:
+        if not _ensure_login():
+            return None
+        return fn()
+
 
 def get_stock_factors(code: str) -> dict:
-    """获取股票核心因子数据：PE/PB/ROE/市值/行业
+    """获取股票核心因子数据：PE/ROE/市值/行业 + prev_eps + dividend
 
     用于因子选股策略。数据来源 Baostock 最新财报 + 当前价格。
+    返回 prev_eps（去年同期EPS）和 dividend（每股分红）供因子计算使用。
+
+    锁策略：每个独立 Baostock 查询单独加锁，查询间隙释放锁让其他线程执行。
     """
     cache_key = f"factors:{code}"
     now = time.time()
@@ -184,49 +230,127 @@ def get_stock_factors(code: str) -> dict:
 
     result = {"code": code}
 
-    with _bs_lock:
-        if not _ensure_login():
-            return {"error": "Baostock 登录失败", "code": code}
+    sym = _bs_symbol(code)
+    result["symbol"] = sym
 
-        sym = _bs_symbol(code)
-        result["symbol"] = sym
+    # 1. 行业分类（全局缓存，无需锁）
+    try:
+        ind_map = _get_industry_map()
+        if code in ind_map:
+            result.update(ind_map[code])
+    except Exception:
+        pass
 
-        # 1. 行业分类
-        try:
-            rs = bs.query_stock_industry(sym)
-            if rs.error_code == "0":
-                while rs.next():
-                    row = rs.get_row_data()
-                    result["industry"] = row[2] if len(row) > 2 else ""
-                    result["industry_type"] = row[3] if len(row) > 3 else ""
-        except Exception:
-            pass
+    # 2. 利润表（当年 → 去年 → 前年，Q4→Q1 逐季回退，每次查询独立加锁）
+    try:
+        import datetime
+        year = datetime.date.today().year
 
-        # 2. 最新利润表（eps, roe, net_profit, revenue, total_shares）
-        try:
-            import datetime
-            year = datetime.date.today().year
-            for y in (year, year - 1):
-                rs = bs.query_profit_data(sym, year=y, quarter=4)
+        def _query_latest_row(target_year: int) -> tuple[list | None, int]:
+            """查询某年最新报表（Q4→Q1），每次调用独立加锁"""
+            def _do():
+                for q in (4, 3, 2, 1):
+                    rs = bs.query_profit_data(sym, year=target_year, quarter=q)
+                    if rs.error_code == "0":
+                        while rs.next():
+                            return (rs.get_row_data(), q)
+                return (None, 0)
+            return _bs_locked(_do)
+
+        def _extract_financials(row: list, quarter: int) -> dict:
+            """从 Baostock 利润表行提取字段，季报 ROE 自动年化"""
+            roe_raw = _f(row[3]) if len(row) > 3 else None
+            roe_pct = round(roe_raw * 100, 2) if roe_raw is not None else None
+            if roe_pct is not None and quarter != 4:
+                factors = {1: 4.0, 2: 2.0, 3: 4.0 / 3.0}
+                roe_pct = round(roe_pct * factors.get(quarter, 1.0), 2)
+            return {
+                "roe": roe_pct,
+                "eps": _f(row[7]) if len(row) > 7 else None,
+                "net_profit": _f(row[6]) if len(row) > 6 else None,
+                "revenue": _f(row[8]) if len(row) > 8 else None,
+                "total_shares": _f(row[9]) if len(row) > 9 else None,
+            }
+
+        # 2a. 逐级回退取主财务数据
+        fin = {}
+        for y_offset in (0, 1, 2):
+            row, qtr = _query_latest_row(year - y_offset)
+            if row:
+                fin = _extract_financials(row, qtr)
+                result.update(fin)
+                break
+
+        # 2b. 往前取 prev_eps
+        if "eps" in result and result["eps"] is not None:
+            eps_found = False
+            for y_offset in (0, 1, 2):
+                row, _ = _query_latest_row(year - y_offset)
+                if row and _f(row[7]) == result["eps"]:
+                    prev_row, _ = _query_latest_row(year - y_offset - 1)
+                    if prev_row:
+                        prev_eps = _f(prev_row[7]) if len(prev_row) > 7 else None
+                        if prev_eps is not None and prev_eps != 0:
+                            result["prev_eps"] = prev_eps
+                            eps_found = True
+                    if not eps_found:
+                        prev_row, _ = _query_latest_row(year - y_offset - 2)
+                        if prev_row:
+                            prev_eps = _f(prev_row[7]) if len(prev_row) > 7 else None
+                            if prev_eps is not None and prev_eps != 0:
+                                result["prev_eps"] = prev_eps
+                    break
+    except Exception:
+        pass
+
+    # 3. 分红数据（每年独立加锁查询）
+    try:
+        import datetime
+        year = datetime.date.today().year
+        for y in (year, year - 1, year - 2):
+            def _query_div():
+                rs = bs.query_dividend_data(sym, year=y, yearType="report")
                 if rs.error_code == "0":
                     while rs.next():
                         row = rs.get_row_data()
-                        # 字段映射: [3]ROE(小数) [6]净利润 [7]EPS_TTM [8]营收 [9]总股本
-                        roe_raw = _f(row[3]) if len(row) > 3 else None  # 小数，如 0.34 = 34%
-                        result["roe"] = round(roe_raw * 100, 2) if roe_raw is not None else None
-                        result["eps"] = _f(row[7]) if len(row) > 7 else None
-                        result["net_profit"] = _f(row[6]) if len(row) > 6 else None
-                        result["revenue"] = _f(row[8]) if len(row) > 8 else None
-                        result["total_shares"] = _f(row[9]) if len(row) > 9 else None
-                        break
-                if "eps" in result:
-                    break
-        except Exception:
-            pass
+                        div = _f(row[9]) if len(row) > 9 else None
+                        if div is not None and div > 0:
+                            return div
+                return None
 
-    # ── 以下计算不依赖 Baostock 连接，在锁外执行 ──
+            div = _bs_locked(_query_div)
+            if div is not None:
+                result["dividend"] = div
+                break
+    except Exception:
+        pass
 
-    # 4. 当前股价（从 K 线取最新收盘价）— get_kline 内部有自己的锁
+    # 4. 真实 PB（从 K 线 pbMRQ 字段，独立加锁）
+    try:
+        import datetime as _dt
+        today = _dt.date.today()
+        start = (today - _dt.timedelta(days=30)).strftime("%Y-%m-%d")
+
+        def _query_pb():
+            rs = bs.query_history_k_data_plus(sym, "date,pbMRQ", frequency="d",
+                                               adjustflag="2", start_date=start)
+            if rs.error_code == "0":
+                while rs.next():
+                    row = rs.get_row_data()
+                    pb = _f(row[1]) if len(row) > 1 else None
+                    if pb is not None and pb > 0:
+                        return pb
+            return None
+
+        pb = _bs_locked(_query_pb)
+        if pb is not None:
+            result["pb"] = pb
+    except Exception:
+        pass
+
+    # ── 以下不依赖 Baostock 连接 ──
+
+    # 5. 当前股价（get_kline 内部已自己管理锁）
     try:
         kline = get_kline(code, days=5)
         if "error" not in kline and kline.get("closes"):

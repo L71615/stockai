@@ -342,3 +342,119 @@ def _market_label(code: str) -> str:
     if code.startswith(("4", "8")):
         return "BJ"
     return "SZ"
+
+
+# ==================== 基本面数据（akshare HTTP，无锁可并发） ====================
+
+_FIN_HTTP_CACHE: dict[str, tuple[float, dict]] = {}
+_FIN_HTTP_TTL = 7200.0  # 2 小时
+
+
+def get_stock_factors_http(code: str) -> dict | None:
+    """通过 akshare HTTP 获取基本面数据（EPS/ROE/BVPS/prev_eps）
+
+    无全局锁，多线程可真正并发。失败返回 None，调用方应回退到 Baostock。
+    """
+    cache_key = f"fin_http:{code}"
+    now = time.time()
+    if cache_key in _FIN_HTTP_CACHE:
+        ts, data = _FIN_HTTP_CACHE[cache_key]
+        if now - ts < _FIN_HTTP_TTL:
+            return data
+
+    try:
+        import akshare as ak
+        df = ak.stock_financial_abstract_ths(symbol=code, indicator="按报告期")
+        if df is None or df.empty:
+            return None
+
+        # 列名映射（同花顺 → 标准字段）
+        col_map = {
+            "报告期": "date",
+            "基本每股收益": "eps",
+            "每股净资产": "bvps",
+            "净资产收益率": "roe_pct",
+            "归母净利润": "net_profit",
+            "营业总收入": "revenue",
+        }
+
+        # 找到实际列名
+        actual_cols: dict[str, int] = {}
+        for i, c in enumerate(df.columns):
+            for key in col_map:
+                if key in str(c):
+                    actual_cols[key] = i
+                    break
+
+        if "基本每股收益" not in actual_cols:
+            return None
+
+        def _val(row, key) -> float | None:
+            """从行中安全提取数值（处理 '646.27亿' 这种格式）"""
+            if key not in actual_cols:
+                return None
+            idx = actual_cols[key]
+            raw = str(row[idx]) if idx < len(row) else ""
+            if not raw or raw == "nan":
+                return None
+            # 处理带单位的值
+            raw = raw.replace("亿", "e8").replace("万", "e4").replace("%", "").replace(",", "")
+            try:
+                return float(raw)
+            except ValueError:
+                return None
+
+        rows = df.values
+        if len(rows) < 1:
+            return None
+
+        # 最新一期
+        latest = rows[-1]
+        eps = _val(latest, "基本每股收益")
+        roe_pct = _val(latest, "净资产收益率")
+        bvps = _val(latest, "每股净资产")
+        report_date = str(latest[actual_cols.get("报告期", 0)]) if "报告期" in actual_cols else ""
+
+        if eps is None:
+            return None
+
+        # 季报数据年化（akshare 返回的是本期值，非 TTM）
+        quarter = 4  # 默认 Q4（年报，不需要年化）
+        if report_date and len(report_date) >= 10:
+            month = int(report_date[5:7]) if report_date[4] == "-" else 0
+            if month == 3:
+                quarter = 1
+            elif month == 6:
+                quarter = 2
+            elif month == 9:
+                quarter = 3
+        if quarter != 4:
+            annual_factor = {1: 4.0, 2: 2.0, 3: 4.0 / 3.0}[quarter]
+            eps = round(eps * annual_factor, 6)
+            if roe_pct is not None:
+                roe_pct = round(roe_pct * annual_factor, 2)
+
+        result: dict = {
+            "code": code,
+            "eps": eps,
+            "roe": roe_pct,
+            "bvps": bvps,
+            "source": "akshare",
+        }
+
+        # prev_eps：从更早期数据中取
+        if len(rows) >= 2:
+            prev_eps = None
+            for i in range(len(rows) - 2, -1, -1):
+                pe = _val(rows[i], "基本每股收益")
+                if pe is not None and pe != eps:
+                    prev_eps = pe
+                    break
+            if prev_eps:
+                result["prev_eps"] = prev_eps
+
+        _FIN_HTTP_CACHE[cache_key] = (now, result)
+        return result
+
+    except Exception:
+        return None

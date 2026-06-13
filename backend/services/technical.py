@@ -7,17 +7,12 @@ from services.utils import run_curl, get_market
 
 
 def fetch_kline(code: str, market: str = None, days: int = 120) -> dict[str, Any]:
-    """获取日K线数据（Baostock → 腾讯 → 东方财富，多源兜底）"""
-    # 1. Baostock（15年历史数据，前复权，最可靠）
-    try:
-        from services.baostock_adapter import get_kline as bs_kline
-        result = bs_kline(code, days)
-        if result and "error" not in result:
-            return result
-    except Exception:
-        pass
+    """获取日K线数据（akshare → 东方财富 → Baostock，多源兜底）
 
-    # 2. 腾讯财经 API（实时性好，备份）
+    优先走无锁的 HTTP 源（akshare/东方财富），让并发真正生效。
+    Baostock 作为最后兜底（数据最全但有全局锁，串行）。
+    """
+    # 1. akshare / 腾讯财经（HTTP，无锁，可并发）
     try:
         from services.akshare_adapter import get_kline
         result = get_kline(code, days)
@@ -26,7 +21,7 @@ def fetch_kline(code: str, market: str = None, days: int = 120) -> dict[str, Any
     except Exception:
         pass
 
-    # 3. 东方财富 push2his（最后兜底，IPv6 不稳定）
+    # 2. 东方财富 push2his（HTTP，无锁，可并发）
     if market is None:
         market = get_market(code)
     secid = f"{market}.{code}"
@@ -36,26 +31,34 @@ def fetch_kline(code: str, market: str = None, days: int = 120) -> dict[str, Any
         data = json.loads(raw)
         klines = data.get("data", {}).get("klines", []) or []
     except Exception:
-        return {"error": "获取K线数据失败", "code": code}
+        klines = []
 
-    if not klines:
-        return {"error": "无K线数据", "code": code}
+    if klines:
+        dates, closes, highs, lows = [], [], [], []
+        for line in klines:
+            parts = line.split(",")
+            dates.append(parts[0])
+            closes.append(float(parts[2]))
+            highs.append(float(parts[3]))
+            lows.append(float(parts[4]))
+        return {
+            "code": code,
+            "dates": dates,
+            "closes": closes,
+            "highs": highs,
+            "lows": lows,
+        }
 
-    dates, closes, highs, lows = [], [], [], []
-    for line in klines:
-        parts = line.split(",")
-        dates.append(parts[0])
-        closes.append(float(parts[2]))
-        highs.append(float(parts[3]))
-        lows.append(float(parts[4]))
+    # 3. Baostock（全局锁，串行，最后兜底）
+    try:
+        from services.baostock_adapter import get_kline as bs_kline
+        result = bs_kline(code, days)
+        if result and "error" not in result:
+            return result
+    except Exception:
+        pass
 
-    return {
-        "code": code,
-        "dates": dates,
-        "closes": closes,
-        "highs": highs,
-        "lows": lows,
-    }
+    return {"error": "获取K线数据失败", "code": code}
 
 
 def _ema(data: list[float], period: int) -> list[float]:

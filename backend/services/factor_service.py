@@ -521,14 +521,14 @@ def compute_all_factors(
 
     # ── 基本面类 ──
     factors["pe_inverse"] = factor_pe(fundamentals.get("pe"))
-    # PB 不直接支持，从 PE/ROE 反推：PB = PE * ROE/100
+    # PB: 优先用 Baostock 真实 pbMRQ，取不到时回退到 PE×ROE 反推
     pe = fundamentals.get("pe")
     roe_pct = fundamentals.get("roe")
-    if pe and roe_pct and pe > 0:
-        pb_est = pe * (roe_pct / 100)
-        factors["pb_inverse"] = factor_pb(pb_est)
-    else:
-        factors["pb_inverse"] = None
+    pb = fundamentals.get("pb")
+    if pb is None or pb <= 0:
+        if pe and roe_pct and pe > 0:
+            pb = pe * (roe_pct / 100)
+    factors["pb_inverse"] = factor_pb(pb) if pb and pb > 0 else None
     factors["roe"] = factor_roe(roe_pct)
     factors["eps_growth"] = factor_eps_growth(fundamentals.get("eps"), prev_eps)
     factors["market_cap_ln"] = factor_market_cap(fundamentals.get("market_cap_billion"))

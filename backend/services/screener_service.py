@@ -169,58 +169,115 @@ DEFAULT_FACTOR_WEIGHTS = {
 }
 
 
-def compute_ic_weights(benchmark_returns: list[float]) -> dict[str, float]:
-    """基于过去 12 个月滚动 IC 计算因子权重
+def _spearman_ic(x_vals: list, y_vals: list) -> float | None:
+    """计算 Spearman 秩相关系数（Information Coefficient）
 
-    会尝试对每个因子回溯其历史值和未来收益的相关性（IC），
-    IC 绝对值大的因子获得更高权重。数据不足时退回到 DEFAULT_FACTOR_WEIGHTS。
+    对 x_vals 和 y_vals 分别求秩，计算秩的 Pearson 相关系数。
+    None 值会被跳过。需要至少 30 对有效数据点。
+    """
+    import math as _math
+
+    pairs = [(a, b) for a, b in zip(x_vals, y_vals) if a is not None and b is not None]
+    if len(pairs) < 30:
+        return None
+
+    n = len(pairs)
+    # 排序求秩
+    x_sorted = sorted(range(n), key=lambda i: pairs[i][0])
+    y_sorted = sorted(range(n), key=lambda i: pairs[i][1])
+    x_rank = [0] * n
+    y_rank = [0] * n
+    for rank, idx in enumerate(x_sorted, 1):
+        x_rank[idx] = rank
+    for rank, idx in enumerate(y_sorted, 1):
+        y_rank[idx] = rank
+
+    mean_x = sum(x_rank) / n
+    mean_y = sum(y_rank) / n
+    cov = sum((x_rank[i] - mean_x) * (y_rank[i] - mean_y) for i in range(n))
+    std_x = _math.sqrt(sum((r - mean_x) ** 2 for r in x_rank))
+    std_y = _math.sqrt(sum((r - mean_y) ** 2 for r in y_rank))
+
+    if std_x == 0 or std_y == 0:
+        return None
+    return cov / (std_x * std_y)
+
+
+def compute_ic_weights(
+    normalized_factors: list[dict] | None = None,
+    benchmark_returns: list[float] | None = None,
+) -> dict[str, float]:
+    """基于截面秩 IC 的因子权重
+
+    核心逻辑：
+    1. 对每个因子，计算其 Z-score 与股票 ret_20d 的 Spearman 秩相关（IC）
+    2. |IC| 越大 → 该因子预测力越强 → 权重越高
+    3. 60% IC + 40% 默认权重融合，保证稳定性
+    4. 保留默认权重的符号（负号 = 因子值越低越好）
+
+    当扫描样本不足或 IC 计算失败时，回退到 DEFAULT_FACTOR_WEIGHTS
+    + 市场状态微调（牛市偏动量、熊市偏质量、震荡偏量价）。
 
     Returns:
-        {factor_name: weight}  权重之和 = 1.0
+        {factor_name: weight}  绝对值之和 = 1.0
     """
-    # 实际滚动 IC 计算需要大量的历史因子面板数据
-    # 当前版本使用默认权重 + 简单动量调整
-    # 未来可扩展为真正的滚动IC
-
-    # 根据近期市场状态微调权重
+    # ── 默认权重 ──
     weights = dict(DEFAULT_FACTOR_WEIGHTS)
 
-    if not benchmark_returns or len(benchmark_returns) < 20:
-        return _normalize_weights(weights)
+    # ── 尝试计算真实截面 IC ──
+    ic_weights: dict[str, float] = {}
+    if normalized_factors and len(normalized_factors) >= 30:
+        # 提取每个因子的截面值 + 目标收益（ret_20d）
+        factor_names = list(DEFAULT_FACTOR_WEIGHTS.keys())
+        target_returns: list[float | None] = []
+        factor_panels: dict[str, list[float | None]] = {fn: [] for fn in factor_names}
 
-    # 市场状态判断
-    recent_20d = sum(benchmark_returns[-20:]) if len(benchmark_returns) >= 20 else 0
-    recent_60d = sum(benchmark_returns[-60:]) if len(benchmark_returns) >= 60 else 0
+        for nf in normalized_factors:
+            fv = nf["factors"]
+            target_returns.append(fv.get("ret_20d"))
+            for fn in factor_names:
+                factor_panels[fn].append(fv.get(fn))
 
-    # 牛市：加大动量因子权重
-    if recent_20d > 0.02 or recent_60d > 0.05:
-        weights["ret_20d"] += 0.04
-        weights["ret_60d"] += 0.04
-        weights["strength_20d"] += 0.03
-        weights["momentum_composite"] += 0.03
-        weights["pe_inverse"] -= 0.02  # 牛市中价值因子退化
-        weights["pb_inverse"] -= 0.02
+        # 逐因子算 Spearman IC
+        for fn in factor_names:
+            ic = _spearman_ic(factor_panels[fn], target_returns)
+            if ic is not None:
+                ic_weights[fn] = abs(ic)  # |IC| 越大越重要
 
-    # 熊市：加大质量/价值因子
-    if recent_20d < -0.02 or recent_60d < -0.05:
-        weights["roe"] += 0.05
-        weights["pe_inverse"] += 0.03
-        weights["pb_inverse"] += 0.02
-        weights["downside_vol"] -= 0.03  # 低波动更重要
-        weights["ret_20d"] -= 0.03
+        if ic_weights:
+            # 60% IC + 40% 默认融合
+            for fn in weights:
+                ic_w = ic_weights.get(fn, 0.0)
+                default_w = abs(weights[fn])
+                blended = ic_w * 0.6 + default_w * 0.4
+                # 保留原符号（负数表示因子值越低越好）
+                weights[fn] = blended if weights[fn] >= 0 else -blended
 
-    # 震荡市：加大量价/反转因子
-    if abs(recent_20d) < 0.01 and abs(recent_60d) < 0.03:
-        weights["vol_ratio"] += 0.03
-        weights["price_volume_corr"] += 0.02
-        weights["obv_divergence"] += 0.02
-        weights["ret_5d"] -= 0.02  # 短期动量失效
+    # ── 市场状态微调（与 IC 权重叠加） ──
+    if benchmark_returns and len(benchmark_returns) >= 20:
+        ret_20 = sum(benchmark_returns[-20:])
+        ret_60 = sum(benchmark_returns[-60:]) if len(benchmark_returns) >= 60 else ret_20
+
+        # 牛市：动量因子更有效
+        if ret_20 > 0.02 or ret_60 > 0.05:
+            weights["ret_20d"] = abs(weights["ret_20d"]) + 0.03
+            weights["ret_60d"] = abs(weights["ret_60d"]) + 0.03
+            weights["strength_20d"] = abs(weights["strength_20d"]) + 0.02
+        # 熊市：质量/低波因子更有效
+        if ret_20 < -0.02 or ret_60 < -0.05:
+            weights["roe"] = abs(weights["roe"]) + 0.04
+            weights["pe_inverse"] = abs(weights["pe_inverse"]) + 0.02
+            weights["downside_vol"] = -(abs(weights["downside_vol"]) + 0.03)
+        # 震荡市：量价因子更有效
+        if abs(ret_20) < 0.01 and abs(ret_60) < 0.03:
+            weights["vol_ratio"] = abs(weights["vol_ratio"]) + 0.02
+            weights["obv_divergence"] = abs(weights["obv_divergence"]) + 0.02
 
     return _normalize_weights(weights)
 
 
 def _normalize_weights(weights: dict) -> dict:
-    """权重归一化到总和为 1.0"""
+    """权重归一化到绝对值总和为 1.0"""
     abs_sum = sum(abs(w) for w in weights.values())
     if abs_sum == 0:
         return {k: 1.0 / len(weights) for k in weights}
@@ -264,10 +321,40 @@ def _process_single_stock(code: str) -> Optional[dict]:
             return None
 
         # 获取基本面
-        fundamentals = {}
+        price = kline["closes"][-1] if kline["closes"] else None
+
+        # 获取基本面：优先 akshare HTTP（无锁，真并发），失败回退 Baostock
+        fund = {}
         try:
-            from services.baostock_adapter import get_stock_factors
-            fundamentals = get_stock_factors(code)
+            from services.akshare_adapter import get_stock_factors_http
+            http = get_stock_factors_http(code)
+            if http:
+                # akshare 成功 — 只用 HTTP 数据，缺失 total_shares/dividend 仅
+                # 影响 turnover_rate 和 dividend_yield 两个低权因子，不调 Baostock
+                fund = http
+                if price and fund.get("bvps") and fund["bvps"] > 0:
+                    fund["pb"] = round(price / fund["bvps"], 4)
+                if price and fund.get("eps") and fund["eps"] > 0:
+                    fund["pe"] = round(price / fund["eps"], 2)
+                if price:
+                    fund["price"] = price
+                # 行业从全局缓存取（已在 baostock 侧缓存，这里直接查）
+                try:
+                    from services.baostock_adapter import _get_industry_map
+                    ind_map = _get_industry_map()
+                    if code in ind_map:
+                        fund.update(ind_map[code])
+                except Exception:
+                    pass
+            else:
+                # akshare 失败 — 完整走 Baostock
+                try:
+                    from services.baostock_adapter import get_stock_factors as _bs_factors
+                    bs = _bs_factors(code)
+                    if isinstance(bs, dict) and "error" not in bs:
+                        fund = bs
+                except Exception:
+                    pass
         except Exception:
             pass
 
@@ -277,13 +364,15 @@ def _process_single_stock(code: str) -> Optional[dict]:
             highs=kline.get("highs", []),
             lows=kline.get("lows", []),
             volumes=kline.get("volumes", []),
-            fundamentals=fundamentals if "error" not in fundamentals else {},
+            fundamentals=fund,
+            prev_eps=fund.get("prev_eps"),
+            dividend=fund.get("dividend"),
         )
 
-        # 附上股票名称和行业（Baostock 优先 → stock_list 兜底）
-        result["name"] = (fundamentals.get("name", "") if isinstance(fundamentals, dict) else "") or ""
-        result["industry"] = (fundamentals.get("industry", "") if isinstance(fundamentals, dict) else "") or ""
-        result["price"] = kline["closes"][-1] if kline["closes"] else None
+        # 附上股票名称和行业
+        result["name"] = fund.get("name", "")
+        result["industry"] = fund.get("industry", "")
+        result["price"] = price
 
         return result
     except Exception:
@@ -319,7 +408,7 @@ def run_screener(
 
     total = len(stock_list)
 
-    # 获取基准收益判断市场状态（用于IC权重调整）
+    # 获取基准收益（用于市场状态判断和 IC 权重微调）
     try:
         bench_kline = fetch_kline("000300", "1", days=252)
         from services.factor_service import _returns
@@ -327,8 +416,14 @@ def run_screener(
     except Exception:
         bench_returns = []
 
-    weights = compute_ic_weights(bench_returns)
     market_state = _market_state_label(bench_returns)
+
+    # 预热全局缓存（避免线程内抢 Baostock 锁）
+    try:
+        from services.baostock_adapter import _get_industry_map
+        _get_industry_map()  # 一次性查询全市场行业分类，后续线程直接读缓存
+    except Exception:
+        pass
 
     # 并发计算因子
     all_factors = []
@@ -354,6 +449,9 @@ def run_screener(
 
     # 截面标准化
     normalized = normalize_factors(all_factors)
+
+    # 基于截面 IC 的因子权重（归一化后计算，用真实数据驱动）
+    weights = compute_ic_weights(normalized, bench_returns)
 
     # 打分排序
     scored = []
