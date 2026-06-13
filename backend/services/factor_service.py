@@ -446,6 +446,39 @@ def factor_momentum_score(closes: list[float]) -> Optional[float]:
 
 
 # ═══════════════════════════════════════════════════════════
+# 社交情绪因子 (Social Sentiment) — 雪球社区热度
+# ═══════════════════════════════════════════════════════════
+
+def factor_social_rank(follow_count: Optional[int]) -> Optional[float]:
+    """雪球关注数因子：关注人数越多，社区关注度越高
+
+    log10(关注数) / 6  → [0, ~1.0]（6 = log10(1,000,000)，理论上限）
+    关注数 < 100（即 log10 < 2）→ 0，避免噪声
+    """
+    if follow_count is None or follow_count <= 0:
+        return 0.0
+    import math as _math
+    if follow_count < 100:
+        return 0.0
+    # log10(follow_count) ∈ [2, ~6]，归一化到 [0, 1]
+    return round(min((_math.log10(follow_count) - 2) / 4, 1.0), 6)
+
+
+def factor_social_buzz(follow_count: Optional[int]) -> Optional[float]:
+    """雪球关注增长因子：关注数的平方根归一化
+
+    高关注度股票的社区影响力更大。sqrt 避免头部股票分差过大。
+    """
+    if follow_count is None or follow_count <= 0:
+        return 0.0
+    import math as _math
+    if follow_count < 100:
+        return 0.0
+    # sqrt(follow_count) / sqrt(100000)，假设 10 万关注是"极高热度"
+    return round(min(_math.sqrt(follow_count) / _math.sqrt(100000), 1.0), 6)
+
+
+# ═══════════════════════════════════════════════════════════
 # 单只股票全因子计算
 # ═══════════════════════════════════════════════════════════
 
@@ -537,6 +570,12 @@ def compute_all_factors(
     # ── 情绪类 ──
     factors["strength_20d"] = factor_strength(closes)
     factors["momentum_composite"] = factor_momentum_score(closes)
+
+    # ── 社交情绪（雪球社区热度） ──
+    social = fundamentals.get("_social") or {}
+    follow = social.get("follow_count", 0)
+    factors["social_rank"] = factor_social_rank(follow)
+    factors["social_buzz"] = factor_social_buzz(follow)
 
     # 统计有效因子数
     hit_count = sum(1 for v in factors.values() if v is not None)
