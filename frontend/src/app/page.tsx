@@ -163,7 +163,7 @@ export default function Home() {
                     </CardTitle>
                     <CardAction>
                       <Badge variant="outline" className={upCount >= downCount ? "text-red-500 border-red-500/20 bg-red-500/5" : "text-emerald-500 border-emerald-500/20 bg-emerald-500/5"}>
-                        {upCount} 涨 {downCount} 跌
+                        {upCount} 盈 {downCount} 亏
                       </Badge>
                     </CardAction>
                   </CardHeader>
