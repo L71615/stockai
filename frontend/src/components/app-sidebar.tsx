@@ -144,7 +144,10 @@ export function AppSidebar() {
         ))}
       </SidebarContent>
       <SidebarFooter>
-        <div className="px-3 py-2">
+        <div className="px-3 py-2 space-y-1">
+          <p className="text-[10px] text-muted-foreground font-mono group-data-[collapsible=icon]:hidden">
+            StockAI v3.2
+          </p>
           <p className="text-[10px] text-muted-foreground group-data-[collapsible=icon]:hidden">
             <kbd className="rounded-none border border-border bg-muted px-1 py-0.5 font-mono text-[10px]">Ctrl+B</kbd>{" "}
             收起侧边栏

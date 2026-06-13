@@ -9,10 +9,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from config import PORT, ENV
+from config import PORT, ENV, VERSION
 from routers import auth, stocks, skills, ai, agents, memory, dca, settings as settings_router, quant, holdings, transactions, screener, kol
 
-app = FastAPI(title="StockAI", version="0.2.0", docs_url="/api/docs")
+app = FastAPI(title="StockAI", version=VERSION, docs_url="/api/docs")
 
 # CORS
 app.add_middleware(
@@ -41,7 +41,12 @@ app.include_router(kol.router)
 # 健康检查
 @app.get("/api/health")
 def health():
-    return {"status": "ok"}
+    return {"status": "ok", "version": VERSION}
+
+
+@app.get("/api/version")
+def api_version():
+    return {"version": VERSION, "name": "StockAI", "factors": 28}
 
 @app.on_event("startup")
 def startup():

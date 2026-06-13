@@ -3,6 +3,9 @@
 import os
 from pathlib import Path
 
+# 版本号：重大功能 +0.1，小修复 +0.01
+VERSION = "3.2"
+
 BASE_DIR = Path(__file__).resolve().parent
 PROJECT_DIR = BASE_DIR.parent
 
