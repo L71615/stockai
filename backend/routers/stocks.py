@@ -600,30 +600,145 @@ async def generate_review(body: ReviewRequest):
 
 # ==================== 分散度分析 ====================
 
+# 基金官方分类缓存（akshare fund_name_em，24 小时刷新）
+_FUND_TYPE_CACHE: dict[str, str] = {}
+_FUND_TYPE_TS = 0.0
+_FUND_TYPE_TTL = 86400.0
+
+
+def _get_fund_type_map() -> dict[str, str]:
+    """获取全市场基金官方分类映射表（akshare，全局缓存 24 小时）
+    Returns: {code: official_type}  e.g. '指数型-海外股票'
+    """
+    global _FUND_TYPE_CACHE, _FUND_TYPE_TS
+    now = time.time()
+    if _FUND_TYPE_CACHE and (now - _FUND_TYPE_TS) < _FUND_TYPE_TTL:
+        return _FUND_TYPE_CACHE
+
+    try:
+        import akshare as ak
+        df = ak.fund_name_em()
+        if df is not None and "基金代码" in df.columns and "基金类型" in df.columns:
+            for _, row in df.iterrows():
+                code = str(row["基金代码"])
+                ftype = str(row["基金类型"]) if row["基金类型"] else ""
+                _FUND_TYPE_CACHE[code] = ftype
+            _FUND_TYPE_TS = now
+    except Exception:
+        pass
+    return _FUND_TYPE_CACHE
+
+
 def _classify_fund(name: str, code: str) -> tuple[str, str]:
-    """根据基金名称和代码分类，返回 (分类, 市场区域)"""
+    """根据基金官方类型 + 名称关键词分类，返回 (分类, 市场区域)
+
+    优先级：akshare 官方类型 > 名称关键词 > 代码规则
+    """
     n = name or ""
     c = code or ""
-    # QDII 分类
-    if "纳斯达克" in n or "纳指" in n:
-        return ("美股科技", "美股")
-    if "标普500" in n or "标普" in n:
-        return ("美股大盘", "美股")
-    if "全球精选" in n or "全球" in n:
-        return ("全球股票", "全球")
-    # 行业/主题分类（场内外均适用）
-    if "机器人" in n:
-        return ("AI/机器人", "A股")
-    if "卫星" in n or "航天" in n or "军工" in n:
-        return ("航天军工", "A股")
-    if "电力" in n or "公用" in n or "绿色" in n:
-        return ("公用事业", "A股")
-    if "A500" in n or "沪深300" in n or "上证50" in n or "中证500" in n:
-        return ("A股宽基", "A股")
-    if "业绩驱动" in n or "混合" in n or "灵活" in n:
-        return ("主动混合", "A股")
+
+    # 获取官方基金类型（如 "指数型-海外股票"）
+    type_map = _get_fund_type_map()
+    official_type = type_map.get(c, "")
+
+    # ── 关键词子分类（从基金名称提取跟踪指数/主题） ──
+    def _sub_category() -> str:
+        # 跨境/海外
+        if "纳斯达克" in n or "纳指" in n:
+            return "美股科技"
+        if "标普500" in n or "标普" in n:
+            return "美股大盘"
+        if "全球精选" in n or "全球" in n:
+            return "全球股票"
+        if "港股" in n or "恒生" in n or "恒指" in n:
+            return "港股"
+        # 行业/主题 ETF（场内外均适用）
+        if "机器人" in n:
+            return "AI/机器人"
+        if "卫星" in n or "航天" in n or "军工" in n or "国防" in n:
+            return "航天军工"
+        if "电力" in n or "公用" in n or "绿色" in n or "电网" in n or "新能源" in n:
+            return "公用事业/能源"
+        if "通信" in n or "5G" in n or "信息" in n:
+            return "通信/科技"
+        if "化工" in n or "材料" in n or "资源" in n or "有色" in n or "矿产" in n:
+            return "材料/化工"
+        if "医药" in n or "医疗" in n or "生物" in n or "创新药" in n or "中药" in n:
+            return "医药健康"
+        if "消费" in n or "食品" in n or "饮料" in n or "白酒" in n or "家电" in n:
+            return "消费"
+        if "银行" in n or "金融" in n or "证券" in n or "保险" in n or "券商" in n:
+            return "金融"
+        if "地产" in n or "房地产" in n or "基建" in n:
+            return "地产基建"
+        if "汽车" in n or "新能源车" in n or "智能驾驶" in n:
+            return "汽车/新能源"
+        if "芯片" in n or "半导体" in n or "电子" in n or "集成电路" in n:
+            return "芯片/半导体"
+        if "传媒" in n or "游戏" in n or "影视" in n or "娱乐" in n:
+            return "传媒娱乐"
+        # 宽基指数
+        if "A500" in n or "沪深300" in n or "上证50" in n or "中证500" in n or "中证1000" in n or "创业板" in n or "科创" in n:
+            return "A股宽基"
+        # 主动管理
+        if "业绩驱动" in n or "混合" in n or "灵活" in n or "精选" in n or "成长" in n:
+            return "主动混合"
+        # 固收
+        if "债券" in n or "纯债" in n or "利率债" in n or "货币" in n:
+            return "债券/固收"
+        # 另类
+        if "黄金" in n or "石油" in n or "原油" in n or "商品" in n:
+            return "大宗商品"
+
+        # ETF 自动提取行业：名称格式通常是 "{行业}ETF{公司}"
+        if "ETF" in n:
+            # 提取 ETF 前面的关键词作为行业
+            etf_pos = n.index("ETF")
+            if etf_pos > 0:
+                sector = n[:etf_pos].strip()
+                # 去掉常见的连接词和冗余
+                for suffix in ("联接", "指数", "LOF", "龙头"):
+                    if sector.endswith(suffix):
+                        sector = sector[:-len(suffix)].strip()
+                if sector and len(sector) >= 1:
+                    return sector
+        return ""
+
+    # ── 官方类型 → 市场区域映射 ──
+    if official_type:
+        sub = _sub_category()
+        # 海外/跨境
+        if "海外" in official_type or "QDII" in official_type:
+            if sub:
+                return (sub, "海外")
+            return ("海外股票", "海外")
+        # 债券
+        if "债券" in official_type:
+            return (sub or "债券", "A股")
+        # 混合/主动
+        if "混合" in official_type:
+            return (sub or "主动混合", "A股")
+        # 指数/股票 → A股，用子分类
+        if sub:
+            return (sub, "A股")
+        if "指数" in official_type or "股票" in official_type:
+            return ("A股宽基", "A股")
+        # 有类型但无法归类
+        return ("其他基金", "A股")
+
+    # ── 无官方类型 → 回退到关键词匹配 ──
+    sub = _sub_category()
+    if sub:
+        if "美股" in sub or "全球" in sub:
+            return (sub, "海外")
+        return (sub, "A股")
+
+    # ── 代码兜底 ──
     if c.startswith("0") and len(c) == 6:
         return ("其他基金", "A股")
+    if c.startswith(("15", "16", "50", "51", "56", "58")) and len(c) == 6:
+        return ("场内ETF", "A股")
+
     return ("其他", "未知")
 
 @router.get("/diversification")
