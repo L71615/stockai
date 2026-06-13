@@ -199,6 +199,25 @@ def check_watchlist(user_id: int = 1) -> dict:
                  json_dumps_zh(result["alerts"])),
             )
 
+    # 通知推送：high 级别异动自动发送
+    if high_count > 0:
+        try:
+            from services.notify_service import send_notification
+            high_alerts = []
+            for s in stocks:
+                for a in s.get("alerts", []):
+                    if a.get("severity") == "high":
+                        high_alerts.append(
+                            f"- **{s['name']}** ({s['code']}) @ ¥{s.get('price', 0):.2f}: {a.get('message', '')}"
+                        )
+            if high_alerts:
+                send_notification(
+                    "\n".join(high_alerts),
+                    title=f"盯盘异动 — {high_count} 条高级预警",
+                )
+        except Exception:
+            pass
+
     return {
         "checked_at": datetime.now().isoformat(),
         "stocks": stocks,

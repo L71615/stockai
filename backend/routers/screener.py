@@ -390,6 +390,76 @@ def get_alerts(limit: int = 30, severity: str = ""):
 
 
 # ═══════════════════════════════════════════════════════════
+# 通知推送
+# ═══════════════════════════════════════════════════════════
+
+class NotifyConfigBody(BaseModel):
+    wechat_webhook_url: str = ""
+    telegram_bot_token: str = ""
+    telegram_chat_id: str = ""
+    email_sender: str = ""
+    email_password: str = ""
+    email_receiver: str = ""
+    notify_enabled: bool = False
+
+
+@router.get("/notify/config")
+def get_notify_config():
+    """获取通知配置"""
+    from services.notify_service import _get_config, is_configured
+    cfg = _get_config()
+    return {
+        "wechat_webhook_url": cfg.get("wechat_webhook_url", ""),
+        "telegram_bot_token": cfg.get("telegram_bot_token", ""),
+        "telegram_chat_id": cfg.get("telegram_chat_id", ""),
+        "email_sender": cfg.get("email_sender", ""),
+        "email_password": "***" if cfg.get("email_password") else "",
+        "email_receiver": cfg.get("email_receiver", ""),
+        "notify_enabled": cfg.get("notify_enabled", False),
+        "is_configured": is_configured(),
+    }
+
+
+@router.post("/notify/config")
+def save_notify_config(body: NotifyConfigBody):
+    """保存通知配置到 settings 表"""
+    cfg = {
+        "wechat_webhook_url": body.wechat_webhook_url,
+        "telegram_bot_token": body.telegram_bot_token,
+        "telegram_chat_id": body.telegram_chat_id,
+        "email_sender": body.email_sender,
+        "email_receiver": body.email_receiver,
+        "notify_enabled": body.notify_enabled,
+    }
+    # 密码不覆盖旧的（如果传入 ***）
+    if body.email_password and body.email_password != "***":
+        cfg["email_password"] = body.email_password
+    else:
+        # 保留旧密码
+        try:
+            old = json.loads(query_one("SELECT value FROM settings WHERE key = 'notify_config'").get("value", "{}") or "{}")
+            cfg["email_password"] = old.get("email_password", "")
+        except Exception:
+            cfg["email_password"] = ""
+
+    execute(
+        "INSERT OR REPLACE INTO settings (key, value) VALUES ('notify_config', ?)",
+        (json.dumps(cfg, ensure_ascii=False),),
+    )
+    return {"message": "通知配置已保存"}
+
+
+@router.post("/notify/test")
+def test_notify():
+    """发送测试通知"""
+    from services.notify_service import send_notification, is_configured
+    if not is_configured():
+        raise HTTPException(400, "未配置任何通知渠道，请先配置")
+    result = send_notification("✅ 这是一条来自 StockAI 的测试消息，通知配置正确！", title="StockAI 通知测试")
+    return result
+
+
+# ═══════════════════════════════════════════════════════════
 # 全流程快捷接口 (选股 → 回测 → 盯盘)
 # ═══════════════════════════════════════════════════════════
 
