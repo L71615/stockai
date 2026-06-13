@@ -92,6 +92,25 @@ async def chat_with_claude(messages: list[dict], *, system_prompt: str = "", api
         return f"（Claude API 调用失败: {e}）"
 
 
+def get_default_provider() -> str:
+    """获取用户保存的默认 AI 供应商
+
+    优先级：settings 表 ai_config.default_provider → 环境变量 AI_PROVIDER → "deepseek"
+    所有 AI 功能（精选/盯盘/复盘/对抗）共用此默认值，用户在设置页切换即可。
+    """
+    try:
+        from database import query_one
+        import json as _json
+        row = query_one("SELECT value FROM settings WHERE key = 'ai_config'")
+        if row and row.get("value"):
+            cfg = _json.loads(row["value"])
+            if isinstance(cfg, dict) and cfg.get("default_provider"):
+                return cfg["default_provider"]
+    except Exception:
+        pass
+    return AI_PROVIDER or "deepseek"
+
+
 async def ai_chat(
     message: str,
     conversation_history: list[dict] = None,
@@ -104,21 +123,19 @@ async def ai_chat(
 ) -> str:
     """统一的 AI 对话入口（多供应商调度）
 
-    api_key/provider/model 为空时，自动从 settings 表读取已保存的配置。
-    这样前端无需每次请求都传 API Key。
+    provider 为空时自动用 get_default_provider()（用户设置 > 环境变量）。
+    api_key/model 为空时，自动从 settings 表读取该供应商的保存配置。
     """
     messages = list(conversation_history or [])
     messages.append({"role": "user", "content": message})
 
-    # 参数为空时，从服务端 settings 表读取该供应商的配置
-    p = provider or AI_PROVIDER
+    # 参数为空时，从设置页读取用户保存的配置
+    p = provider or get_default_provider()
     if not api_key or not model:
         stored = _load_stored_ai_config(p)
         api_key = api_key or stored.get("api_key", "")
         model = model or stored.get("model", "")
         base_url = base_url or stored.get("base_url", "")
-
-    p = provider or AI_PROVIDER
 
     if p in PROVIDER_DEFAULTS:
         return await _chat_openai_provider(messages, p, api_key=api_key, model=model, system_prompt=system_prompt)

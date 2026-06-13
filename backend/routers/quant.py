@@ -158,7 +158,7 @@ def _build_duel_prompt(persona: dict) -> str:
 
 
 class AIDuelStartRequest(BaseModel):
-    providers: list[str] = ["minimax", "deepseek"]
+    providers: list[str] = []
     period_days: int = 7
     capital: float = 100000
 
@@ -166,7 +166,7 @@ class AIDuelStartRequest(BaseModel):
 @router.post("/ai-duel/start")
 async def ai_duel_start(body: AIDuelStartRequest):
     """开局：随机分配人设 → AI 选 6 只股 → 验证代码 → 按实时价成交"""
-    from services.ai_service import ai_chat
+    from services.ai_service import ai_chat, get_default_provider
     from routers.stocks import _cached_quote
     from services.utils import detect_asset_type, get_market
     from database import execute, query_one
@@ -189,8 +189,9 @@ async def ai_duel_start(body: AIDuelStartRequest):
         "period_days": body.period_days, "players": [],
     }
 
-    for i, provider in enumerate(body.providers):
-        persona = shuffled[i]
+    providers = body.providers or [get_default_provider()]
+    for i, provider in enumerate(providers):
+        persona = shuffled[i % len(shuffled)]
         entry = {"provider": provider, "persona": persona["name"], "persona_id": persona["id"], "picks": [], "error": None}
 
         try:

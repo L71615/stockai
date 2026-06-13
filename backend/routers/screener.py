@@ -52,12 +52,12 @@ class WatchlistAddRequest(BaseModel):
 
 class AIScreenRequest(BaseModel):
     candidates_json: str = ""       # 候选池 JSON
-    provider: str = "deepseek"
+    provider: str = ""
     top_n: int = 10                 # AI 从候选池中再选几只
 
 
 class BriefingRequest(BaseModel):
-    provider: str = "deepseek"
+    provider: str = ""
 
 
 # ═══════════════════════════════════════════════════════════
@@ -223,7 +223,8 @@ async def ai_screen(body: AIScreenRequest):
 
 不要包含任何markdown代码块标记。"""
 
-    provider = body.provider or "deepseek"
+    from services.ai_service import get_default_provider
+    provider = body.provider or get_default_provider()
     try:
         raw = await ai_chat(
             prompt,
@@ -370,7 +371,7 @@ def watchlist_check():
 async def watchlist_briefing(body: BriefingRequest):
     """AI 生成盯盘简报"""
     from services.watchdog_service import generate_daily_briefing
-    briefing = await generate_daily_briefing(provider=body.provider or "deepseek")
+    briefing = await generate_daily_briefing(provider=body.provider)
     return {"briefing": briefing, "generated_at": datetime.now().isoformat()}
 
 
@@ -454,7 +455,7 @@ async def full_pipeline(body: AIScreenRequest):
     if results["step3_watchlist"]:
         from services.watchdog_service import generate_daily_briefing
         try:
-            results["briefing"] = await generate_daily_briefing(provider=body.provider or "deepseek")
+            results["briefing"] = await generate_daily_briefing(provider=body.provider)
         except Exception:
             results["briefing"] = "简报生成失败"
 

@@ -220,7 +220,7 @@ def json_dumps_zh(alerts: list[dict]) -> str:
 # AI 盯盘简报
 # ═══════════════════════════════════════════════════════════
 
-async def generate_daily_briefing(user_id: int = 1, provider: str = "deepseek") -> str:
+async def generate_daily_briefing(user_id: int = 1, provider: str = "") -> str:
     """AI 生成当前盯盘股票的每日简报
 
     Args:
