@@ -376,7 +376,7 @@ export function DataTable({
             盈利 <Badge variant="secondary" className="text-red-500">{data.filter((d) => d.pnl.startsWith("+")).length}</Badge>
           </TabsTrigger>
           <TabsTrigger value="loss">
-            亏损 <Badge variant="secondary" className="text-emerald-500">{data.filter((d) => d.pnl.startsWith("-")).length}</Badge>
+            亏损 <Badge variant="secondary" className="text-emerald-500">{data.filter((d) => d.pnl.includes("¥ -")).length}</Badge>
           </TabsTrigger>
         </TabsList>
         <div className="flex items-center gap-2">
