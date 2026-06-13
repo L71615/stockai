@@ -65,7 +65,7 @@ import jwt as pyjwt
 from config import JWT_SECRET
 
 # 不需要认证的接口
-PUBLIC_APIS = {"/api/auth/login", "/api/auth/register", "/api/health", "/api/docs", "/api/openapi.json"}
+PUBLIC_APIS = {"/api/auth/login", "/api/auth/register", "/api/health", "/api/version", "/api/docs", "/api/openapi.json"}
 
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):

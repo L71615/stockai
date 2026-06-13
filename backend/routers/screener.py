@@ -415,7 +415,7 @@ def get_notify_config():
         "email_sender": cfg.get("email_sender", ""),
         "email_password": "***" if cfg.get("email_password") else "",
         "email_receiver": cfg.get("email_receiver", ""),
-        "notify_enabled": cfg.get("notify_enabled", False),
+        "notify_enabled": cfg.get("notify_enabled") or False,
         "is_configured": is_configured(),
     }
 
