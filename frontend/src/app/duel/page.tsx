@@ -110,8 +110,10 @@ export default function DuelPage() {
     finally { setRebalancing(false) }
   }
 
-  const formatMoney = (v: number) => `¥ ${v.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`
-  const formatPct = (v: number) => `${v >= 0 ? "+" : ""}${v.toFixed(2)}%`
+  const formatMoney = (v: number | undefined | null) =>
+    v != null ? `¥ ${v.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}` : "¥ —"
+  const formatPct = (v: number | undefined | null) =>
+    v != null ? `${v >= 0 ? "+" : ""}${v.toFixed(2)}%` : "—"
 
   return (
     <>
