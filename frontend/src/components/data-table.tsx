@@ -373,10 +373,10 @@ export function DataTable({
         <TabsList className="hidden @4xl/main:flex">
           <TabsTrigger value="holdings">全部持仓</TabsTrigger>
           <TabsTrigger value="profit">
-            盈利 <Badge variant="secondary" className="text-red-500">5</Badge>
+            盈利 <Badge variant="secondary" className="text-red-500">{data.filter((d) => d.pnl.startsWith("+")).length}</Badge>
           </TabsTrigger>
           <TabsTrigger value="loss">
-            亏损 <Badge variant="secondary" className="text-emerald-500">3</Badge>
+            亏损 <Badge variant="secondary" className="text-emerald-500">{data.filter((d) => d.pnl.startsWith("-")).length}</Badge>
           </TabsTrigger>
         </TabsList>
         <div className="flex items-center gap-2">
@@ -535,14 +535,88 @@ export function DataTable({
           </div>
         </div>
       </TabsContent>
-      <TabsContent value="profit" className="flex flex-col px-4 lg:px-6">
-        <div className="aspect-video w-full flex-1 rounded-none border border-dashed flex items-center justify-center text-muted-foreground">
-          盈利持仓列表
+      <TabsContent value="profit" className="relative flex flex-col gap-4 overflow-auto px-4 lg:px-6">
+        <div className="overflow-hidden rounded-none border">
+          <DndContext
+            collisionDetection={closestCenter}
+            modifiers={[restrictToVerticalAxis]}
+            onDragEnd={handleDragEnd}
+            sensors={sensors}
+            id={`${sortableId}-profit`}
+          >
+            <Table>
+              <TableHeader className="sticky top-0 z-10 bg-muted">
+                {table.getHeaderGroups().map((headerGroup) => (
+                  <TableRow key={headerGroup.id}>
+                    {headerGroup.headers.map((header) => (
+                      <TableHead key={header.id} colSpan={header.colSpan}>
+                        {header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}
+                      </TableHead>
+                    ))}
+                  </TableRow>
+                ))}
+              </TableHeader>
+              <TableBody>
+                {table.getRowModel().rows.filter((row) => row.original.pnl.startsWith("+")).length ? (
+                  table.getRowModel().rows
+                    .filter((row) => row.original.pnl.startsWith("+"))
+                    .map((row) => (
+                      <TableRow key={`profit-${row.id}`}>
+                        {row.getVisibleCells().map((cell) => (
+                          <TableCell key={cell.id}>
+                            {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                          </TableCell>
+                        ))}
+                      </TableRow>
+                    ))
+                ) : (
+                  <TableRow>
+                    <TableCell colSpan={columns.length} className="h-24 text-center">
+                      暂无盈利持仓
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          </DndContext>
         </div>
       </TabsContent>
-      <TabsContent value="loss" className="flex flex-col px-4 lg:px-6">
-        <div className="aspect-video w-full flex-1 rounded-none border border-dashed flex items-center justify-center text-muted-foreground">
-          亏损持仓列表
+      <TabsContent value="loss" className="relative flex flex-col gap-4 overflow-auto px-4 lg:px-6">
+        <div className="overflow-hidden rounded-none border">
+          <Table>
+            <TableHeader className="sticky top-0 z-10 bg-muted">
+              {table.getHeaderGroups().map((headerGroup) => (
+                <TableRow key={headerGroup.id}>
+                  {headerGroup.headers.map((header) => (
+                    <TableHead key={header.id} colSpan={header.colSpan}>
+                      {header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}
+                    </TableHead>
+                  ))}
+                </TableRow>
+              ))}
+            </TableHeader>
+            <TableBody>
+              {table.getRowModel().rows.filter((row) => row.original.pnl.startsWith("-")).length ? (
+                table.getRowModel().rows
+                  .filter((row) => row.original.pnl.startsWith("-"))
+                  .map((row) => (
+                    <TableRow key={`loss-${row.id}`}>
+                      {row.getVisibleCells().map((cell) => (
+                        <TableCell key={cell.id}>
+                          {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                        </TableCell>
+                      ))}
+                    </TableRow>
+                  ))
+              ) : (
+                <TableRow>
+                  <TableCell colSpan={columns.length} className="h-24 text-center">
+                    暂无亏损持仓
+                  </TableCell>
+                </TableRow>
+              )}
+            </TableBody>
+          </Table>
         </div>
       </TabsContent>
     </Tabs>
