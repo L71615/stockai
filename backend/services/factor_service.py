@@ -474,8 +474,20 @@ def factor_social_buzz(follow_count: Optional[int]) -> Optional[float]:
     import math as _math
     if follow_count < 100:
         return 0.0
-    # sqrt(follow_count) / sqrt(100000)，假设 10 万关注是"极高热度"
     return round(min(_math.sqrt(follow_count) / _math.sqrt(100000), 1.0), 6)
+
+
+def factor_weibo_sentiment(weibo_rate: Optional[float]) -> Optional[float]:
+    """微博情绪因子：看多/看空强度
+
+    weibo_rate ∈ [-5, +5]，正值=看多，负值=看空，0=无数据
+    归一化到 [0, 1]，0.5 为中性
+    """
+    if weibo_rate is None or weibo_rate == 0:
+        return None  # 无数据不参与评分
+    # sigmoid 归一化：[-5, 5] → [0.27, 0.73]，中性=0.5
+    import math as _math
+    return round(1 / (1 + _math.exp(-weibo_rate * 0.8)), 6)
 
 
 # ═══════════════════════════════════════════════════════════
@@ -571,11 +583,12 @@ def compute_all_factors(
     factors["strength_20d"] = factor_strength(closes)
     factors["momentum_composite"] = factor_momentum_score(closes)
 
-    # ── 社交情绪（雪球社区热度） ──
+    # ── 社交情绪（雪球 + 微博） ──
     social = fundamentals.get("_social") or {}
     follow = social.get("follow_count", 0)
     factors["social_rank"] = factor_social_rank(follow)
     factors["social_buzz"] = factor_social_buzz(follow)
+    factors["weibo_sentiment"] = factor_weibo_sentiment(social.get("weibo_sentiment"))
 
     # 统计有效因子数
     hit_count = sum(1 for v in factors.values() if v is not None)

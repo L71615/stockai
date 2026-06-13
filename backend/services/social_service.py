@@ -1,8 +1,11 @@
-"""雪球社区热度数据服务
+"""社交媒体数据服务
 
-通过 akshare 获取雪球关注数、东方财富人气排名，用于社交情绪因子。
+通过 akshare 获取雪球关注数、微博情绪、东方财富新闻，用于社交情绪因子。
 
-API:
+数据源:
+  - stock_hot_tweet_xq:     雪球关注数（5600+ 只）
+  - stock_js_weibo_report:  微博个股情绪（Top 50，每小时更新）
+  - stock_news_em:          东方财富个股新闻
   - stock_hot_tweet_xq:    雪球关注数（全市场 5600+ 只股票）
   - stock_hot_rank_em:     东方财富人气榜（Top 100）
   - stock_hot_follow_xq:   雪球热门关注榜
@@ -84,3 +87,63 @@ def get_stock_social_score(code: str) -> dict:
 def get_stock_follow_count(code: str) -> int:
     """快速获取单只股票的雪球关注数"""
     return get_stock_social_score(code).get("follow_count", 0)
+
+
+# ── 微博情绪 ──
+
+_WEIBO_CACHE: dict[str, float] = {}
+_WEIBO_TS = 0.0
+_WEIBO_TTL = 1800.0  # 30 分钟
+
+
+def _load_weibo_sentiment() -> dict[str, float]:
+    """从 akshare 加载微博个股情绪（Top 50）"""
+    global _WEIBO_CACHE, _WEIBO_TS
+    now = time.time()
+    if _WEIBO_CACHE and (now - _WEIBO_TS) < _WEIBO_TTL:
+        return _WEIBO_CACHE
+
+    try:
+        import akshare as ak
+        df = ak.stock_js_weibo_report(time_period="CNHOUR12")
+        if df is not None and not df.empty:
+            new_cache: dict[str, float] = {}
+            for _, row in df.iterrows():
+                name = str(row.get("name", ""))
+                rate = float(row.get("rate", 0) or 0)
+                if name and rate != 0:
+                    new_cache[name] = rate
+            _WEIBO_CACHE = new_cache
+            _WEIBO_TS = now
+    except Exception:
+        pass
+    return _WEIBO_CACHE
+
+
+def get_weibo_sentiment(code: str, stock_name: str = "") -> float:
+    """获取微博情绪分数（面向 A 股 Top 50 热股）
+
+    Returns 情绪分数 [-5, +5]，正=看多，负=看空，0=无数据
+    """
+    weibo = _load_weibo_sentiment()
+    # 微博数据按股票名称索引，尝试名称匹配
+    if stock_name and stock_name in weibo:
+        return weibo[stock_name]
+    # 也尝试代码附近的名称
+    for name, rate in weibo.items():
+        if code in name:
+            return rate
+    return 0.0
+
+
+# ── 扩展社交评分 ──
+
+_ORIG_GET_SOCIAL = get_stock_social_score
+
+
+def get_stock_social_score(code: str, name: str = "") -> dict:
+    """获取单只股票的综合社交评分（雪球 + 微博）"""
+    base = _ORIG_GET_SOCIAL(code)
+    weibo_rate = get_weibo_sentiment(code, name)
+    base["weibo_sentiment"] = weibo_rate
+    return base

@@ -166,8 +166,8 @@ DEFAULT_FACTOR_WEIGHTS = {
     "eps_growth": 0.04, "market_cap_ln": -0.02, "dividend_yield": 0.02,
     # 情绪类（总权重 15%）
     "strength_20d": 0.08, "momentum_composite": 0.07,
-    # 社交情绪（雪球社区热度，总权重 7%）
-    "social_rank": 0.04, "social_buzz": 0.03,
+    # 社交情绪（雪球 + 微博，总权重 9%）
+    "social_rank": 0.03, "social_buzz": 0.03, "weibo_sentiment": 0.03,
 }
 
 
@@ -362,8 +362,9 @@ def _process_single_stock(code: str) -> Optional[dict]:
 
         # 注入雪球社交数据（已在 run_screener 预热缓存）
         try:
-            from services.xueqiu_service import get_stock_social_score
-            fund["_social"] = get_stock_social_score(code)
+            from services.social_service import get_stock_social_score
+            stock_name = fund.get("name", "")
+            fund["_social"] = get_stock_social_score(code, stock_name)
         except Exception:
             fund["_social"] = {}
 
@@ -437,7 +438,7 @@ def run_screener(
     # 预热雪球人气榜缓存（一次拉取，线程内直接匹配）
     hot_stocks = []
     try:
-        from services.xueqiu_service import get_hot_stocks
+        from services.social_service import get_hot_stocks
         hot_stocks = get_hot_stocks(50)
     except Exception:
         pass
