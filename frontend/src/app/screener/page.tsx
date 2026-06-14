@@ -7,11 +7,12 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { Progress } from "@/components/ui/progress"
 import { Separator } from "@/components/ui/separator"
 import { cn } from "@/lib/utils"
 import { apiGet, apiPost, isAuthenticated } from "@/lib/auth"
-import { IconSearch, IconBrain, IconBolt, IconStar, IconTrash, IconChartBar } from "@tabler/icons-react"
+import { IconSearch, IconBrain, IconBolt, IconStar, IconTrash, IconChartBar, IconUsers, IconCheck, IconX, IconCoin, IconShield, IconFlame, IconWorld } from "@tabler/icons-react"
 
 interface ScanResult {
   code: string; name: string; industry?: string; score: number; top_factors?: string[]
@@ -31,6 +32,37 @@ interface WatchItem {
   backtest_strategy?: string; backtest_sharpe?: number
 }
 
+interface AgentPick {
+  code: string; name: string; score: number; confidence: string; reason: string; risk_flag?: string | null
+}
+
+interface AgentResult {
+  agent_key: string; agent_name: string; icon: string; color: string; focus: string
+  picks: AgentPick[]; summary: string; top_themes?: string[]; error?: string
+}
+
+interface AggregatedPick {
+  code: string; name: string; industry: string; price?: number
+  quant_score?: number; agent_score: number
+  votes: number; total_agents: number
+  consensus: string; consensus_class: string
+  reasons: { agent: string; color: string; reason: string; confidence: string }[]
+  agents: string[]; risk_flags?: { agent: string; flag: string }[] | null
+  risk_veto: boolean
+}
+
+interface MultiAgentResult {
+  agent_results: AgentResult[]
+  aggregation: {
+    aggregated: AggregatedPick[]
+    consensus_summary: string
+    top_themes: string[]
+    agent_count: number
+    error_agents: AgentResult[]
+  }
+  provider: string; elapsed_ms: number
+}
+
 export default function ScreenerPage() {
   const router = useRouter()
   const [scanning, setScanning] = useState(false)
@@ -41,6 +73,9 @@ export default function ScreenerPage() {
   const [watchlist, setWatchlist] = useState<WatchItem[]>([])
   const [loading, setLoading] = useState(true)
   const [aiScreenLoading, setAiScreenLoading] = useState(false)
+  const [multiAgentLoading, setMultiAgentLoading] = useState(false)
+  const [multiAgentResult, setMultiAgentResult] = useState<MultiAgentResult | null>(null)
+  const [multiAgentError, setMultiAgentError] = useState<string | null>(null)
   const [statusText, setStatusText] = useState("")
   const [stockPool, setStockPool] = useState(500) // 默认沪深300+中证500
 
@@ -100,6 +135,23 @@ export default function ScreenerPage() {
     finally { setAiScreenLoading(false) }
   }
 
+  const multiAgentScreen = async () => {
+    setMultiAgentLoading(true)
+    setMultiAgentError(null)
+    setMultiAgentResult(null)
+    try {
+      const result = await apiPost<MultiAgentResult>("/api/screener/multi-agent-screen", { provider: "" })
+      if (result && result.aggregation) {
+        setMultiAgentResult(result)
+      } else if (result && "error" in result) {
+        setMultiAgentError((result as any).error || "Agent 分析返回异常")
+      }
+    } catch (e: any) {
+      setMultiAgentError(e?.message || "Agent 分析请求失败，请检查网络后重试")
+    }
+    finally { setMultiAgentLoading(false) }
+  }
+
   const runBacktest = async (code: string) => {
     const bt = await apiPost<BacktestResult[]>("/api/screener/backtest/batch", {
       codes: [code], strategies: ["ma_cross", "macd", "rsi"]
@@ -154,6 +206,19 @@ export default function ScreenerPage() {
               <IconBrain className="size-3.5 mr-1" />
               AI 精选
             </Button>
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button size="sm" variant="outline" onClick={multiAgentScreen} disabled={multiAgentLoading || results.length === 0}>
+                    <IconUsers className="size-3.5 mr-1" />
+                    {multiAgentLoading ? "验证中..." : "5 Agent 验证"}
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom" className="text-xs max-w-[280px]">
+                  5 位 AI 分析师从价值/技术/风险/情绪/宏观维度独立评估候选股，投票聚合后给出共识推荐
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
             <Button size="sm" variant="outline" onClick={pipeline} disabled={scanning}>
               <IconBolt className="size-3.5 mr-1" />
               一键流程
@@ -176,12 +241,12 @@ export default function ScreenerPage() {
                   ) : results.length === 0 ? (
                     <p className="p-6 text-center text-sm text-muted-foreground">选择股票池范围，点击"开始扫描"启动多因子筛选</p>
                   ) : (
-                    <div className="overflow-auto max-h-[500px]">
-                      <table className="w-full text-xs">
-                        <thead className="bg-muted sticky top-0">
+                    <div className="overflow-x-auto max-h-[500px]">
+                      <table className="w-full text-xs min-w-[600px]">
+                        <thead className="bg-muted sticky top-0 z-10">
                           <tr>
-                            <th className="text-left p-2 font-medium">#</th>
-                            <th className="text-left p-2 font-medium">代码</th>
+                            <th className="text-left p-2 font-medium sticky left-0 bg-muted z-20">#</th>
+                            <th className="text-left p-2 font-medium sticky left-[28px] bg-muted z-20">代码</th>
                             <th className="text-left p-2 font-medium">名称</th>
                             <th className="text-left p-2 font-medium">行业</th>
                             <th className="text-left p-2 font-medium">评分</th>
@@ -192,8 +257,8 @@ export default function ScreenerPage() {
                         <tbody>
                           {results.map((r, i) => (
                             <tr key={r.code} className="border-t border-border hover:bg-accent/30 transition-colors">
-                              <td className="p-2 text-muted-foreground">{i + 1}</td>
-                              <td className="p-2 font-mono">{r.code}</td>
+                              <td className="p-2 text-muted-foreground sticky left-0 bg-background">{i + 1}</td>
+                              <td className="p-2 font-mono sticky left-[28px] bg-background">{r.code}</td>
                               <td className="p-2 font-medium">{r.name}</td>
                               <td className="p-2 text-muted-foreground">{r.industry || "--"}</td>
                               <td className="p-2">
@@ -319,6 +384,196 @@ export default function ScreenerPage() {
               </Card>
             </div>
           </div>
+
+          {/* Multi-Agent Cross-Validation — Loading */}
+          {multiAgentLoading && (
+            <Card className="mt-4">
+              <CardHeader className="pb-2">
+                <Skeleton className="h-4 w-40" />
+                <Skeleton className="h-3 w-72 mt-1" />
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <Skeleton className="h-5 w-60" />
+                <Skeleton className="h-[200px] w-full" />
+                <Separator />
+                <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
+                  {Array.from({ length: 5 }).map((_, i) => (
+                    <div key={i} className="border border-border rounded-none p-3 space-y-2">
+                      <Skeleton className="h-3 w-24" />
+                      <Skeleton className="h-3 w-full" />
+                      <Skeleton className="h-3 w-3/4" />
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Multi-Agent Cross-Validation — Error */}
+          {multiAgentError && !multiAgentLoading && (
+            <Card className="mt-4 border-red-500/30">
+              <CardContent className="py-4">
+                <div className="flex items-start gap-3">
+                  <IconX className="size-5 text-red-400 mt-0.5 shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-red-400">Agent 分析失败</p>
+                    <p className="text-xs text-muted-foreground mt-0.5">{multiAgentError}</p>
+                  </div>
+                  <Button size="sm" variant="outline" onClick={multiAgentScreen}>
+                    重试
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Multi-Agent Cross-Validation Results */}
+          {multiAgentResult && !multiAgentLoading && (
+            <Card className="mt-4">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm flex items-center gap-1.5 flex-wrap">
+                  <IconUsers className="size-4 text-purple-400" />
+                  5 Agent 交叉验证
+                  <Badge variant="secondary" className="text-[10px]">
+                    {(multiAgentResult.elapsed_ms / 1000).toFixed(1)}s
+                  </Badge>
+                  <span className="text-xs text-muted-foreground font-normal">
+                    {multiAgentResult.aggregation.agent_count} 位分析师
+                  </span>
+                </CardTitle>
+                <CardDescription>{multiAgentResult.aggregation.consensus_summary}</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {/* Top Themes */}
+                {multiAgentResult.aggregation.top_themes.length > 0 && (
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <span className="text-[10px] text-muted-foreground uppercase tracking-wider">共识主题</span>
+                    {multiAgentResult.aggregation.top_themes.map((t, i) => (
+                      <Badge key={i} variant="outline" className="text-[10px]">{t}</Badge>
+                    ))}
+                  </div>
+                )}
+
+                {/* Aggregated Picks */}
+                <div className="overflow-auto max-h-[400px]">
+                  <table className="w-full text-xs">
+                    <thead className="bg-muted sticky top-0">
+                      <tr>
+                        <th className="text-left p-2 font-medium">股票</th>
+                        <th className="text-left p-2 font-medium hidden sm:table-cell">行业</th>
+                        <th className="text-center p-2 font-medium">投票</th>
+                        <th className="text-center p-2 font-medium">评分</th>
+                        <th className="text-left p-2 font-medium">共识</th>
+                        <th className="text-left p-2 font-medium">Agent 意见</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {multiAgentResult.aggregation.aggregated.map((a, i) => (
+                        <tr key={a.code} className={cn(
+                          "border-t border-border hover:bg-accent/30 transition-colors",
+                          a.risk_veto && "bg-red-500/5"
+                        )}>
+                          <td className="p-2">
+                            <span className="font-mono">{a.code}</span>
+                            <span className="ml-1 font-medium text-[11px]">{a.name}</span>
+                          </td>
+                          <td className="p-2 text-muted-foreground hidden sm:table-cell">{a.industry || "--"}</td>
+                          <td className="p-2 text-center">
+                            <span className={cn(
+                              "font-mono font-medium",
+                              a.votes >= 4 ? "text-emerald-400" : a.votes >= 3 ? "text-yellow-400" : "text-muted-foreground"
+                            )}>
+                              {a.votes}/{a.total_agents}
+                            </span>
+                          </td>
+                          <td className="p-2 text-center font-mono">
+                            {a.agent_score > 0 ? a.agent_score.toFixed(1) : "--"}
+                          </td>
+                          <td className="p-2">
+                            <Badge variant="outline" className={cn(
+                              "text-[10px]",
+                              a.consensus_class === "all" && "border-emerald-500/50 text-emerald-400",
+                              a.consensus_class === "majority" && "border-yellow-500/50 text-yellow-400",
+                              a.consensus_class === "divided" && "border-orange-500/50 text-orange-400",
+                              a.consensus_class === "vetoed" && "border-red-500/50 text-red-500",
+                              a.consensus_class === "minority" && "border-muted text-muted-foreground",
+                            )}>
+                              {a.consensus_class === "all" && <IconCheck className="size-3 mr-0.5" />}
+                              {a.consensus_class === "vetoed" && <IconX className="size-3 mr-0.5" />}
+                              {a.consensus}
+                            </Badge>
+                          </td>
+                          <td className="p-2">
+                            <div className="space-y-0.5 max-w-[280px]">
+                              {a.reasons.map((r, j) => (
+                                <div key={j} className="text-[10px] leading-tight">
+                                  <span className="font-medium">{r.agent}</span>
+                                  <span className="text-muted-foreground">: {r.reason.length > 40 ? r.reason.slice(0, 40) + "..." : r.reason}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* Individual Agent Summaries */}
+                <Separator />
+                <div>
+                  <h4 className="text-xs font-medium text-muted-foreground mb-2 uppercase tracking-wider">
+                    各 Agent 独立分析
+                  </h4>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
+                    {multiAgentResult.agent_results.map((agent, i) => (
+                      <div key={i} className="border border-border rounded-none p-3">
+                        <div className="flex items-center gap-1.5 mb-1.5">
+                          {agent.agent_key === "value" && <IconCoin className="size-4 text-emerald-400" />}
+                          {agent.agent_key === "technical" && <IconChartBar className="size-4 text-blue-400" />}
+                          {agent.agent_key === "risk" && <IconShield className="size-4 text-red-400" />}
+                          {agent.agent_key === "sentiment" && <IconFlame className="size-4 text-orange-400" />}
+                          {agent.agent_key === "macro" && <IconWorld className="size-4 text-purple-400" />}
+                          {!["value","technical","risk","sentiment","macro"].includes(agent.agent_key) && (
+                            <IconBrain className="size-4 text-muted-foreground" />
+                          )}
+                          <span className="text-xs font-medium">{agent.agent_name}</span>
+                          <span className="text-[10px] text-muted-foreground">· {agent.focus}</span>
+                        </div>
+                        {agent.error ? (
+                          <p className="text-[10px] text-red-400">{agent.error}</p>
+                        ) : (
+                          <>
+                            <p className="text-[11px] text-muted-foreground line-clamp-2 mb-2">
+                              {agent.summary}
+                            </p>
+                            {agent.picks.length > 0 && (
+                              <div className="space-y-1">
+                                {agent.picks.map((pick, j) => (
+                                  <div key={j} className="flex items-center justify-between text-[10px] py-0.5">
+                                    <span className="font-mono">{pick.code}</span>
+                                    <span className="text-muted-foreground">
+                                      评分: {pick.score?.toFixed(1)}
+                                      <span className={cn(
+                                        "ml-1 text-[9px]",
+                                        pick.confidence === "high" ? "text-emerald-400" : "text-yellow-400"
+                                      )}>
+                                        {pick.confidence === "high" ? "确信" : pick.confidence === "medium" ? "一般" : "保留"}
+                                      </span>
+                                    </span>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          )}
         </div>
       </div>
     </>
