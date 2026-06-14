@@ -71,6 +71,7 @@ def init_db():
     conn = get_db()
     try:
         conn.execute("PRAGMA foreign_keys=ON")
+        conn.execute("PRAGMA journal_mode=WAL")
 
         # 核心表
         conn.execute("""CREATE TABLE IF NOT EXISTS users (
@@ -375,10 +376,8 @@ def ensure_admin_user():
     from passlib.hash import bcrypt
 
     if not ADMIN_PASSWORD:
-        print("[WARNING] ADMIN_PASSWORD 未设置，使用默认密码 admin123 — 请立即修改！")
-        pwd = "admin123"
-    else:
-        pwd = ADMIN_PASSWORD
+        raise ValueError("ADMIN_PASSWORD environment variable must be set — cannot use default or empty value")
+    pwd = ADMIN_PASSWORD
 
     # bcrypt 限制 72 字节，超出截断并警告
     if len(pwd.encode('utf-8')) > 72:

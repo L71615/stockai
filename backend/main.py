@@ -1,5 +1,6 @@
 """StockAI — FastAPI 主入口"""
 
+import os
 import sys
 from pathlib import Path
 
@@ -14,10 +15,15 @@ from routers import auth, stocks, skills, ai, agents, memory, dca, settings as s
 
 app = FastAPI(title="StockAI", version=VERSION, docs_url="/api/docs")
 
-# CORS
+# CORS — 仅允许明确的白名单域名
+_CORS_ORIGINS = os.getenv("CORS_ORIGINS", "")
+if not _CORS_ORIGINS:
+    raise ValueError("CORS_ORIGINS environment variable must be set (comma-separated list of allowed origins)")
+ALLOWED_ORIGINS = [o.strip() for o in _CORS_ORIGINS.split(",") if o.strip()]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -46,7 +52,7 @@ def health():
 
 @app.get("/api/version")
 def api_version():
-    return {"version": VERSION, "name": "StockAI", "factors": 28}
+    return {"version": VERSION, "name": "StockAI", "factors": 29}
 
 @app.on_event("startup")
 def startup():

@@ -17,8 +17,11 @@ ENV = os.getenv("ENV", "development")
 DB_PATH = os.getenv("DB_PATH", str(PROJECT_DIR / "database" / "stockai.db"))
 
 # JWT
-JWT_SECRET = os.getenv("JWT_SECRET", "change-me-in-production")
-JWT_EXPIRES = 7 * 24 * 3600  # 7 天
+_JWT_SECRET = os.getenv("JWT_SECRET", "")
+if not _JWT_SECRET:
+    raise ValueError("JWT_SECRET environment variable must be set — cannot use default or empty value")
+JWT_SECRET = _JWT_SECRET
+JWT_EXPIRES = 2 * 3600  # 2 小时（短期令牌）
 
 # AI
 AI_PROVIDER = os.getenv("AI_PROVIDER", "minimax")
@@ -38,7 +41,9 @@ XIAOMI_BASE_URL = os.getenv("XIAOMI_BASE_URL", "")
 # 爬虫
 CRAWLER_UA = "StockAI-Bot/1.0"
 CRAWLER_TIMEOUT = int(os.getenv("CRAWLER_TIMEOUT", 15))
-EASTMONEY_TOKEN = os.getenv("EASTMONEY_TOKEN", "D43BF722C8E33BDC906FB84A85A3263A")
+EASTMONEY_TOKEN = os.getenv("EASTMONEY_TOKEN", "")
+if not EASTMONEY_TOKEN:
+    raise ValueError("EASTMONEY_TOKEN environment variable must be set")
 
 # SMTP 邮件
 SMTP_HOST = os.getenv("SMTP_HOST", "")
