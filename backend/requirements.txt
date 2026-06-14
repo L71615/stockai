@@ -17,3 +17,6 @@ httpx>=0.28
 passlib[bcrypt]>=1.7
 bcrypt>=4.0,<5.0
 pyjwt>=2.8
+
+# Encryption (for stored secrets)
+cryptography>=43.0

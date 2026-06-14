@@ -153,8 +153,39 @@ async def ai_chat(
         return f"（不支持的 AI 供应商: {p}）"
 
 
+def _decrypt_dict(cfg: dict) -> dict:
+    """递归解密 dict 中所有 api_key 字段"""
+    from services.crypto_service import decrypt
+    result = {}
+    for k, v in cfg.items():
+        if k == "api_key" and isinstance(v, str) and v:
+            try:
+                result[k] = decrypt(v.encode())
+            except Exception:
+                result[k] = v  # 无法解密则保留原值（兼容旧数据）
+        elif isinstance(v, dict):
+            result[k] = _decrypt_dict(v)
+        else:
+            result[k] = v
+    return result
+
+
+def _encrypt_dict(cfg: dict) -> dict:
+    """递归加密 dict 中所有 api_key 字段"""
+    from services.crypto_service import encrypt
+    result = {}
+    for k, v in cfg.items():
+        if k == "api_key" and isinstance(v, str) and v:
+            result[k] = encrypt(v).decode("latin-1")  # 存为字符串
+        elif isinstance(v, dict):
+            result[k] = _encrypt_dict(v)
+        else:
+            result[k] = v
+    return result
+
+
 def _load_stored_ai_config(provider: str = "") -> dict:
-    """从 settings 表读取已保存的 AI 配置
+    """从 settings 表读取已保存的 AI 配置（自动解密 api_key）
 
     - 多供应商模式: {"minimax": {"api_key":"...","model":"..."}, "deepseek": {...}}
     - 旧版单配置:   {"provider":"minimax","api_key":"...","model":"..."}
@@ -167,6 +198,7 @@ def _load_stored_ai_config(provider: str = "") -> dict:
             import json as _json
             cfg = _json.loads(row["value"])
             if isinstance(cfg, dict):
+                cfg = _decrypt_dict(cfg)
                 # 多供应商模式
                 if provider and provider in cfg and isinstance(cfg[provider], dict):
                     return cfg[provider]
@@ -181,10 +213,11 @@ def _load_stored_ai_config(provider: str = "") -> dict:
 
 
 def save_stored_ai_config(config: dict) -> None:
-    """保存 AI 配置到 settings 表（支持单配置或多供应商字典）"""
+    """保存 AI 配置到 settings 表（自动加密 api_key）"""
     from database import execute
     import json as _json
+    encrypted = _encrypt_dict(config)
     execute(
         "INSERT OR REPLACE INTO settings (key, value) VALUES ('ai_config', ?)",
-        (_json.dumps(config, ensure_ascii=False),),
+        (_json.dumps(encrypted, ensure_ascii=False),),
     )

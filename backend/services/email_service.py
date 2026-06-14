@@ -12,11 +12,18 @@ CYCLE_LABELS = {"daily": "每日", "weekly": "每周", "biweekly": "双周", "mo
 
 
 def _smtp_config() -> dict:
-    """获取 SMTP 配置：优先数据库 settings 表，fallback 到环境变量"""
+    """获取 SMTP 配置：优先数据库 settings 表（自动解密密码），fallback 到环境变量"""
     row = query_one("SELECT value FROM settings WHERE key = 'smtp'")
     if row:
         try:
-            return json.loads(row["value"])
+            from services.crypto_service import decrypt
+            cfg = json.loads(row["value"])
+            if isinstance(cfg, dict) and cfg.get("password"):
+                try:
+                    cfg["password"] = decrypt(cfg["password"].encode())
+                except Exception:
+                    pass  # 兼容旧明文数据
+            return cfg
         except (json.JSONDecodeError, TypeError):
             pass
     return {
@@ -41,9 +48,15 @@ def get_smtp_settings() -> dict | None:
 
 
 def save_smtp_settings(host: str, port: int, user: str, password: str) -> None:
-    """保存 SMTP 配置到数据库"""
-    data = json.dumps({"host": host, "port": port, "user": user, "password": password})
-    execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('smtp', ?)", (data,))
+    """保存 SMTP 配置到数据库（密码加密存储）"""
+    from services.crypto_service import encrypt
+    data = {
+        "host": host,
+        "port": port,
+        "user": user,
+        "password": encrypt(password).decode("latin-1"),
+    }
+    execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('smtp', ?)", (json.dumps(data),))
 
 
 def test_smtp_connection(host: str, port: int, user: str, password: str) -> tuple[bool, str]:
