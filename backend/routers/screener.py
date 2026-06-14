@@ -8,10 +8,11 @@ import threading
 from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel
 
 from database import query_all, query_one, execute
+from services.rate_limit import limiter_ai
 
 router = APIRouter(prefix="/api/screener", tags=["Screener"])
 
@@ -456,6 +457,55 @@ def test_notify():
     if not is_configured():
         raise HTTPException(400, "未配置任何通知渠道，请先配置")
     result = send_notification("✅ 这是一条来自 StockAI 的测试消息，通知配置正确！", title="StockAI 通知测试")
+    return result
+
+
+# ═══════════════════════════════════════════════════════════
+# 多 Agent 交叉验证
+# ═══════════════════════════════════════════════════════════
+
+class MultiAgentRequest(BaseModel):
+    candidates_json: str = ""       # 候选池 JSON（为空则用最近一次扫描结果）
+    provider: str = ""              # AI 供应商（为空则用默认）
+    agent_keys: list[str] = []      # 要使用的 Agent，默认全部 5 个
+
+
+@router.post("/multi-agent-screen")
+@limiter_ai.limit("10/minute")
+async def multi_agent_screen(body: MultiAgentRequest, request: Request):
+    """5 Agent 交叉验证选股
+
+    从候选池中选取 Top 30，5 个 AI 投资人格并行分析，投票聚合后输出综合排名。
+    每个 Agent 从不同维度（价值/技术/风险/情绪/宏观）独立评估。
+    """
+    from services.multi_agent_service import run_multi_agent_screen
+
+    # 获取候选池
+    if body.candidates_json:
+        candidates = json.loads(body.candidates_json)
+    elif _screen_status["result"]:
+        candidates = _screen_status["result"].get("candidates", [])[:30]
+    else:
+        row = query_one("SELECT * FROM screener_results ORDER BY id DESC LIMIT 1")
+        if not row:
+            raise HTTPException(400, "无候选池数据，请先运行 /api/screener/run")
+        candidates = json.loads(row.get("candidates_json", "[]"))[:30]
+
+    if not candidates:
+        raise HTTPException(400, "候选池为空")
+
+    from services.ai_service import get_default_provider
+    provider = body.provider or get_default_provider()
+
+    result = await run_multi_agent_screen(
+        candidates=candidates,
+        provider=provider,
+        agent_keys=body.agent_keys if body.agent_keys else None,
+    )
+
+    if "error" in result:
+        raise HTTPException(400, result["error"])
+
     return result
 
 

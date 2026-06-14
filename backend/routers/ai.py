@@ -1,11 +1,12 @@
 """AI 对话路由"""
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from database import query_all, query_one, execute
 from services.ai_service import ai_chat
 from routers.memory import load_memory
+from services.rate_limit import limiter_ai
 
 router = APIRouter()
 
@@ -22,7 +23,8 @@ class ChatRequest(BaseModel):
 
 
 @router.post("/chat")
-async def chat(req: ChatRequest):
+@limiter_ai.limit("20/minute")
+async def chat(req: ChatRequest, request: Request):
     """AI 对话（非流式）"""
     conv_id = req.conversationId
     if not conv_id:

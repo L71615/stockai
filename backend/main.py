@@ -29,6 +29,22 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ── 全局限流（slowapi）──
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+
+_rate_limit_default = int(os.getenv("RATE_LIMIT_DEFAULT", "60"))  # 默认 60 req/min
+_limiter = Limiter(key_func=get_remote_address, default_limits=[f"{_rate_limit_default}/minute"])
+app.state.limiter = _limiter
+
+@app.exception_handler(RateLimitExceeded)
+async def rate_limit_handler(request: Request, exc: RateLimitExceeded):
+    return JSONResponse(
+        {"error": f"请求过于频繁，请稍后再试（{_rate_limit_default} 次/分钟）"},
+        status_code=429,
+    )
+
 # API 路由
 app.include_router(auth.router, prefix="/api/auth", tags=["Auth"])
 app.include_router(stocks.router, prefix="/api/stocks", tags=["Stocks"])
