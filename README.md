@@ -1,6 +1,6 @@
-# StockAI v3.2 — AI 量化选股 + 投资决策平台
+# StockAI v3.3 — AI 量化选股 + 投资决策平台
 
-> 28 因子多因子选股 · 6 AI 人格对抗 · 雪球/微博社交情绪 · 企业微信/Telegram 通知
+> 28 因子多因子选股 · 6 AI 人格对抗 · TradingView K 线 · 企业微信/Telegram 通知
 >
 > A 股投资者的量化工具箱。数据驱动，AI 增强。
 
@@ -9,14 +9,15 @@
 | 模块 | 功能 |
 |------|------|
 | 🔍 **AI 选股** | 全市场多因子扫描（28 因子）→ IC 加权打分 → AI 二次精选 → 策略回测 → 盯盘 |
-| ⚔️ **AI 对抗** | 6 个 AI 投资人格各拿 ¥10 万，独立选股对战，实时排名 |
+| ⚔️ **AI 对抗** | 6 个 AI 人格各拿 ¥10 万，独立选股对战，实时排名 |
 | 📊 **量化分析** | 个股 K 线+技术指标+28 因子透视 / 组合风险 / 策略回测 / 蒙特卡洛 |
 | 🧠 **AI 复盘** | 结构化投资复盘报告，多 AI 供应商可选 |
 | 📈 **社交情绪** | 雪球关注数 + 微博看多/看空情绪 + 财经 RSS，AI 生成每日观点日报 |
 | 🔔 **通知推送** | 企业微信 / Telegram / 邮件，盯盘异动自动推送 |
 | 💼 **持仓管理** | 实时盈亏 + 分散度饼图 + 行业自动分类（20+ 板块） |
+| 📉 **K 线图表** | TradingView lightweight-charts 专业蜡烛图，MA5/10/20 均线叠加，支持日/周/月 K |
 
-## 因子体系（28 个）
+## 因子体系（29 个）
 
 | 类别 | 数量 | 因子 |
 |------|------|------|
@@ -25,6 +26,7 @@
 | 量价 | 5 | vol_ratio, turnover_rate, obv_divergence, price_volume_corr, avg_amount |
 | 基本面 | 6 | pe_inverse, pb_inverse, roe, eps_growth, market_cap_ln, dividend_yield |
 | 情绪 | 2 | strength_20d, momentum_composite |
+| 资金 | 3 | north_flow, margin_change, inst_change |
 | 社交 | 3 | social_rank, social_buzz, weibo_sentiment |
 
 - IC 加权：截面 Spearman 秩相关，数据驱动
@@ -40,6 +42,7 @@
 基本面:    Baostock(PE/ROE/EPS) + akshare(季报)
 社交情绪:  雪球关注数 + 微博情绪(akshare)
 AI:        MiniMax / DeepSeek / Claude / OpenAI / 小米(统一配置)
+图表:      lightweight-charts (TradingView 开源)
 ```
 
 ## 项目结构
@@ -112,11 +115,11 @@ NOTIFY_ENABLED=true
 
 - 大版本 (X.0): 重大架构变更
 - 功能版 (3.X): 新模块/新因子/新页面
-- 修复版 (3.2.X): Bug 修复/性能优化
+- 修复版 (3.3.X): Bug 修复/性能优化
 
 ```
-v3.0 → v3.1 → v3.2 → ...
-  ↑       ↑       ↑
- AI选股  社交因子  大佬观点
- 对抗    通知推送  ETF分类
+v3.0 → v3.1 → v3.2 → v3.3 → ...
+  ↑       ↑       ↑       ↑
+ AI选股  社交因子  大佬观点  K线图表
+ 对抗    通知推送  ETF分类  lightweight-charts
 ```

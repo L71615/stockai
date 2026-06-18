@@ -1,5 +1,87 @@
 # StockAI 项目日志
 
+## 2026-06-18 — K 线图表升级（lightweight-charts）+ TradingView 集成
+
+### 新功能
+
+**持仓详情抽屉 — K 线图表**
+- `backend/routers/holdings.py` 新增 `GET /api/stocks/kline/{code}?period=5d|1m|3m|6m` 端点
+  - 直连腾讯财经 K 线 API，返回 OHLCV + MA5/MA10/MA20
+  - 支持 5 日 / 日K(22天) / 周K(聚合) / 月K(聚合) 四种周期
+- `backend/services/akshare_adapter.py` 修复：`get_kline()` 补充成交量字段（`k[5]`），之前遗漏导致全为 0
+- `frontend/src/components/data-table.tsx` — `StockDetailDrawer` 重写
+  - 点击持仓名称 → 右侧抽屉弹出 K 线蜡烛图 + 成交量柱
+  - 图表顶部摘要：现价/成本/持仓/盈亏
+  - 周期切换标签：5日 | 日K | 周K | 月K
+  - MA5(琥珀)/MA10(紫)/MA20(青) 均线叠加
+  - 鼠标悬停显示开/高/低/收/量
+
+**K 线图表升级 — lightweight-charts（TradingView）**
+- 新增 `frontend/src/components/KlineChart.tsx`（新建组件）
+  - 替换 recharts `ComposedChart` + 自定义 Bar shape → TradingView `lightweight-charts@5.2.0`
+  - 内置 CandlestickSeries（蜡烛图）+ HistogramSeries（成交量）+ LineSeries（MA5/10/20）
+  - 原生 ResizeObserver 支持，Drawer 打开时自动检测正确尺寸
+  - v5 API：`chart.addSeries(CandlestickSeries, options)`
+- `frontend/src/components/stock-chart-drawer.tsx` — 同上替换
+- 删除了 `data-table.tsx` 中 60+ 行废弃代码（`KlineBar`/`BarShapeProps`/`KlineTooltip`/`toBars`/`renderCandle`/`renderVolume`）
+- **根因修复**：recharts `ResponsiveContainer` 在 shadcn Drawer hidden 状态下初始化时返回宽高 -1，导致 chart 初始化失败
+
+**Accessibility 修复**
+- `DrawerContent` 添加 `DrawerDescription`（sr-only），消除 React a11y 警告
+
+### Bug 修复
+
+**持仓概览显示问题**
+- Bug #21: 持仓名称显示为录入时的名字（如 "rainbow"） → 优先使用实时行情 API 返回的名称
+- Bug #22: "持仓占比" 标签名误导 + 用 `Math.round(市值/成本-1)` 独立计算导致精度丢失 → 标签改为"总收益率"，直接使用后端 `total_pnl_pct`（已扣预估卖出费）
+
+### 技术依赖
+
+- `lightweight-charts@^5.2.0` — TradingView 开源金融图表库（MIT）
+  - 参考：https://tradingview.github.io/lightweight-charts/
+  - TradingView Pine Script 指标生态丰富，后续可对接更多指标
+
+### 已知问题
+
+- K 线图表：鼠标悬停 OHLCV 数字显示可进一步优化（lightweight-charts crosshair label）
+- 成交量下方未显示具体数字，只有柱状高度
+- 分钟级 K 线数据源未接入（东财 `klt=1/5/15/30/60` 未接入）
+
+---
+
+## 2026-06-17 — 持仓删除功能 + 盈亏对齐同花顺
+
+### Bug 修复 (2 个)
+
+**全局**
+- Bug #19: Next.js API 代理端口错误 — `next.config.ts` 将 `/api/*` 转发到 `localhost:3002`（空端口），导致所有前端 API 请求失败。改为 `localhost:3000`。
+- Bug #20: 持仓删除功能缺失 — `page.tsx` 的 `onDelete` 回调只有 `alert("删除 暂未实现")`。加入完整删除链路：AlertDialog 确认 → `DELETE /api/stocks/holdings/{id}` → SWR 乐观更新。
+
+### 新功能
+
+**盈亏对齐同花顺**
+- `backend/routers/holdings.py` 新增 `_estimate_sell_fee()` 函数，预估卖出费用（佣金 + 印花税 0.05% + 过户费 0.002%）
+- 盈亏公式改为同花顺口径：`PnL = (现价 - 成本价) × 数量 - 预估卖出费`
+- 盈亏% 改为：`PnL / 总成本 × 100%`（之前是 `现价/成本 - 1`）
+- 汇总端也改为逐项 net PnL 求和，不再用总市值减总成本
+- 验证结果：彩虹股份 400 股，StockAI vs 同花顺 → 盈亏 ¥308.37 vs ¥308.18（差 ¥0.19 来自成本价小数位精度）
+
+**持仓删除**
+- `frontend/src/app/page.tsx`：引入 AlertDialog 确认弹窗 + `handleDelete` 调用 `DELETE /api/stocks/holdings/{id}`
+- SWR 乐观更新：删除后立即从缓存移除该行，不等网络返回
+- `HomeHolding` 类型增加 `id` 字段，`tableData` 增加 `holdingId` 传递真实数据库 ID
+
+### 费率验证
+
+- 核查同花顺交割单：佣金 5 元/笔（万 2.5 兜底）、印花税仅卖出、过户费未单独列
+- StockAI 默认费率与券商一致：`commission_rate=0.00025, commission_min=5.0`
+
+### 已知问题
+
+- 端口 3000 僵尸进程（PID 3476）：Windows TCP 端点泄露，进程已死但端口被内核卡住。`taskkill`/`Stop-Process`/`wmic`/管理员权限均无法释放，需重启系统。当前临时用 3008 端口。
+
+---
+
 ## 2026-06-12 ~ 2026-06-13 — Bug 修复 + 功能增强
 
 ### Bug 修复 (6 个)

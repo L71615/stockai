@@ -1,6 +1,8 @@
-"use client"
+﻿"use client"
 
 import * as React from "react"
+import { useState, useEffect } from "react"
+import { apiGet } from "@/lib/auth"
 import {
   closestCenter,
   DndContext,
@@ -35,12 +37,15 @@ import {
   type SortingState,
   type VisibilityState,
 } from "@tanstack/react-table"
-import { Area, AreaChart, CartesianGrid, XAxis } from "recharts"
+import { Area, AreaChart, Bar, CartesianGrid, ComposedChart, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts"
+import { KlineChart } from "./KlineChart"
 import { toast } from "sonner"
 import { z } from "zod"
 
 import { useIsMobile } from "@/hooks/use-mobile"
+import type { KlineResponse } from "@/lib/api-types"
 import { Badge } from "@/components/ui/badge"
+import { Skeleton } from "@/components/ui/skeleton"
 import { Button } from "@/components/ui/button"
 import {
   ChartContainer,
@@ -94,6 +99,11 @@ import {
 } from "@/components/ui/tabs"
 import { cn } from "@/lib/utils"
 import {
+  createHoldingRowActionHandlers,
+  getHoldingRowActionLabels,
+  type HoldingRowActionCallbacks,
+} from "@/lib/holding-row-actions"
+import {
   IconGripVertical,
   IconTrendingUp,
   IconTrendingDown,
@@ -106,6 +116,7 @@ import {
   IconChevronsRight,
 } from "@tabler/icons-react"
 
+
 export const schema = z.object({
   id: z.number(),
   code: z.string(),
@@ -116,6 +127,9 @@ export const schema = z.object({
   pnl: z.string(),
   pnlPct: z.string(),
 })
+
+type HoldingRow = z.infer<typeof schema>
+type HoldingRowActionMap = Partial<HoldingRowActionCallbacks<HoldingRow>>
 
 function DragHandle({ id }: { id: number }) {
   const { attributes, listeners } = useSortable({ id })
@@ -134,7 +148,8 @@ function DragHandle({ id }: { id: number }) {
   )
 }
 
-const columns: ColumnDef<z.infer<typeof schema>>[] = [
+function buildColumns(activeActions?: HoldingRowActionMap): ColumnDef<HoldingRow>[] {
+  return [
   {
     id: "drag",
     header: () => null,
@@ -245,31 +260,43 @@ const columns: ColumnDef<z.infer<typeof schema>>[] = [
   },
   {
     id: "actions",
-    cell: () => (
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button
-            variant="ghost"
-            className="flex size-8 text-muted-foreground data-[state=open]:bg-muted"
-            size="icon"
-          >
-            <IconDotsVertical />
-            <span className="sr-only">操作</span>
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="w-32">
-          <DropdownMenuItem>编辑</DropdownMenuItem>
-          <DropdownMenuItem>查看详情</DropdownMenuItem>
-          <DropdownMenuItem>加入自选</DropdownMenuItem>
-          <DropdownMenuSeparator />
-          <DropdownMenuItem variant="destructive">删除</DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
-    ),
+    cell: ({ row }) => {
+      const item = row.original
+      const labels = getHoldingRowActionLabels()
+      const handlers = createHoldingRowActionHandlers(item, {
+        onEdit: activeActions?.onEdit ?? (() => {}),
+        onView: activeActions?.onView ?? (() => {}),
+        onAddToWatchlist: activeActions?.onAddToWatchlist ?? (() => {}),
+        onDelete: activeActions?.onDelete ?? (() => {}),
+      })
+
+      return (
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              variant="ghost"
+              className="flex size-8 text-muted-foreground data-[state=open]:bg-muted"
+              size="icon"
+            >
+              <IconDotsVertical />
+              <span className="sr-only">鎿嶄綔</span>
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-32">
+            <DropdownMenuItem onClick={handlers.edit}>{labels[0]}</DropdownMenuItem>
+            <DropdownMenuItem onClick={handlers.view}>{labels[1]}</DropdownMenuItem>
+            <DropdownMenuItem onClick={handlers.addToWatchlist}>{labels[2]}</DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem variant="destructive" onClick={handlers.delete}>{labels[3]}</DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      )
+    },
   },
 ]
+}
 
-function DraggableRow({ row }: { row: Row<z.infer<typeof schema>> }) {
+function DraggableRow({ row }: { row: Row<HoldingRow> }) {
   const { transform, transition, setNodeRef, isDragging } = useSortable({
     id: row.original.id,
   })
@@ -296,8 +323,10 @@ function DraggableRow({ row }: { row: Row<z.infer<typeof schema>> }) {
 
 export function DataTable({
   data: initialData,
+  actions,
 }: {
-  data: z.infer<typeof schema>[]
+  data: HoldingRow[]
+  actions?: HoldingRowActionMap
 }) {
   const [data, setData] = React.useState(() => initialData)
   const [rowSelection, setRowSelection] = React.useState({})
@@ -319,6 +348,8 @@ export function DataTable({
     () => data?.map(({ id }) => id) || [],
     [data]
   )
+
+  const columns = React.useMemo(() => buildColumns(actions), [actions])
 
   const table = useReactTable({
     data,
@@ -376,7 +407,7 @@ export function DataTable({
             盈利 <Badge variant="secondary" className="text-red-500">{data.filter((d) => d.pnl.startsWith("+")).length}</Badge>
           </TabsTrigger>
           <TabsTrigger value="loss">
-            亏损 <Badge variant="secondary" className="text-emerald-500">{data.filter((d) => d.pnl.includes("¥ -")).length}</Badge>
+            亏损 <Badge variant="secondary" className="text-emerald-500">{data.filter((d) => d.pnl.includes("-")).length}</Badge>
           </TabsTrigger>
         </TabsList>
         <div className="flex items-center gap-2">
@@ -462,8 +493,8 @@ export function DataTable({
         </div>
         <div className="flex items-center justify-between px-4">
           <div className="hidden flex-1 text-sm text-muted-foreground lg:flex">
-            已选 {table.getFilteredSelectedRowModel().rows.length} /{" "}
-            {table.getFilteredRowModel().rows.length} 行
+            宸查€?{table.getFilteredSelectedRowModel().rows.length} /{" "}
+            {table.getFilteredRowModel().rows.length} 琛?
           </div>
           <div className="flex w-full items-center gap-8 lg:w-fit">
             <div className="hidden items-center gap-2 lg:flex">
@@ -596,9 +627,9 @@ export function DataTable({
               ))}
             </TableHeader>
             <TableBody>
-              {table.getRowModel().rows.filter((row) => row.original.pnl.includes("¥ -")).length ? (
+              {table.getRowModel().rows.filter((row) => row.original.pnl.includes("楼 -")).length ? (
                 table.getRowModel().rows
-                  .filter((row) => row.original.pnl.includes("¥ -"))
+                  .filter((row) => row.original.pnl.includes("楼 -"))
                   .map((row) => (
                     <TableRow key={`loss-${row.id}`}>
                       {row.getVisibleCells().map((cell) => (
@@ -625,121 +656,74 @@ export function DataTable({
 
 // --- Stock detail drawer with mini chart ---
 
-const sparkData = [
-  { day: "1", price: 28.5 },
-  { day: "2", price: 29.1 },
-  { day: "3", price: 28.8 },
-  { day: "4", price: 30.2 },
-  { day: "5", price: 31.0 },
-  { day: "6", price: 30.5 },
-  { day: "7", price: 32.1 },
-]
-
-const sparkConfig = {
-  price: { label: "价格", color: "#ef5350" },
-} satisfies ChartConfig
-
 function StockDetailDrawer({ item }: { item: z.infer<typeof schema> }) {
   const isMobile = useIsMobile()
+  const [period, setPeriod] = useState("1m")
+  const [chartData, setChartData] = useState<KlineResponse | null>(null)
+  const [chartLoading, setChartLoading] = useState(false)
+
+  useEffect(() => {
+    if (!item.code) return
+    setChartLoading(true)
+    apiGet<KlineResponse>("/api/stocks/kline/" + item.code + "?period=" + period)
+      .then((raw) => setChartData(raw))
+      .catch(() => {})
+      .finally(() => setChartLoading(false))
+  }, [item.code, period])
+
+  const pers = [
+    { k: "5d", l: "5日" },
+    { k: "1m", l: "1月" },
+    { k: "3m", l: "3月" },
+    { k: "6m", l: "6月" },
+  ]
 
   return (
     <Drawer direction={isMobile ? "bottom" : "right"}>
       <DrawerTrigger asChild>
-        <Button variant="link" className="w-fit px-0 text-left text-foreground font-medium">
-          {item.name}
-        </Button>
+        <Button variant="link" className="w-fit px-0 text-left text-foreground font-medium">{item.name}</Button>
       </DrawerTrigger>
       <DrawerContent>
-        <DrawerHeader className="gap-1">
-          <DrawerTitle className="font-mono">
-            {item.code} {item.name}
-          </DrawerTitle>
-          <DrawerDescription>近 7 日价格走势</DrawerDescription>
+        <DrawerHeader>
+          <DrawerTitle className="font-mono">{item.code} {item.name}</DrawerTitle>
+          <DrawerDescription className="sr-only">股票详情与K线图表</DrawerDescription>
         </DrawerHeader>
-        <div className="flex flex-col gap-4 overflow-y-auto px-4 text-sm">
-          {!isMobile && (
+        <div className="flex flex-col gap-2 overflow-y-auto px-4 text-sm">
+          <div className="grid grid-cols-2 gap-2 text-xs">
+            <div><span className="text-muted-foreground">现价</span> <span className="font-mono ml-1">{item.price}</span></div>
+            <div><span className="text-muted-foreground">成本</span> <span className="font-mono ml-1">{item.cost}</span></div>
+            <div><span className="text-muted-foreground">持仓</span> <span className="font-mono ml-1">{item.shares}</span></div>
+            <div><span className={cn("font-mono", String(item.pnl).startsWith("+") ? "text-red-500" : String(item.pnl).startsWith("-") ? "text-emerald-500" : "")}>{item.pnl} ({item.pnlPct})</span></div>
+          </div>
+          <Separator />
+          <div className="flex gap-1">
+            {pers.map((p) => (
+              <button key={p.k} onClick={() => setPeriod(p.k)} className={cn("px-3 py-1 text-xs border-b-2", period === p.k ? "border-primary text-foreground" : "border-transparent text-muted-foreground hover:text-foreground")}>{p.l}</button>
+            ))}
+          </div>
+          <div className="flex items-center gap-3 text-[10px] text-muted-foreground">
+            <span><span className="inline-block w-3 h-0.5 bg-amber-500 align-middle mr-0.5" />MA5</span>
+            <span><span className="inline-block w-3 h-0.5 bg-purple-500 align-middle mr-0.5" />MA10</span>
+            <span><span className="inline-block w-3 h-0.5 bg-cyan-500 align-middle mr-0.5" />MA20</span>
+          </div>
+          {chartLoading ? (
+            <div className="space-y-2"><Skeleton className="h-[260px] w-full" /><Skeleton className="h-[70px] w-full" /></div>
+          ) : !chartData?.dates?.length ? (
+            <p className="text-xs text-muted-foreground text-center py-12">暂无数据</p>
+          ) : (
             <>
-              <ChartContainer config={sparkConfig}>
-                <AreaChart
-                  accessibilityLayer
-                  data={sparkData}
-                  margin={{ left: 0, right: 10 }}
-                >
-                  <CartesianGrid vertical={false} />
-                  <XAxis dataKey="day" tickLine={false} axisLine={false} tickMargin={8} hide />
-                  <ChartTooltip cursor={false} content={<ChartTooltipContent indicator="dot" />} />
-                  <Area
-                    dataKey="price"
-                    type="monotone"
-                    fill="var(--color-price)"
-                    fillOpacity={0.15}
-                    stroke="var(--color-price)"
-                    strokeWidth={2}
-                  />
-                </AreaChart>
-              </ChartContainer>
-              <Separator />
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <span className="text-muted-foreground">持仓</span>
-                  <p className="font-mono font-medium">{item.shares} 股</p>
-                </div>
-                <div>
-                  <span className="text-muted-foreground">现价</span>
-                  <p className="font-mono font-medium">{item.price}</p>
-                </div>
-                <div>
-                  <span className="text-muted-foreground">成本</span>
-                  <p className="font-mono text-muted-foreground">{item.cost}</p>
-                </div>
-                <div>
-                  <span className="text-muted-foreground">盈亏</span>
-                  <p className={cn("font-mono font-medium", item.pnl.startsWith("+") ? "text-red-500" : "text-emerald-500")}>
-                    {item.pnl} ({item.pnlPct})
-                  </p>
-                </div>
-              </div>
-              <Separator />
+              <KlineChart rawData={chartData} height={260} />
+              <KlineChart rawData={chartData} height={70} />
             </>
           )}
-          {isMobile && (
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <span className="text-muted-foreground">持仓</span>
-                <p className="font-mono font-medium">{item.shares} 股</p>
-              </div>
-              <div>
-                <span className="text-muted-foreground">盈亏</span>
-                <p className={cn("font-mono font-medium", item.pnl.startsWith("+") ? "text-red-500" : "text-emerald-500")}>
-                  {item.pnl} ({item.pnlPct})
-                </p>
-              </div>
-            </div>
-          )}
-          <form className="flex flex-col gap-4">
-            <div className="flex flex-col gap-3">
-              <Label htmlFor="name">名称</Label>
-              <Input id="name" defaultValue={item.name} />
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="flex flex-col gap-3">
-                <Label htmlFor="shares">持仓(股)</Label>
-                <Input id="shares" defaultValue={item.shares} />
-              </div>
-              <div className="flex flex-col gap-3">
-                <Label htmlFor="cost">成本</Label>
-                <Input id="cost" defaultValue={item.cost} />
-              </div>
-            </div>
-          </form>
         </div>
         <DrawerFooter>
-          <Button>保存</Button>
-          <DrawerClose asChild>
-            <Button variant="outline">关闭</Button>
+        <DrawerClose asChild>
+          <Button variant="outline" size="sm">关闭</Button>
           </DrawerClose>
         </DrawerFooter>
       </DrawerContent>
     </Drawer>
   )
 }
+
