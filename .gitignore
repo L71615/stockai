@@ -32,3 +32,8 @@ backend/data/
 docs/superpowers/
 docs/PROJECT_PLAN.md
 docs/TODOS.md
+
+# --- 构建产物 ---
+backend-start.err.log
+backend-start.out.log
+第四阶段/
