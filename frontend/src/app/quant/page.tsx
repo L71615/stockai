@@ -17,11 +17,16 @@ import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } f
 import { IconChartBar, IconTrendingUp, IconBrain } from "@tabler/icons-react"
 
 interface StockInsight {
-  code: string; name: string
-  indicators?: Record<string, unknown>
+  code: string; name: string; price?: number; change_pct?: number
+  indicators?: {
+    MA?: Record<string, number>
+    MACD?: { DIF: number; DEA: number; MACD?: number }
+    KDJ?: { K: number; D: number; J: number }
+    RSI?: number
+  }
   signal?: string
-  factors?: { label: string; value: string }[]
-  kline?: { date: string; open: number; high: number; low: number; close: number; volume: number }[]
+  factors?: Record<string, unknown>
+  kline?: { dates?: string[]; closes?: number[] }
 }
 
 interface RiskKPI {
@@ -75,6 +80,25 @@ function QuantPageInner() {
   useEffect(() => {
     if (!isAuthenticated()) { router.push("/login"); return }
   }, [router])
+
+  // 从 screener 跳转过来时自动查询
+  useEffect(() => {
+    const urlCode = params.get("code")
+    if (urlCode && urlCode !== code) {
+      setCode(urlCode)
+      // 异步 fetchInsight 需要等 state 更新后才能读到新 code
+      setTimeout(() => {
+        if (urlCode.trim()) {
+          setLoading(true); setError(null)
+          apiGet<StockInsight>(`/api/quant/stock-insight/${urlCode.trim()}?days=${days}`)
+            .then((data) => setInsight(data as StockInsight))
+            .catch((err) => setError(err instanceof Error ? err.message : "加载失败"))
+            .finally(() => setLoading(false))
+        }
+      }, 0)
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [params])
 
   const fetchInsight = async () => {
     if (!code.trim()) return
@@ -139,7 +163,8 @@ function QuantPageInner() {
     finally { setLoading(false) }
   }
 
-  const klineData = insight?.kline || []
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const klineData = (insight?.kline as any) || []
   const priceChartConfig = { close: { label: "价格", color: "#ef5350" } } satisfies ChartConfig
 
   return (
@@ -245,15 +270,15 @@ function QuantPageInner() {
                 )}
 
                 {/* Fundamental factors */}
-                {insight.factors && insight.factors.length > 0 && (
+                {insight.factors && Object.keys(insight.factors).length > 0 && (
                   <Card>
                     <CardHeader className="pb-2"><CardTitle className="text-sm">基本面</CardTitle></CardHeader>
                     <CardContent>
                       <div className="flex flex-wrap gap-3">
-                        {insight.factors.map((f, i) => (
-                          <div key={i} className="text-xs">
-                            <span className="text-muted-foreground">{f.label}:</span>{" "}
-                            <span className="font-mono">{f.value}</span>
+                        {Object.entries(insight.factors).map(([key, val]) => val != null && (
+                          <div key={key} className="text-xs">
+                            <span className="text-muted-foreground">{key}:</span>{" "}
+                            <span className="font-mono">{String(val)}</span>
                           </div>
                         ))}
                       </div>

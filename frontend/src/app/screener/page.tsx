@@ -465,6 +465,7 @@ export default function ScreenerPage() {
                         <th className="text-center p-2 font-medium">评分</th>
                         <th className="text-left p-2 font-medium">共识</th>
                         <th className="text-left p-2 font-medium">Agent 意见</th>
+                        <th className="text-center p-2 font-medium">操作</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -512,6 +513,16 @@ export default function ScreenerPage() {
                                 </div>
                               ))}
                             </div>
+                          </td>
+                          <td className="p-2 text-center">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h6 text-[10px] px-2 py-0.5"
+                              onClick={() => router.push(`/quant?code=${a.code}&from=screener`)}
+                            >
+                              分析
+                            </Button>
                           </td>
                         </tr>
                       ))}
