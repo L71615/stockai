@@ -47,6 +47,12 @@ def is_hk_stock(code: str) -> bool:
     return len(c) == 5 and c.startswith("0") and c.isdigit()
 
 
+def is_us_stock(code: str) -> bool:
+    """判断是否为美股代码：纯字母（如 AAPL, TSLA, GOOGL）"""
+    c = code.strip()
+    return bool(re.match(r'^[A-Za-z]+$', c)) and len(c) <= 5
+
+
 
 def detect_asset_type(code: str) -> str:
     """根据代码前缀自动识别资产类型：stock / etf / fund / hk"""
@@ -54,6 +60,9 @@ def detect_asset_type(code: str) -> str:
     # 港股：5位数字以0开头（如 00700, 09988）
     if len(c) == 5 and c.startswith("0") and c.isdigit():
         return "stock"  # 港股股票
+    # 美股：纯字母代码（如 AAPL, TSLA, GOOGL）
+    if is_us_stock(c):
+        return "us_stock"
     # ETF 前缀（沪市 51xxxx, 58xxxx; 深市 159xxx, 56xxxx）
     if c.startswith(("510", "511", "512", "513", "514", "515", "516", "517", "518",
                      "159", "588", "560", "561", "562", "563", "564", "565", "566",
@@ -68,6 +77,43 @@ def detect_asset_type(code: str) -> str:
             return "stock"
         return "fund"
     return "fund"
+
+
+def detect_market_status(code: str) -> str:
+    """检测股票所属市场的交易状态
+
+    Returns: "open" (盘中) / "closed" (已收盘) / "pre" (盘前) / "unknown"
+    基于北京时间判断，简化版（不处理节假日）。
+    """
+    from datetime import datetime, time
+
+    now = datetime.now()
+    t = now.time()
+    wd = now.weekday()  # 0=Mon, 6=Sun
+
+    if wd >= 5:
+        return "closed"
+
+    if is_us_stock(code):
+        if time(22, 0) <= t or t <= time(5, 0):
+            return "open"
+        if time(17, 0) <= t < time(22, 0):
+            return "pre"
+        return "closed"
+
+    if is_hk_stock(code) or (len(code.strip()) == 5 and code.strip().startswith("0")):
+        if time(9, 30) <= t <= time(12, 0) or time(13, 0) <= t <= time(16, 0):
+            return "open"
+        if time(9, 0) <= t < time(9, 30):
+            return "pre"
+        return "closed"
+
+    # A 股：9:30-11:30, 13:00-15:00
+    if time(9, 30) <= t <= time(11, 30) or time(13, 0) <= t <= time(15, 0):
+        return "open"
+    if time(9, 0) <= t < time(9, 30):
+        return "pre"
+    return "closed"
 
 
 _FUND_CACHE: dict[str, tuple[float, dict]] = {}

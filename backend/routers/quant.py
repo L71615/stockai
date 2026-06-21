@@ -179,8 +179,20 @@ async def ai_duel_start(body: AIDuelStartRequest):
     )
     round_id = result["lastrowid"]
 
-    # 打乱人设池，每人分配一个不同的
-    shuffled = random.sample(AI_PERSONAS, min(len(AI_PERSONAS), len(body.providers)))
+    # 6 个人格均分给所选供应商（每个供应商管理多个人格）
+    providers = body.providers or [get_default_provider()]
+    if len(providers) < 2:
+        # 单供应商模式：6 个人格都用同一个 AI
+        providers = providers * 6  # 重复 6 次，每人各拿一个人格
+    else:
+        # 多供应商模式：人格轮流分配
+        # 如 2 个供应商 → 每人 3 个人格
+        expanded = []
+        for i in range(6):
+            expanded.append(providers[i % len(providers)])
+        providers = expanded
+
+    random.shuffle(AI_PERSONAS)  # 打乱人设分配
     picks_per_ai = 6  # 每人选6只
     invest_per_stock = round(body.capital / picks_per_ai, 2)
 
@@ -189,9 +201,8 @@ async def ai_duel_start(body: AIDuelStartRequest):
         "period_days": body.period_days, "players": [],
     }
 
-    providers = body.providers or [get_default_provider()]
     for i, provider in enumerate(providers):
-        persona = shuffled[i % len(shuffled)]
+        persona = AI_PERSONAS[i % len(AI_PERSONAS)]
         entry = {"provider": provider, "persona": persona["name"], "persona_id": persona["id"], "picks": [], "error": None}
 
         try:

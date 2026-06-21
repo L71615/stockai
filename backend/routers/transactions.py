@@ -5,13 +5,15 @@ from pydantic import BaseModel
 
 from database import query_all, query_one, execute
 from services.utils import detect_asset_type
+from dependencies import get_current_user_id
 
 router = APIRouter()
 
 @router.get("/transactions")
 def get_transactions():
     return query_all(
-        "SELECT * FROM transactions WHERE user_id = 1 ORDER BY traded_at DESC"
+        "SELECT * FROM transactions WHERE user_id = ? ORDER BY traded_at DESC",
+        (get_current_user_id(),)
     )
 
 
@@ -29,7 +31,7 @@ class TransactionBody(BaseModel):
 
 @router.post("/transactions")
 def add_transaction(body: TransactionBody):
-    from services.utils import calc_fee
+    from services.utils import calc_fee, get_market
 
     at = body.asset_type or detect_asset_type(body.stock_code)
 
@@ -47,16 +49,48 @@ def add_transaction(body: TransactionBody):
 
     result = execute(
         """INSERT INTO transactions (user_id, stock_code, stock_name, asset_type, direction, price, quantity, amount, fee, traded_at, note)
-           VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (body.stock_code, body.stock_name, at, body.direction, body.price, body.quantity, amount, fee, body.traded_at, body.note),
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (get_current_user_id(), body.stock_code, body.stock_name, at, body.direction, body.price, body.quantity, amount, fee, body.traded_at, body.note),
     )
-    return {"id": result["lastrowid"], "message": "添加成功", "fee": fee, "amount": amount}
+
+    holding_result = None
+    if body.direction == "buy":
+        holding = query_one(
+            "SELECT * FROM holdings WHERE user_id = ? AND stock_code = ?",
+            (get_current_user_id(), body.stock_code),
+        )
+        if not holding:
+            market = get_market(body.stock_code)
+            execute(
+                """INSERT INTO holdings (user_id, stock_code, stock_name, market, asset_type, quantity, cost_price, shares)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    get_current_user_id(),
+                    body.stock_code,
+                    body.stock_name,
+                    market,
+                    at,
+                    0,
+                    body.price,
+                    0 if at != "fund" else 0,
+                ),
+            )
+        holding_result = _recalc_holding_for_code(body.stock_code)
+
+    return {
+        "id": result["lastrowid"],
+        "message": "添加成功",
+        "fee": fee,
+        "amount": amount,
+        "holding_updated": holding_result is not None,
+        "holding": holding_result,
+    }
 
 
 def _recalc_holding_for_code(stock_code: str):
     """根据某代码的所有买入交易重新计算持仓成本和数量"""
     h = query_one(
-        "SELECT * FROM holdings WHERE user_id = 1 AND stock_code = ?", (stock_code,)
+        "SELECT * FROM holdings WHERE user_id = ? AND stock_code = ?", (get_current_user_id(), stock_code)
     )
     if not h:
         return None
@@ -66,9 +100,9 @@ def _recalc_holding_for_code(stock_code: str):
 
     buys = query_all(
         """SELECT * FROM transactions
-           WHERE user_id = 1 AND stock_code = ? AND direction = 'buy'
+           WHERE user_id = ? AND stock_code = ? AND direction = 'buy'
            ORDER BY traded_at ASC""",
-        (stock_code,),
+        (get_current_user_id(), stock_code),
     )
 
     if not buys:
@@ -96,14 +130,14 @@ def _recalc_holding_for_code(stock_code: str):
 @router.delete("/transactions/{tx_id}")
 def delete_transaction(tx_id: int):
     """删除交易记录，并重新计算对应持仓成本"""
-    tx = query_one("SELECT * FROM transactions WHERE id = ? AND user_id = 1", (tx_id,))
+    tx = query_one("SELECT * FROM transactions WHERE id = ? AND user_id = ?", (tx_id, get_current_user_id()))
     if not tx:
         raise HTTPException(404, "交易记录不存在")
 
     stock_code = tx["stock_code"]
     direction = tx["direction"]
 
-    execute("DELETE FROM transactions WHERE id = ? AND user_id = 1", (tx_id,))
+    execute("DELETE FROM transactions WHERE id = ? AND user_id = ?", (tx_id, get_current_user_id()))
 
     holding_result = None
     if direction == "buy":
@@ -130,7 +164,7 @@ def update_transaction(tx_id: int, body: UpdateTransactionBody):
     """更新交易记录，并重新计算对应持仓成本"""
     from services.utils import calc_fee
 
-    tx = query_one("SELECT * FROM transactions WHERE id = ? AND user_id = 1", (tx_id,))
+    tx = query_one("SELECT * FROM transactions WHERE id = ? AND user_id = ?", (tx_id, get_current_user_id()))
     if not tx:
         raise HTTPException(404, "交易记录不存在")
 
@@ -157,8 +191,8 @@ def update_transaction(tx_id: int, body: UpdateTransactionBody):
 
     execute(
         """UPDATE transactions SET traded_at = ?, price = ?, quantity = ?, amount = ?, fee = ?, note = ?
-           WHERE id = ? AND user_id = 1""",
-        (traded_at, price, quantity, amount, fee, note, tx_id),
+           WHERE id = ? AND user_id = ?""",
+        (traded_at, price, quantity, amount, fee, note, tx_id, get_current_user_id()),
     )
 
     holding_result = None

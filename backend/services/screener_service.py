@@ -164,10 +164,12 @@ DEFAULT_FACTOR_WEIGHTS = {
     # 基本面类（总权重 30%）
     "pe_inverse": 0.08, "pb_inverse": 0.06, "roe": 0.08,
     "eps_growth": 0.04, "market_cap_ln": -0.02, "dividend_yield": 0.02,
-    # 情绪类（总权重 15%）
-    "strength_20d": 0.08, "momentum_composite": 0.07,
-    # 社交情绪（雪球 + 微博，总权重 9%）
-    "social_rank": 0.03, "social_buzz": 0.03, "weibo_sentiment": 0.03,
+    # 情绪类（总权重 10%）
+    "strength_20d": 0.06, "momentum_composite": 0.04,
+    # 资金类（总权重 9%，北向/融资/机构）
+    "north_flow": 0.04, "margin_change": 0.03, "inst_change": 0.02,
+    # 社交情绪（雪球 + 微博，总权重 6%）
+    "social_rank": 0.02, "social_buzz": 0.02, "weibo_sentiment": 0.02,
 }
 
 
@@ -314,7 +316,7 @@ def score_stock(factors: dict[str, Optional[float]],
     return round(score / total_weight, 6)
 
 
-def _process_single_stock(code: str) -> Optional[dict]:
+def _process_single_stock(code: str, margin_map: dict[str, dict] = None) -> Optional[dict]:
     """处理单只股票：取K线 → 算因子 → 返回"""
     try:
         mkt = get_market(code)
@@ -368,6 +370,22 @@ def _process_single_stock(code: str) -> Optional[dict]:
         except Exception:
             fund["_social"] = {}
 
+        # 获取北向资金 / 融资融券 / 机构持仓数据
+        north_flow_data = None
+        margin_data = None
+        inst_data = None
+        try:
+            from services.akshare_adapter import get_north_flow, get_margin_data, get_inst_holding
+            north_flow_data = get_north_flow(code)
+            # 优先用预热好的全市场 margin_map，没有则实时拉取
+            if margin_map is not None:
+                margin_data = margin_map.get(code)
+            if margin_data is None:
+                margin_data = get_margin_data(code)
+            inst_data = get_inst_holding(code)
+        except Exception:
+            pass
+
         result = compute_all_factors(
             code=code,
             closes=kline["closes"],
@@ -377,6 +395,9 @@ def _process_single_stock(code: str) -> Optional[dict]:
             fundamentals=fund,
             prev_eps=fund.get("prev_eps"),
             dividend=fund.get("dividend"),
+            north_flow_data=north_flow_data,
+            margin_data=margin_data,
+            inst_data=inst_data,
         )
 
         # 附上股票名称和行业
@@ -443,13 +464,22 @@ def run_screener(
     except Exception:
         pass
 
+    # 预热融资融券全市场数据（2 次 AKShare 调用 → 全市场 code→margin 映射）
+    # 避免 _process_single_stock 中每只股票拉一次全市场数据
+    margin_map: dict[str, dict] = {}
+    try:
+        from services.akshare_adapter import get_all_margin_data
+        margin_map = get_all_margin_data()
+    except Exception:
+        pass
+
     # 并发计算因子
     all_factors = []
     scanned = 0
     codes = [s["code"] for s in stock_list if s.get("code")]
 
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = {executor.submit(_process_single_stock, c): c for c in codes}
+        futures = {executor.submit(_process_single_stock, c, margin_map): c for c in codes}
         for i, future in enumerate(as_completed(futures)):
             try:
                 result = future.result(timeout=30)

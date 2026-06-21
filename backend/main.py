@@ -7,7 +7,8 @@ from pathlib import Path
 # 确保 backend 目录在 sys.path 中
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 from config import PORT, ENV, VERSION
@@ -81,8 +82,6 @@ def startup():
 
 
 # ── 认证中间件：保护所有 /api/ 路由（登录接口除外）──
-from fastapi import Request
-from fastapi.responses import JSONResponse
 import jwt as pyjwt
 from config import JWT_SECRET
 
@@ -121,3 +120,4 @@ if __name__ == "__main__":
     print(f"StockAI server starting at http://localhost:{PORT}")
     print(f"Docs at http://localhost:{PORT}/api/docs")
     uvicorn.run("main:app", host="0.0.0.0", port=PORT, reload=(ENV == "development"))
+

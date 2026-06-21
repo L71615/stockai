@@ -7,11 +7,37 @@ from services.utils import run_curl, get_market
 
 
 def fetch_kline(code: str, market: str = None, days: int = 120) -> dict[str, Any]:
-    """获取日K线数据（akshare → 东方财富 → Baostock，多源兜底）
+    """获取日K线数据（多市场适配：A股/港股/美股，多源兜底）
 
-    优先走无锁的 HTTP 源（akshare/东方财富），让并发真正生效。
-    Baostock 作为最后兜底（数据最全但有全局锁，串行）。
+    A股: akshare(腾讯) → 东方财富 → Baostock
+    港股: akshare(ak.stock_hk_hist) → 新浪
+    美股: akshare(ak.stock_us_hist)
     """
+    from services.utils import is_hk_stock, is_us_stock
+
+    # ── 港股 K 线 ──
+    if is_hk_stock(code):
+        try:
+            from services.akshare_adapter import get_hk_kline
+            result = get_hk_kline(code, days)
+            if result and "error" not in result:
+                return result
+        except Exception:
+            pass
+        return {"error": "获取港股K线失败", "code": code}
+
+    # ── 美股 K 线 ──
+    if is_us_stock(code):
+        try:
+            from services.akshare_adapter import get_us_kline
+            result = get_us_kline(code, days)
+            if result and "error" not in result:
+                return result
+        except Exception:
+            pass
+        return {"error": "获取美股K线失败", "code": code}
+
+    # ── A 股 K 线 ──
     # 1. akshare / 腾讯财经（HTTP，无锁，可并发）
     try:
         from services.akshare_adapter import get_kline

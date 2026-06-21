@@ -330,3 +330,44 @@ class TestNormalizeFactors:
 
     def test_empty_input(self):
         assert normalize_factors([]) == []
+
+
+class TestCapitalFlowFactors:
+    """资金类因子测试 — north_flow / margin_change / inst_change"""
+
+    def test_north_flow_normal(self):
+        from services.factor_service import factor_north_flow
+        result = factor_north_flow({"net_flow": 1.5, "buy_amount": 2.0, "sell_amount": 0.5})
+        assert result is not None
+        assert result == 1.5  # 返回原始值，不做 tanh
+
+    def test_north_flow_negative(self):
+        from services.factor_service import factor_north_flow
+        result = factor_north_flow({"net_flow": -0.8})
+        assert result == -0.8
+
+    def test_north_flow_none_input(self):
+        from services.factor_service import factor_north_flow
+        assert factor_north_flow(None) is None
+
+    def test_north_flow_missing_key(self):
+        from services.factor_service import factor_north_flow
+        assert factor_north_flow({}) is None
+
+    def test_margin_change_normal(self):
+        from services.factor_service import factor_margin_change
+        result = factor_margin_change({"rzye": 5000, "change_pct": 0.03})
+        assert result == 0.03
+
+    def test_margin_change_none_input(self):
+        from services.factor_service import factor_margin_change
+        assert factor_margin_change(None) is None
+
+    def test_inst_change_normal(self):
+        from services.factor_service import factor_inst_change
+        result = factor_inst_change({"hold_pct": 15.2, "change_pct": -0.02})
+        assert result == -0.02
+
+    def test_inst_change_none_input(self):
+        from services.factor_service import factor_inst_change
+        assert factor_inst_change(None) is None

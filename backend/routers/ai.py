@@ -7,6 +7,7 @@ from database import query_all, query_one, execute
 from services.ai_service import ai_chat
 from routers.memory import load_memory
 from services.rate_limit import limiter_ai
+from dependencies import get_current_user_id
 
 router = APIRouter()
 
@@ -29,8 +30,8 @@ async def chat(req: ChatRequest, request: Request):
     conv_id = req.conversationId
     if not conv_id:
         result = execute(
-            "INSERT INTO ai_conversations (user_id, title) VALUES (1, ?)",
-            (req.message[:50],),
+            "INSERT INTO ai_conversations (user_id, title) VALUES (?, ?)",
+            (get_current_user_id(), req.message[:50]),
         )
         conv_id = result["lastrowid"]
 
@@ -84,14 +85,15 @@ async def chat(req: ChatRequest, request: Request):
 @router.get("/conversations")
 def list_conversations():
     return query_all(
-        "SELECT * FROM ai_conversations WHERE user_id = 1 ORDER BY created_at DESC"
+        "SELECT * FROM ai_conversations WHERE user_id = ? ORDER BY created_at DESC",
+        (get_current_user_id(),)
     )
 
 
 @router.get("/conversations/{conv_id}")
 def get_conversation(conv_id: int):
     conv = query_one(
-        "SELECT * FROM ai_conversations WHERE id = ? AND user_id = 1", (conv_id,)
+        "SELECT * FROM ai_conversations WHERE id = ? AND user_id = ?", (conv_id, get_current_user_id())
     )
     if not conv:
         raise HTTPException(404, "会话不存在")
@@ -104,5 +106,5 @@ def get_conversation(conv_id: int):
 
 @router.delete("/conversations/{conv_id}")
 def delete_conversation(conv_id: int):
-    execute("DELETE FROM ai_conversations WHERE id = ? AND user_id = 1", (conv_id,))
+    execute("DELETE FROM ai_conversations WHERE id = ? AND user_id = ?", (conv_id, get_current_user_id()))
     return {"message": "已删除"}

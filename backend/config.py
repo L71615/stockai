@@ -42,8 +42,6 @@ XIAOMI_BASE_URL = os.getenv("XIAOMI_BASE_URL", "")
 CRAWLER_UA = "StockAI-Bot/1.0"
 CRAWLER_TIMEOUT = int(os.getenv("CRAWLER_TIMEOUT", 15))
 EASTMONEY_TOKEN = os.getenv("EASTMONEY_TOKEN", "")
-if not EASTMONEY_TOKEN:
-    raise ValueError("EASTMONEY_TOKEN environment variable must be set")
 
 # SMTP 邮件
 SMTP_HOST = os.getenv("SMTP_HOST", "")

@@ -79,6 +79,24 @@ def trigger_crawl():
     return result
 
 
+# ── 独立数据模块（局部刷新） ──
+
+@router.get("/xueqiu")
+def get_xueqiu_hot():
+    """获取雪球热门关注（独立模块，不触发全量刷新）"""
+    from services.kol_service import fetch_xueqiu_hot
+    items = fetch_xueqiu_hot(15)
+    return {"items": items, "count": len(items)}
+
+
+@router.get("/rss")
+def get_rss_feeds():
+    """获取财经 RSS 快讯（独立模块，不触发全量刷新）"""
+    from services.kol_service import fetch_rss_feeds
+    items = fetch_rss_feeds()
+    return {"items": items, "count": len(items)}
+
+
 # ── 日报 ──
 
 @router.get("/briefs/latest")

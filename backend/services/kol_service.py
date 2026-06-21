@@ -30,20 +30,27 @@ def fetch_rss_feeds(feeds=None) -> list[dict]:
     results = []
     try:
         import feedparser
-        for source, url in feeds:
-            try:
-                feed = feedparser.parse(url)
-                for entry in feed.entries[:5]:
-                    results.append({
-                        "source": source,
-                        "title": entry.get("title", ""),
-                        "link": entry.get("link", ""),
-                        "published": entry.get("published", ""),
-                    })
-            except Exception:
-                pass
     except ImportError:
-        pass
+        return [{"source": "error", "title": "feedparser 库未安装，请运行: pip install feedparser", "link": "", "published": ""}]
+
+    for source, url in feeds:
+        try:
+            feed = feedparser.parse(url)
+            if feed.bozo and not feed.entries:
+                logger.warning(f"RSS {source} 解析异常: {feed.bozo_exception}")
+                continue
+            if not feed.entries:
+                logger.warning(f"RSS {source} 无条目（可能源不可达）")
+                continue
+            for entry in feed.entries[:5]:
+                results.append({
+                    "source": source,
+                    "title": entry.get("title", ""),
+                    "link": entry.get("link", ""),
+                    "published": entry.get("published", ""),
+                })
+        except Exception as e:
+            logger.warning(f"RSS {source} 抓取失败: {e}")
     return results
 
 

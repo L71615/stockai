@@ -10,6 +10,7 @@ from database import query_all, query_one, execute
 from services.ai_service import ai_chat
 from services.utils import run_curl, get_market
 from services.akshare_adapter import get_quote as ak_get_quote
+from dependencies import get_current_user_id
 
 router = APIRouter()
 
@@ -33,30 +34,30 @@ class DcaUpdateBody(BaseModel):
 
 @router.get("/dca")
 def list_dca():
-    return query_all("SELECT * FROM dca_plans WHERE user_id = 1 ORDER BY id DESC")
+    return query_all("SELECT * FROM dca_plans WHERE user_id = ? ORDER BY id DESC", (get_current_user_id(),))
 
 
 @router.post("/dca")
 def add_dca(body: DcaPlanBody):
     # 检查是否已有关联持仓的定投
     existing = query_one(
-        "SELECT id FROM dca_plans WHERE holding_id = ? AND user_id = 1",
-        (body.holding_id,),
+        "SELECT id FROM dca_plans WHERE holding_id = ? AND user_id = ?",
+        (body.holding_id, get_current_user_id()),
     )
     if existing:
         raise HTTPException(400, "该持仓已绑定定投计划，请先编辑现有计划")
 
     result = execute(
         """INSERT INTO dca_plans (user_id, holding_id, stock_code, stock_name, cycle, cycle_day, amount, next_deduction)
-           VALUES (1, ?, ?, ?, ?, ?, ?, ?)""",
-        (body.holding_id, body.stock_code, body.stock_name, body.cycle, body.cycle_day, body.amount, body.next_deduction),
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+        (get_current_user_id(), body.holding_id, body.stock_code, body.stock_name, body.cycle, body.cycle_day, body.amount, body.next_deduction),
     )
     return {"id": result["lastrowid"], "message": "添加成功"}
 
 
 @router.put("/dca/{plan_id}")
 def update_dca(plan_id: int, body: DcaUpdateBody):
-    existing = query_one("SELECT * FROM dca_plans WHERE id = ? AND user_id = 1", (plan_id,))
+    existing = query_one("SELECT * FROM dca_plans WHERE id = ? AND user_id = ?", (plan_id, get_current_user_id()))
     if not existing:
         raise HTTPException(404, "定投计划不存在")
 
@@ -87,16 +88,16 @@ def update_dca(plan_id: int, body: DcaUpdateBody):
 
 @router.delete("/dca/{plan_id}")
 def delete_dca(plan_id: int):
-    existing = query_one("SELECT * FROM dca_plans WHERE id = ? AND user_id = 1", (plan_id,))
+    existing = query_one("SELECT * FROM dca_plans WHERE id = ? AND user_id = ?", (plan_id, get_current_user_id()))
     if not existing:
         raise HTTPException(404, "定投计划不存在")
-    execute("DELETE FROM dca_plans WHERE id = ? AND user_id = 1", (plan_id,))
+    execute("DELETE FROM dca_plans WHERE id = ? AND user_id = ?", (plan_id, get_current_user_id()))
     return {"message": "已删除"}
 
 
 @router.post("/dca/{plan_id}/toggle")
 def toggle_dca(plan_id: int):
-    existing = query_one("SELECT * FROM dca_plans WHERE id = ? AND user_id = 1", (plan_id,))
+    existing = query_one("SELECT * FROM dca_plans WHERE id = ? AND user_id = ?", (plan_id, get_current_user_id()))
     if not existing:
         raise HTTPException(404, "定投计划不存在")
     new_active = 0 if existing["active"] else 1
@@ -113,7 +114,7 @@ class MemoRequest(BaseModel):
 @router.post("/dca/{plan_id}/memo")
 async def generate_memo(plan_id: int, body: MemoRequest):
     """为定投计划生成 AI 备忘录（apiKey 留空则使用已保存的配置）"""
-    plan = query_one("SELECT * FROM dca_plans WHERE id = ? AND user_id = 1", (plan_id,))
+    plan = query_one("SELECT * FROM dca_plans WHERE id = ? AND user_id = ?", (plan_id, get_current_user_id()))
     if not plan:
         raise HTTPException(404, "定投计划不存在")
 

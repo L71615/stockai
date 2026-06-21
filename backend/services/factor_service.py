@@ -1,11 +1,13 @@
-"""因子计算引擎：5大类25因子，从 qlib Alpha158 精选
+"""因子计算引擎：6大类29因子，从 qlib Alpha158 精选
 
 因子体系：
   动量类(6): ret_5d, ret_20d, ret_60d, rsi_14, macd_signal, ma_disposition
   波动类(4): hist_vol_20d, atr_14, amplitude_20d, downside_vol
   量价类(5): vol_ratio, turnover_rate, obv_divergence, price_volume_corr, avg_amount
   基本面(6): pe, pb, roe, eps_growth, market_cap, dividend_yield
-  情绪类(4): north_flow, margin_change, inst_change, strength_20d
+  情绪类(2): strength_20d, momentum_composite
+  资金类(3): north_flow, margin_change, inst_change
+  社交类(3): social_rank, social_buzz, weibo_sentiment
 
 所有函数自己消化异常 —— NaN/inf → None，调用方收到 None 时跳过该因子。
 """
@@ -446,6 +448,67 @@ def factor_momentum_score(closes: list[float]) -> Optional[float]:
 
 
 # ═══════════════════════════════════════════════════════════
+# 资金因子 (Capital Flow) — 北向资金 + 融资融券 + 机构持仓
+# ═══════════════════════════════════════════════════════════
+
+def factor_north_flow(north_flow_data: Optional[dict]) -> Optional[float]:
+    """北向资金因子：个股沪深港通净流入强度（原始值）
+
+    north_flow_data 来自 akshare_adapter.get_north_flow()
+    包含 net_flow（净流入，亿元）。
+    返回原始净流入值，由 normalize_factors() 做横截面 Z-Score 标准化。
+    正值=净流入（看多），负值=净流出（看空）。
+    """
+    if north_flow_data is None:
+        return None
+    try:
+        net_flow = north_flow_data.get("net_flow")
+        if net_flow is None:
+            return None
+        return float(net_flow)  # 亿元，横截面 Z-Score 标准化
+    except Exception:
+        return None
+
+
+def factor_margin_change(margin_data: Optional[dict]) -> Optional[float]:
+    """融资融券因子：融资余额变化率（原始值）
+
+    margin_data 来自 akshare_adapter.get_margin_data()
+    change_pct = 当日(融资买入 - 偿还) / 融资余额。
+    返回原始变化率，由 normalize_factors() 做横截面 Z-Score 标准化。
+    正值=融资增加（杠杆看多），负值=偿还（去杠杆）。
+    """
+    if margin_data is None:
+        return None
+    try:
+        change_pct = margin_data.get("change_pct")
+        if change_pct is None:
+            return None
+        return float(change_pct)  # 横截面 Z-Score 标准化
+    except Exception:
+        return None
+
+
+def factor_inst_change(inst_data: Optional[dict]) -> Optional[float]:
+    """机构持仓因子：机构持股比例变动（原始值）
+
+    inst_data 来自 akshare_adapter.get_inst_holding()
+    change_pct = (本期比例 - 上期比例) / |上期比例|。
+    返回原始变化率，由 normalize_factors() 做横截面 Z-Score 标准化。
+    正值=机构加仓（看多），负值=机构减仓。
+    """
+    if inst_data is None:
+        return None
+    try:
+        change_pct = inst_data.get("change_pct")
+        if change_pct is None:
+            return None
+        return float(change_pct)  # 横截面 Z-Score 标准化
+    except Exception:
+        return None
+
+
+# ═══════════════════════════════════════════════════════════
 # 社交情绪因子 (Social Sentiment) — 雪球社区热度
 # ═══════════════════════════════════════════════════════════
 
@@ -503,8 +566,11 @@ def compute_all_factors(
     fundamentals: dict = None,
     prev_eps: float = None,
     dividend: float = None,
+    north_flow_data: dict = None,
+    margin_data: dict = None,
+    inst_data: dict = None,
 ) -> dict:
-    """计算单只股票的全部 25 个因子
+    """计算单只股票的全部 29 个因子
 
     Args:
         code: 股票代码
@@ -515,6 +581,9 @@ def compute_all_factors(
         fundamentals: 基本面数据 (来自 baostock_adapter.get_stock_factors)
         prev_eps: 去年同期 EPS
         dividend: 每股分红
+        north_flow_data: 北向资金数据 (来自 akshare_adapter.get_north_flow)
+        margin_data: 融资融券数据 (来自 akshare_adapter.get_margin_data)
+        inst_data: 机构持仓数据 (来自 akshare_adapter.get_inst_holding)
 
     Returns:
         {code, factors: {name: value_or_None}, hit_count: int}
@@ -582,6 +651,11 @@ def compute_all_factors(
     # ── 情绪类 ──
     factors["strength_20d"] = factor_strength(closes)
     factors["momentum_composite"] = factor_momentum_score(closes)
+
+    # ── 资金类（北向资金 + 融资融券 + 机构持仓） ──
+    factors["north_flow"] = factor_north_flow(north_flow_data)
+    factors["margin_change"] = factor_margin_change(margin_data)
+    factors["inst_change"] = factor_inst_change(inst_data)
 
     # ── 社交情绪（雪球 + 微博） ──
     social = fundamentals.get("_social") or {}

@@ -38,8 +38,8 @@ def _cached_quote(code: str, market: str | None = None) -> dict:
 
 
 def _fetch_quote_sync(code: str, market: str | None = None) -> dict:
-    """获取单只股票实时行情（港股→新浪，A股→腾讯→东方财富）"""
-    from services.utils import is_hk_stock
+    """获取单只股票实时行情（港股→新浪，美股→akshare，A股→腾讯→东方财富）"""
+    from services.utils import is_hk_stock, is_us_stock
 
     # 港股：新浪财经
     if is_hk_stock(code):
@@ -60,6 +60,26 @@ def _fetch_quote_sync(code: str, market: str | None = None) -> dict:
         except Exception:
             pass
         return {"code": code, "error": "获取港股行情失败"}
+
+    # 美股：akshare 东方财富美股接口
+    if is_us_stock(code):
+        try:
+            from services.akshare_adapter import get_us_quote
+            q = get_us_quote(code)
+            if q and q.get("price"):
+                return {
+                    "code": q["code"],
+                    "name": q.get("name", ""),
+                    "price": q["price"],
+                    "change": q.get("change"),
+                    "change_pct": q.get("change_pct"),
+                    "volume": q.get("volume"),
+                    "high": q.get("high"),
+                    "low": q.get("low"),
+                }
+        except Exception:
+            pass
+        return {"code": code, "error": "获取美股行情失败"}
 
     # A股：腾讯 API
     try:
@@ -1039,3 +1059,122 @@ def get_review(review_id: int):
     report["avg_score"] = round(sum(scores.values()) / len(scores)) if scores else 0
 
     return report
+
+
+# ═══════════════════════════════════════════════════════════
+# 持仓详情 — K 线图表数据
+# ═══════════════════════════════════════════════════════════
+
+PERIOD_DAYS = {"5d": 5, "1m": 22, "3m": 66, "6m": 130}
+
+
+def _aggregate_bars(dates: list[str], opens: list[float], highs: list[float],
+                    lows: list[float], closes: list[float], volumes: list[float],
+                    freq: str) -> tuple[list, list, list, list, list, list]:
+    """将日线聚合成周线/月线"""
+    if freq not in ("week", "month"):
+        return dates, opens, highs, lows, closes, volumes
+
+    groups: dict[str, dict] = {}
+    for i in range(len(dates)):
+        if freq == "week":
+            # ISO week key
+            key = dates[i][:7] if len(dates[i]) >= 7 else dates[i]
+            from datetime import datetime as _dt
+            try:
+                d = _dt.strptime(dates[i], "%Y-%m-%d")
+                key = f"{d.year}-W{d.isocalendar()[1]:02d}"
+            except Exception:
+                pass
+        else:
+            key = dates[i][:7]  # YYYY-MM
+
+        if key not in groups:
+            groups[key] = {"open": opens[i], "high": highs[i], "low": lows[i],
+                           "close": closes[i], "volume": volumes[i], "date": dates[i]}
+        else:
+            g = groups[key]
+            g["high"] = max(g["high"], highs[i])
+            g["low"] = min(g["low"], lows[i])
+            g["close"] = closes[i]
+            g["volume"] += volumes[i]
+            g["date"] = dates[i]
+
+    keys = sorted(groups.keys())
+    return (
+        [groups[k]["date"] for k in keys],
+        [groups[k]["open"] for k in keys],
+        [groups[k]["high"] for k in keys],
+        [groups[k]["low"] for k in keys],
+        [groups[k]["close"] for k in keys],
+        [groups[k]["volume"] for k in keys],
+    )
+
+
+@router.get("/kline/{code}")
+def get_kline_data(code: str, period: str = "1m"):
+    """获取 K 线数据（供持仓详情抽屉图表使用）
+
+    period: 5d(5日) / 1m(日K,22天) / 3m(周K) / 6m(月K)
+    返回: {dates, opens, highs, lows, closes, volumes, ma5, ma10, ma20}
+    """
+    from services.technical import fetch_kline, calc_ma
+
+    if period not in PERIOD_DAYS:
+        period = "1m"
+
+    days = PERIOD_DAYS[period]
+    mkt = get_market(code)
+    kline = fetch_kline(code, mkt, days=max(days + 60, 120))  # 多取一些供 MA 计算
+
+    if "error" in kline:
+        raise HTTPException(500, kline["error"])
+
+    dates = kline["dates"]
+    opens = kline.get("opens", [])
+    highs = kline["highs"]
+    lows = kline["lows"]
+    closes = kline["closes"]
+    volumes = kline.get("volumes", [0] * len(closes))
+
+    # 如果 fetch_kline 没返回 opens/volumes，用 closes 模拟
+    if not opens:
+        opens = [closes[0]] + closes[:-1]  # 用前日收盘当开盘
+        opens = opens[:len(closes)]
+    if not volumes or all(v == 0 for v in volumes):
+        volumes = [0] * len(closes)
+
+    # 聚合（周/月）
+    freq = {"3m": "week", "6m": "month"}.get(period)
+    if freq:
+        dates, opens, highs, lows, closes, volumes = _aggregate_bars(
+            dates, opens, highs, lows, closes, volumes, freq)
+
+    # 截断到需要长度
+    n = min(len(dates), days + 10)
+    dates = dates[-n:]
+    opens = opens[-n:]
+    highs = highs[-n:]
+    lows = lows[-n:]
+    closes = closes[-n:]
+    volumes = volumes[-n:]
+
+    # MA 计算
+    ma = calc_ma(closes, [5, 10, 20])
+    ma5 = [round(v, 2) if v is not None else None for v in ma.get("MA5", [])][-n:]
+    ma10 = [round(v, 2) if v is not None else None for v in ma.get("MA10", [])][-n:]
+    ma20 = [round(v, 2) if v is not None else None for v in ma.get("MA20", [])][-n:]
+
+    return {
+        "code": code,
+        "period": period,
+        "dates": dates,
+        "opens": opens,
+        "highs": highs,
+        "lows": lows,
+        "closes": closes,
+        "volumes": volumes,
+        "ma5": ma5,
+        "ma10": ma10,
+        "ma20": ma20,
+    }

@@ -6,16 +6,40 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from database import query_all, query_one, execute, execute_many
-from services.utils import get_market, detect_asset_type, get_fund_nav, calc_xirr
+from services.utils import get_market, detect_asset_type, get_fund_nav, calc_xirr, get_fee_config, FeeConfig
 from routers.stocks import _cached_quote  # 共享的行情缓存函数
+from dependencies import get_current_user_id
+
+
+def _estimate_sell_fee(market_value: float, asset_type: str, stock_code: str = "") -> float:
+    """预估卖出费用（同花顺口径：佣金+印花税+过户费）
+
+    Stock: 佣金 max(费率*金额,最低) + 印花税0.05% + 过户费0.002%
+    ETF:   佣金 max(费率*金额,最低)，无印花税/过户费
+    Fund:  0
+    """
+    at = (asset_type or "").strip().lower()
+    if at in ("fund", "hk") or market_value <= 0:
+        return 0.0
+
+    cfg = get_fee_config()
+
+    if at == "etf":
+        return round(max(market_value * cfg.commission_rate, cfg.commission_min), 2)
+
+    # Stock: 佣金 + 印花税 + 过户费
+    commission = max(market_value * cfg.commission_rate, cfg.commission_min)
+    stamp_tax = market_value * FeeConfig.stamp_tax_rate
+    transfer_fee = market_value * FeeConfig.transfer_fee_rate
+    return round(commission + stamp_tax + transfer_fee, 2)
 
 router = APIRouter()
 
 @router.get("/holdings")
 def get_holdings(portfolio_id: int | None = None):
     if portfolio_id:
-        return query_all("SELECT * FROM holdings WHERE user_id = 1 AND portfolio_id = ? ORDER BY id DESC", (portfolio_id,))
-    return query_all("SELECT * FROM holdings WHERE user_id = 1 ORDER BY id DESC")
+        return query_all("SELECT * FROM holdings WHERE user_id = ? AND portfolio_id = ? ORDER BY id DESC", (get_current_user_id(), portfolio_id))
+    return query_all("SELECT * FROM holdings WHERE user_id = ? ORDER BY id DESC", (get_current_user_id(),))
 
 
 class HoldingBody(BaseModel):
@@ -53,16 +77,16 @@ def add_holding(body: HoldingBody):
 
     result = execute(
         """INSERT INTO holdings (user_id, stock_code, stock_name, market, asset_type, quantity, cost_price, shares, portfolio_id)
-           VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (body.stock_code, body.stock_name, body.market, at, qty, cost_with_fee, body.shares, body.portfolio_id),
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (get_current_user_id(), body.stock_code, body.stock_name, body.market, at, qty, cost_with_fee, body.shares, body.portfolio_id),
     )
     holding_id = result["lastrowid"]
     # 同步创建初始买入交易记录；失败则删除持仓回滚
     try:
         execute(
             """INSERT INTO transactions (user_id, stock_code, stock_name, asset_type, direction, price, quantity, amount, fee, traded_at, note)
-               VALUES (1, ?, ?, ?, 'buy', ?, ?, ?, ?, date('now','localtime'), '初始建仓')""",
-            (body.stock_code, body.stock_name, at, cost, qty, amount, fee),
+               VALUES (?, ?, ?, ?, 'buy', ?, ?, ?, ?, date('now','localtime'), '初始建仓')""",
+            (get_current_user_id(), body.stock_code, body.stock_name, at, cost, qty, amount, fee),
         )
     except Exception:
         execute("DELETE FROM holdings WHERE id = ?", (holding_id,))
@@ -76,15 +100,15 @@ def update_holding(holding_id: int, body: HoldingBody):
     at = body.asset_type or detect_asset_type(body.stock_code)
     execute(
         """UPDATE holdings SET stock_code=?, stock_name=?, market=?, asset_type=?, quantity=?, cost_price=?, shares=?, portfolio_id=?
-           WHERE id=? AND user_id=1""",
-        (body.stock_code, body.stock_name, body.market, at, body.quantity, body.cost_price, body.shares, body.portfolio_id, holding_id),
+           WHERE id=? AND user_id=?""",
+        (body.stock_code, body.stock_name, body.market, at, body.quantity, body.cost_price, body.shares, body.portfolio_id, holding_id, get_current_user_id()),
     )
     return {"message": "已更新"}
 
 
 @router.delete("/holdings/{holding_id}")
 def delete_holding(holding_id: int):
-    execute("DELETE FROM holdings WHERE id = ? AND user_id = 1", (holding_id,))
+    execute("DELETE FROM holdings WHERE id = ? AND user_id = ?", (holding_id, get_current_user_id()))
     return {"message": "已删除"}
 
 
@@ -94,7 +118,7 @@ class JournalBody(BaseModel):
 
 @router.put("/holdings/{holding_id}/journal")
 def update_journal(holding_id: int, body: JournalBody):
-    h = query_one("SELECT id FROM holdings WHERE id = ? AND user_id = 1", (holding_id,))
+    h = query_one("SELECT id FROM holdings WHERE id = ? AND user_id = ?", (holding_id, get_current_user_id()))
     if not h:
         raise HTTPException(404, "持仓不存在")
     execute("UPDATE holdings SET journal = ?, updated_at = datetime('now','localtime') WHERE id = ?",
@@ -106,9 +130,9 @@ def update_journal(holding_id: int, body: JournalBody):
 def get_holdings_with_pnl(portfolio_id: int | None = None):
     """持仓列表 + 实时盈亏（按资产类型分别计算）"""
     if portfolio_id:
-        rows = query_all("SELECT * FROM holdings WHERE user_id = 1 AND portfolio_id = ? ORDER BY id DESC", (portfolio_id,))
+        rows = query_all("SELECT * FROM holdings WHERE user_id = ? AND portfolio_id = ? ORDER BY id DESC", (get_current_user_id(), portfolio_id))
     else:
-        rows = query_all("SELECT * FROM holdings WHERE user_id = 1 ORDER BY id DESC")
+        rows = query_all("SELECT * FROM holdings WHERE user_id = ? ORDER BY id DESC", (get_current_user_id(),))
 
     results = []
     total_cost = 0.0
@@ -141,8 +165,8 @@ def get_holdings_with_pnl(portfolio_id: int | None = None):
                 item["est_label"] = nav_data["nav_date"]
                 shares = item.get("shares") or qty
                 item["market_value"] = nav_data["nav"] * shares
-                item["pnl"] = (nav_data["nav"] - cost) * shares
-                item["pnl_pct"] = (nav_data["nav"] / cost - 1) * 100 if cost > 0 else 0
+                item["pnl"] = round((nav_data["nav"] - cost) * shares, 2)
+                item["pnl_pct"] = round(item["pnl"] / (cost * shares) * 100, 2) if cost > 0 and shares > 0 else 0
                 item["today_pnl"] = nav_data["nav"] * shares * nav_data["est_change_pct"] / 100
                 item["cost_amount"] = cost * shares
         else:
@@ -150,14 +174,17 @@ def get_holdings_with_pnl(portfolio_id: int | None = None):
             mkt = get_market(item["stock_code"])
             q = _cached_quote(item["stock_code"], mkt)
             if q and "error" not in q:
-                item["stock_name"] = item["stock_name"] or q.get("name", "")
+                item["stock_name"] = q.get("name") or item["stock_name"]
                 item["current_price"] = q.get("price")
                 item["change_pct"] = q.get("change_pct")
                 item["market_value"] = (q.get("price") or cost) * qty
-                item["pnl"] = ((q.get("price") or cost) - cost) * qty
-                item["pnl_pct"] = (q.get("price") / cost - 1) * 100 if cost > 0 else 0
+                # 同花顺口径：浮动盈亏 - 预估卖出费用
+                gross_pnl = ((q.get("price") or cost) - cost) * qty
+                sell_fee = _estimate_sell_fee(item["market_value"], asset_type, item["stock_code"])
+                item["pnl"] = round(gross_pnl - sell_fee, 2)
+                item["pnl_pct"] = round(item["pnl"] / (cost * qty) * 100, 2) if cost > 0 and qty > 0 else 0
                 change = q.get("change") or 0
-                item["today_pnl"] = change * qty if change else 0
+                item["today_pnl"] = round(change * qty, 2) if change else 0
                 item["cost_amount"] = cost * qty
             else:
                 item["cost_amount"] = cost * qty
@@ -168,8 +195,9 @@ def get_holdings_with_pnl(portfolio_id: int | None = None):
 
         results.append(item)
 
-    total_pnl = total_value - total_cost
-    total_pnl_pct = (total_value / total_cost - 1) * 100 if total_cost > 0 else 0
+    # 汇总：使用逐项已扣预估卖出费的 PnL 求和
+    total_pnl = sum(r.get("pnl", 0) for r in results)
+    total_pnl_pct = round(total_pnl / total_cost * 100, 2) if total_cost > 0 else 0
 
     return {
         "holdings": results,
@@ -197,8 +225,9 @@ def get_portfolio_history():
     """获取组合资产走势数据：从第一笔交易至今的累计成本 + 当前市值"""
     buys = query_all(
         """SELECT traded_at, amount FROM transactions
-           WHERE user_id = 1 AND direction = 'buy'
-           ORDER BY traded_at ASC"""
+           WHERE user_id = ? AND direction = 'buy'
+           ORDER BY traded_at ASC""",
+        (get_current_user_id(),),
     )
     if not buys:
         return {"data": []}
@@ -218,7 +247,7 @@ def get_portfolio_history():
         data.append({"date": date, "cost": round(cumulative, 2)})
 
     # 最后一天加上当前市值
-    holdings = query_all("SELECT * FROM holdings WHERE user_id = 1")
+    holdings = query_all("SELECT * FROM holdings WHERE user_id = ?", (get_current_user_id(),))
     total_market_value = 0.0
     for h in holdings:
         at = h.get("asset_type") or detect_asset_type(h["stock_code"])
@@ -251,13 +280,14 @@ def get_xirr():
     """按持仓计算 XIRR 年化收益率（基于所有买入交易+当前市值）"""
     buys = query_all(
         """SELECT stock_code, stock_name, amount, traded_at FROM transactions
-           WHERE user_id = 1 AND direction = 'buy' ORDER BY traded_at ASC"""
+           WHERE user_id = ? AND direction = 'buy' ORDER BY traded_at ASC""",
+        (get_current_user_id(),),
     )
     if not buys:
         return {"total_xirr": None, "by_holding": []}
 
     # 获取当前市值（复用 get_holdings_with_pnl 的计算逻辑）
-    holdings = query_all("SELECT * FROM holdings WHERE user_id = 1")
+    holdings = query_all("SELECT * FROM holdings WHERE user_id = ?", (get_current_user_id(),))
     market_values = {}
     for h in holdings:
         at = h.get("asset_type") or detect_asset_type(h["stock_code"])
@@ -323,7 +353,7 @@ class AddLotBody(BaseModel):
 @router.get("/holdings/{holding_id}/lots")
 def get_holding_lots(holding_id: int):
     """获取某持仓的所有买入批次（从 transactions 表读取）"""
-    h = query_one("SELECT * FROM holdings WHERE id = ? AND user_id = 1", (holding_id,))
+    h = query_one("SELECT * FROM holdings WHERE id = ? AND user_id = ?", (holding_id, get_current_user_id()))
     if not h:
         raise HTTPException(404, "持仓不存在")
 
@@ -333,9 +363,9 @@ def get_holding_lots(holding_id: int):
 
     txs = query_all(
         """SELECT * FROM transactions
-           WHERE user_id = 1 AND stock_code = ? AND direction = 'buy'
+           WHERE user_id = ? AND stock_code = ? AND direction = 'buy'
            ORDER BY traded_at ASC""",
-        (h["stock_code"],),
+        (get_current_user_id(), h["stock_code"]),
     )
     # 如果没有交易记录（旧数据），把当前持仓作为首条
     if not txs:
@@ -385,7 +415,7 @@ def get_holding_lots(holding_id: int):
 @router.post("/holdings/{holding_id}/add-lot")
 def add_lot(holding_id: int, body: AddLotBody):
     """追加一笔买入，更新持仓加权成本"""
-    h = query_one("SELECT * FROM holdings WHERE id = ? AND user_id = 1", (holding_id,))
+    h = query_one("SELECT * FROM holdings WHERE id = ? AND user_id = ?", (holding_id, get_current_user_id()))
     if not h:
         raise HTTPException(404, "持仓不存在")
 
@@ -423,8 +453,8 @@ def add_lot(holding_id: int, body: AddLotBody):
     # 创建买入交易记录
     tx_result = execute(
         """INSERT INTO transactions (user_id, stock_code, stock_name, asset_type, direction, price, quantity, amount, fee, traded_at, note)
-           VALUES (1, ?, ?, ?, 'buy', ?, ?, ?, ?, ?, ?)""",
-        (h["stock_code"], h["stock_name"], at, price, qty, amount, fee, body.traded_at, body.note or "追加买入"),
+           VALUES (?, ?, ?, ?, 'buy', ?, ?, ?, ?, ?, ?)""",
+        (get_current_user_id(), h["stock_code"], h["stock_name"], at, price, qty, amount, fee, body.traded_at, body.note or "追加买入"),
     )
 
     # 更新持仓加权成本
@@ -473,7 +503,7 @@ class ImportLotsBody(BaseModel):
 @router.post("/holdings/{holding_id}/import-lots")
 def import_lots(holding_id: int, body: ImportLotsBody):
     """批量导入历史买入记录，更新加权成本"""
-    h = query_one("SELECT * FROM holdings WHERE id = ? AND user_id = 1", (holding_id,))
+    h = query_one("SELECT * FROM holdings WHERE id = ? AND user_id = ?", (holding_id, get_current_user_id()))
     if not h:
         raise HTTPException(404, "持仓不存在")
 
@@ -546,8 +576,8 @@ def import_lots(holding_id: int, body: ImportLotsBody):
     for p in parsed:
         statements.append((
             """INSERT INTO transactions (user_id, stock_code, stock_name, asset_type, direction, price, quantity, amount, fee, traded_at, note)
-               VALUES (1, ?, ?, ?, 'buy', ?, ?, ?, ?, ?, ?)""",
-            (h["stock_code"], h["stock_name"], at, p["price"], p["quantity"], p["amount"], p.get("fee", 0), p["traded_at"], body.note),
+               VALUES (?, ?, ?, ?, 'buy', ?, ?, ?, ?, ?, ?)""",
+            (get_current_user_id(), h["stock_code"], h["stock_name"], at, p["price"], p["quantity"], p["amount"], p.get("fee", 0), p["traded_at"], body.note),
         ))
 
     if is_fund:
@@ -582,14 +612,14 @@ class PortfolioBody(BaseModel):
 
 @router.get("/portfolios")
 def get_portfolios():
-    return query_all("SELECT * FROM portfolios WHERE user_id = 1 ORDER BY id")
+    return query_all("SELECT * FROM portfolios WHERE user_id = ? ORDER BY id", (get_current_user_id(),))
 
 
 @router.post("/portfolios")
 def add_portfolio(body: PortfolioBody):
     result = execute(
-        "INSERT INTO portfolios (user_id, name, type) VALUES (1, ?, ?)",
-        (body.name, body.type),
+        "INSERT INTO portfolios (user_id, name, type) VALUES (?, ?, ?)",
+        (get_current_user_id(), body.name, body.type),
     )
     return {"id": result["lastrowid"], "message": "创建成功"}
 
@@ -597,8 +627,8 @@ def add_portfolio(body: PortfolioBody):
 @router.delete("/portfolios/{pf_id}")
 def delete_portfolio(pf_id: int):
     # 将该组合下的持仓设为未分类
-    execute("UPDATE holdings SET portfolio_id = NULL WHERE portfolio_id = ? AND user_id = 1", (pf_id,))
-    execute("DELETE FROM portfolios WHERE id = ? AND user_id = 1", (pf_id,))
+    execute("UPDATE holdings SET portfolio_id = NULL WHERE portfolio_id = ? AND user_id = ?", (pf_id, get_current_user_id()))
+    execute("DELETE FROM portfolios WHERE id = ? AND user_id = ?", (pf_id, get_current_user_id()))
     return {"message": "已删除"}
 
 
@@ -606,7 +636,7 @@ def delete_portfolio(pf_id: int):
 
 @router.get("/watchlist")
 def get_watchlist():
-    return query_all("SELECT * FROM watchlist WHERE user_id = 1 ORDER BY added_at DESC")
+    return query_all("SELECT * FROM watchlist WHERE user_id = ? ORDER BY added_at DESC", (get_current_user_id(),))
 
 
 class WatchlistBody(BaseModel):
@@ -620,15 +650,15 @@ class WatchlistBody(BaseModel):
 def add_watchlist(body: WatchlistBody):
     at = body.asset_type or detect_asset_type(body.stock_code)
     result = execute(
-        "INSERT OR IGNORE INTO watchlist (user_id, stock_code, stock_name, market, asset_type) VALUES (1, ?, ?, ?, ?)",
-        (body.stock_code, body.stock_name, body.market, at),
+        "INSERT OR IGNORE INTO watchlist (user_id, stock_code, stock_name, market, asset_type) VALUES (?, ?, ?, ?, ?)",
+        (get_current_user_id(), body.stock_code, body.stock_name, body.market, at),
     )
     return {"id": result["lastrowid"], "message": "添加成功"}
 
 
 @router.delete("/watchlist/{item_id}")
 def delete_watchlist(item_id: int):
-    execute("DELETE FROM watchlist WHERE id = ? AND user_id = 1", (item_id,))
+    execute("DELETE FROM watchlist WHERE id = ? AND user_id = ?", (item_id, get_current_user_id()))
     return {"message": "已移除"}
 
 
@@ -642,8 +672,9 @@ def recalc_fees_and_holdings():
     cfg = get_fee_config()
     buys = query_all(
         """SELECT * FROM transactions
-           WHERE user_id = 1 AND direction = 'buy'
-           ORDER BY traded_at ASC"""
+           WHERE user_id = ? AND direction = 'buy'
+           ORDER BY traded_at ASC""",
+        (get_current_user_id(),),
     )
 
     updated = []
@@ -669,15 +700,15 @@ def recalc_fees_and_holdings():
 
     # 重算所有持仓成本
     holdings_updated = []
-    holdings = query_all("SELECT * FROM holdings WHERE user_id = 1")
+    holdings = query_all("SELECT * FROM holdings WHERE user_id = ?", (get_current_user_id(),))
     for h in holdings:
         at = h.get("asset_type") or detect_asset_type(h["stock_code"])
         is_fund = (at == "fund")
         buys_for_code = query_all(
             """SELECT * FROM transactions
-               WHERE user_id = 1 AND stock_code = ? AND direction = 'buy'
+               WHERE user_id = ? AND stock_code = ? AND direction = 'buy'
                ORDER BY traded_at ASC""",
-            (h["stock_code"],),
+            (get_current_user_id(), h["stock_code"]),
         )
         if buys_for_code:
             total_amount = sum(t["amount"] for t in buys_for_code)
@@ -713,3 +744,106 @@ def recalc_fees_and_holdings():
         "holdings_details": holdings_updated,
     }
 
+
+# ═══════════════════════════════════════════════════════════
+# 持仓详情 → K 线图表数据
+# ═══════════════════════════════════════════════════════════
+
+_PERIOD_DAYS = {"5d": 5, "1m": 22, "3m": 66, "6m": 130}
+
+
+def _agg_bars(dates, opens, highs, lows, closes, volumes, freq):
+    if freq not in ("week", "month"):
+        return dates, opens, highs, lows, closes, volumes
+    groups = {}
+    for i in range(len(dates)):
+        if freq == "week":
+            try:
+                d = datetime.strptime(dates[i], "%Y-%m-%d")
+                key = f"{d.year}-W{d.isocalendar()[1]:02d}"
+            except Exception:
+                key = dates[i][:7] if len(dates[i]) >= 7 else dates[i]
+        else:
+            key = dates[i][:7]
+        if key not in groups:
+            groups[key] = {"o": opens[i], "h": highs[i], "l": lows[i],
+                          "c": closes[i], "v": volumes[i], "d": dates[i]}
+        else:
+            g = groups[key]
+            g["h"] = max(g["h"], highs[i])
+            g["l"] = min(g["l"], lows[i])
+            g["c"] = closes[i]
+            g["v"] += volumes[i]
+            g["d"] = dates[i]
+    keys = sorted(groups.keys())
+    return ([groups[k]["d"] for k in keys], [groups[k]["o"] for k in keys],
+            [groups[k]["h"] for k in keys], [groups[k]["l"] for k in keys],
+            [groups[k]["c"] for k in keys], [groups[k]["v"] for k in keys])
+
+
+def _sma(data, n):
+    if len(data) < n:
+        return [None] * len(data)
+    return [None] * (n - 1) + [round(sum(data[i - n + 1:i + 1]) / n, 2) for i in range(n - 1, len(data))]
+
+
+@router.get("/kline/{code}")
+def get_kline_chart(code: str, period: str = "1m"):
+    """K 线数据（持仓详情抽屉使用）
+    period: 5d / 1m(日K) / 3m(周K) / 6m(月K)
+    """
+    import json as _json
+    import urllib.request as _req
+
+    days = _PERIOD_DAYS.get(period, 22)
+
+    # 直连腾讯 API，绕过缓存
+    c = code.strip()
+    sym = f"sh{c}" if c.startswith(("51","56","58","60","68")) else f"sz{c}"
+    url = f"https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param={sym},day,,,{max(days+60,120)},qfq"
+    try:
+        raw = _req.urlopen(_req.Request(url, headers={"User-Agent": "Mozilla/5.0"}), timeout=10).read().decode("utf-8")
+        data = _json.loads(raw)
+        klines = data.get("data", {}).get(sym, {}).get("qfqday", [])
+    except Exception as e:
+        raise HTTPException(500, f"获取K线失败: {e}")
+
+    if not klines:
+        raise HTTPException(500, "无K线数据")
+
+    dates = [k[0] for k in klines]
+    opens = [float(k[1]) for k in klines]
+    closes = [float(k[2]) for k in klines]
+    highs = [float(k[3]) for k in klines]
+    lows = [float(k[4]) for k in klines]
+    volumes = [float(k[5]) for k in klines]
+
+    if not opens:
+        opens = [closes[0]] + closes[:-1]
+        opens = opens[:len(closes)]
+    if not volumes or all(v == 0 for v in volumes):
+        volumes = [0] * len(closes)
+
+    freq = {"3m": "week", "6m": "month"}.get(period)
+    if freq:
+        dates, opens, highs, lows, closes, volumes = _agg_bars(
+            dates, opens, highs, lows, closes, volumes, freq)
+
+    n = min(len(dates), days + 10)
+    dates = dates[-n:]
+    opens = opens[-n:]
+    highs = highs[-n:]
+    lows = lows[-n:]
+    closes = closes[-n:]
+    volumes = volumes[-n:]
+
+    ma5 = _sma(closes, 5)[-n:]
+    ma10 = _sma(closes, 10)[-n:]
+    ma20 = _sma(closes, 20)[-n:]
+
+    return {
+        "code": code, "period": period,
+        "dates": dates, "opens": opens, "highs": highs, "lows": lows,
+        "closes": closes, "volumes": volumes,
+        "ma5": ma5, "ma10": ma10, "ma20": ma20,
+    }
