@@ -1,4 +1,4 @@
-"use client"
+﻿"use client"
 
 import { useEffect, useRef } from "react"
 import {
@@ -65,7 +65,14 @@ export function KlineChart({ rawData, height = 260 }: KlineChartProps) {
   useEffect(() => {
     if (!containerRef.current) return
 
-    const chart = createChart(containerRef.current, {
+    // Ensure container has explicit dimensions before creating chart
+    const container = containerRef.current
+    const parent = container.parentElement
+    if (parent) {
+      parent.style.overflow = "hidden"
+    }
+
+    const chart = createChart(container, {
       height,
       layout: {
         background: { color: "transparent" },
@@ -94,8 +101,8 @@ export function KlineChart({ rawData, height = 260 }: KlineChartProps) {
           return String(time).slice(5)
         },
       },
-      handleScroll: true,
-      handleScale: true,
+      handleScroll: false,
+      handleScale: false,
     })
     chartRef.current = chart
 
@@ -165,7 +172,27 @@ export function KlineChart({ rawData, height = 260 }: KlineChartProps) {
     seriesRef.current.ma20.setData(ma20Data)
 
     chartRef.current?.timeScale().fitContent()
+    // Ensure chart resizes to container width — critical when Drawer animation
+    // causes container to go from 0-width → full-width
+    if (containerRef.current) {
+      const w = containerRef.current.clientWidth
+      if (w > 0) {
+        chartRef.current?.resize(w, height)
+      }
+    }
   }, [rawData])
+
+  // 3. ResizeObserver to handle Drawer open/close animations
+  useEffect(() => {
+    if (!containerRef.current || !chartRef.current) return
+    const observer = new ResizeObserver(() => {
+      if (containerRef.current && containerRef.current.clientWidth > 0) {
+        chartRef.current?.resize(containerRef.current.clientWidth, height)
+      }
+    })
+    observer.observe(containerRef.current)
+    return () => observer.disconnect()
+  }, [height])
 
   return <div ref={containerRef} style={{ width: "100%", height }} />
 }

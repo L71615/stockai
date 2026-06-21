@@ -75,8 +75,12 @@ export default function TransactionsPage() {
 
   const deleteTxn = async (id: number) => {
     if (!confirm("确认删除？")) return
-    await apiPost(`/api/stocks/transactions/${id}`, {}, "DELETE")
-    fetchTxns()
+    try {
+      await apiPost(`/api/stocks/transactions/${id}`, {}, "DELETE")
+      fetchTxns()
+    } catch (err) {
+      alert("删除失败：" + (err instanceof Error ? err.message : "未知错误"))
+    }
   }
 
   const aiReview = async () => {

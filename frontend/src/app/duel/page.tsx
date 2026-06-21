@@ -59,6 +59,16 @@ export default function DuelPage() {
   const [rebalancing, setRebalancing] = useState(false)
   const [expandedPlayer, setExpandedPlayer] = useState<string | null>(null)
   const [historyOpen, setHistoryOpen] = useState(false)
+  // Provider selection: 至少 2 个不同 AI 对打
+  const AVAILABLE_PROVIDERS = [
+    { key: "deepseek", label: "DeepSeek" },
+    { key: "minimax", label: "MiniMax" },
+    { key: "openai", label: "OpenAI" },
+    { key: "claude", label: "Claude" },
+    { key: "xiaomi", label: "小米" },
+    { key: "custom", label: "自定义" },
+  ]
+  const [duelProviders, setDuelProviders] = useState<string[]>(["deepseek", "minimax"]) // 至少 2 个
 
   const fetchStatus = useCallback(async () => {
     try {
@@ -82,10 +92,16 @@ export default function DuelPage() {
   }, [fetchStatus, router])
 
   const startDuel = async () => {
+    // 验证至少 2 个不同供应商
+    const uniqueProviders = [...new Set(duelProviders)].filter(Boolean)
+    if (uniqueProviders.length < 2) {
+      alert("请至少选择 2 个不同的 AI 供应商进行对战")
+      return
+    }
     setStarting(true)
     try {
-      const result = await apiPost<any>("/api/quant/ai-duel/start", {
-        providers: [],  // 空 = 用设置页默认供应商
+      await apiPost<any>("/api/quant/ai-duel/start", {
+        providers: uniqueProviders,
         period_days: 7,
         capital: 100000,
       })
@@ -193,7 +209,7 @@ export default function DuelPage() {
                         <CardContent className="space-y-2">
                           {/* 收益率 */}
                           <div className="flex items-baseline justify-between">
-                            <span className="text-2xl font-mono font-bold tabular-nums">
+                            <span className="text-xl sm:text-2xl font-mono font-bold tabular-nums">
                               {formatMoney(player.total_value)}
                             </span>
                             <span className={cn(
@@ -250,13 +266,65 @@ export default function DuelPage() {
           {/* ── No Active Duel ── */}
           {!loading && !activeRound && (
             <Card>
-              <CardContent className="py-12 text-center space-y-3">
+              <CardContent className="py-8 text-center space-y-4">
                 <IconSwords className="size-12 mx-auto text-muted-foreground/30" />
-                <p className="text-sm text-muted-foreground">暂无进行中的 AI 对战</p>
-                <p className="text-xs text-muted-foreground">
-                  6 个 AI 投资人格各拿 ¥10 万虚拟资金，独立选股对战
-                </p>
-                <Button onClick={startDuel} disabled={starting} variant="outline">
+                <div>
+                  <p className="text-sm text-muted-foreground">暂无进行中的 AI 对战</p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    6 个 AI 投资人格 × 多个供应商，独立选股对战
+                  </p>
+                </div>
+
+                {/* Provider 选择 */}
+                <div className="max-w-md mx-auto space-y-3 text-left">
+                  <p className="text-xs font-medium text-muted-foreground">选择对战供应商（至少 2 个不同 AI）</p>
+                  <div className="grid grid-cols-2 gap-2">
+                    {duelProviders.map((provider, i) => (
+                      <div key={i} className="flex items-center gap-1.5">
+                        <select
+                          value={provider}
+                          onChange={(e) => {
+                            const next = [...duelProviders]
+                            next[i] = e.target.value
+                            setDuelProviders(next)
+                          }}
+                          className="h-8 flex-1 rounded-none border border-input bg-background text-xs px-2"
+                        >
+                          <option value="">-- 不选 --</option>
+                          {AVAILABLE_PROVIDERS.map((ap) => (
+                            <option key={ap.key} value={ap.key}>{ap.label}</option>
+                          ))}
+                        </select>
+                        {duelProviders.length > 2 && (
+                          <button
+                            onClick={() => setDuelProviders(duelProviders.filter((_, j) => j !== i))}
+                            className="text-xs text-muted-foreground hover:text-red-400 shrink-0"
+                          >
+                            ✕
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                  {duelProviders.length < 6 && (
+                    <button
+                      onClick={() => setDuelProviders([...duelProviders, ""])}
+                      className="text-[10px] text-primary hover:underline"
+                    >
+                      + 添加更多供应商
+                    </button>
+                  )}
+                  <p className="text-[10px] text-muted-foreground">
+                    6 个投资人格将均分给所选供应商（{" "}
+                    {duelProviders.filter(Boolean).length >= 2
+                      ? `每个供应商管理 ${Math.floor(6 / duelProviders.filter(Boolean).length)} 个人格`
+                      : "至少需要 2 个"}
+                    ）
+                  </p>
+                </div>
+
+                <Button onClick={startDuel} disabled={starting}>
+                  <IconSwords className="size-4 mr-1" />
                   {starting ? "开局中..." : "立即开局"}
                 </Button>
               </CardContent>
@@ -270,7 +338,7 @@ export default function DuelPage() {
                 <CardTitle className="text-sm">对战规则</CardTitle>
               </CardHeader>
               <CardContent>
-                <div className="grid grid-cols-2 md:grid-cols-3 gap-2 text-xs text-muted-foreground">
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2 text-xs text-muted-foreground">
                   {Object.entries(PERSONAS).filter(([k]) => !["价值", "成长", "低波"].includes(k)).map(([key, p]) => (
                     <div key={key} className="flex items-center gap-1.5">
                       <span className={cn("font-medium", p.color)}>{p.name}</span>

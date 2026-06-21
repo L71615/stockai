@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Separator } from "@/components/ui/separator"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
 import { apiGet, apiPost, isAuthenticated, clearAuth } from "@/lib/auth"
 import { IconLogout, IconMail } from "@tabler/icons-react"
@@ -23,9 +24,20 @@ const PROVIDERS: AIProvider[] = [
   { key: "custom", label: "自定义 OpenAI 兼容", api_key: "", model: "", base_url: "" },
 ]
 
+// AI 功能说明——所有功能共用默认供应商
+const AI_FEATURES = [
+  "AI 选股（二次筛选 + 5 Agent 交叉验证）",
+  "AI 复盘（结构化投资复盘报告）",
+  "AI 对抗（6 人格选股对战）",
+  "AI 对话（投资助手聊天）",
+  "AI 盯盘简报（异动推送摘要）",
+  "大佬观点日报（社区+新闻情绪分析）",
+]
+
 export default function SettingsPage() {
   const router = useRouter()
   const [providers, setProviders] = useState<AIProvider[]>(PROVIDERS)
+  const [defaultProvider, setDefaultProvider] = useState("deepseek")
   const [smtp, setSmtp] = useState({ host: "", port: "465", user: "", password: "", sender: "" })
   const [feeRate, setFeeRate] = useState("0.025")
   const [feeMin, setFeeMin] = useState("5")
@@ -40,11 +52,13 @@ export default function SettingsPage() {
         apiGet<{ host?: string; port?: string; user?: string; sender?: string }>("/api/settings/smtp").catch(() => ({})),
       ])
       if (ai && typeof ai === "object") {
+        const cfg = ai as Record<string, { api_key?: string; model?: string; base_url?: string }> & { default_provider?: string }
+        setDefaultProvider(cfg.default_provider || "deepseek")
         setProviders((prev) => prev.map((p) => ({
           ...p,
-          api_key: ai[p.key]?.api_key || "",
-          model: ai[p.key]?.model || p.model,
-          base_url: ai[p.key]?.base_url || p.base_url,
+          api_key: cfg[p.key]?.api_key || "",
+          model: cfg[p.key]?.model || p.model,
+          base_url: cfg[p.key]?.base_url || p.base_url,
         })))
       }
       if (smtpData) setSmtp((prev) => ({ ...prev, ...smtpData, password: "" }))
@@ -65,8 +79,9 @@ export default function SettingsPage() {
 
   const saveAI = async () => {
     setSaving(true); setMsg("")
-    const configs: Record<string, { api_key: string; model: string; base_url: string }> = {}
+    const configs: Record<string, { api_key?: string; model?: string; base_url?: string }> = {}
     providers.forEach((p) => { configs[p.key] = { api_key: p.api_key, model: p.model, base_url: p.base_url } })
+    ;(configs as any).default_provider = defaultProvider
     try {
       await apiPost("/api/settings/ai-configs", configs, "PUT")
       setMsg("AI 配置已保存")
@@ -101,9 +116,30 @@ export default function SettingsPage() {
         <Card>
           <CardHeader>
             <CardTitle className="text-sm">AI 模型配置</CardTitle>
-            <CardDescription>配置各 AI 供应商的 API Key 和模型</CardDescription>
+            <CardDescription>配置各 AI 供应商的 API Key。选择一个默认供应商，所有 AI 功能将共用它。</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
+            {/* 默认供应商选择 */}
+            <div className="border border-purple-500/20 bg-purple-500/5 rounded-none p-3 space-y-2">
+              <p className="text-xs font-medium text-purple-400">默认供应商</p>
+              <Select value={defaultProvider} onValueChange={setDefaultProvider}>
+                <SelectTrigger className="h-8 text-xs">
+                  <SelectValue placeholder="选择默认 AI 供应商" />
+                </SelectTrigger>
+                <SelectContent className="max-h-48">
+                  {providers.map((p) => (
+                    <SelectItem key={p.key} value={p.key}>{p.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-[10px] text-muted-foreground">
+                以下功能均使用此默认供应商：
+              </p>
+              <ul className="text-[10px] text-muted-foreground list-disc list-inside space-y-0.5">
+                {AI_FEATURES.map((f, i) => <li key={i}>{f}</li>)}
+              </ul>
+            </div>
+
             {loading ? (
               <div className="space-y-2"><Skeleton className="h-12 w-full" /><Skeleton className="h-12 w-full" /></div>
             ) : (

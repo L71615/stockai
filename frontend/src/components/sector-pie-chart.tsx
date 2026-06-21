@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { Pie, PieChart, Label, Cell, Tooltip } from "recharts"
+import { Pie, PieChart, Label, Cell } from "recharts"
 
 import {
   Card,
@@ -29,20 +29,19 @@ interface SectorPieChartProps {
   totalValue: number
 }
 
-// 暗色主题友好的行业配色
 const COLORS = [
-  "#6366f1", // indigo
-  "#22d3ee", // cyan
-  "#f59e0b", // amber
-  "#a78bfa", // violet
-  "#34d399", // emerald
-  "#f472b6", // pink
-  "#60a5fa", // blue
-  "#fb923c", // orange
-  "#4ade80", // green
-  "#e879f9", // fuchsia
-  "#38bdf8", // sky
-  "#fbbf24", // yellow
+  "#6366f1",
+  "#22d3ee",
+  "#f59e0b",
+  "#a78bfa",
+  "#34d399",
+  "#f472b6",
+  "#60a5fa",
+  "#fb923c",
+  "#4ade80",
+  "#e879f9",
+  "#38bdf8",
+  "#fbbf24",
 ]
 
 const chartConfig = {
@@ -148,7 +147,6 @@ export function SectorPieChart({ data, totalValue }: SectorPieChartProps) {
           </PieChart>
         </ChartContainer>
 
-        {/* 图例列表 */}
         <div className="mt-4 flex flex-wrap gap-x-4 gap-y-2 justify-center">
           {data.map((entry, index) => (
             <div

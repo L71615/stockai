@@ -57,7 +57,7 @@ const navGroups = [
       { id: "quant", label: "量化分析", icon: IconChartScatter, url: "/quant" },
       { id: "screener", label: "AI 选股", icon: IconSearch, url: "/screener" },
       { id: "duel", label: "AI 对抗", icon: IconSwords, url: "/duel" },
-      { id: "kol", label: "大佬观点", icon: IconUsers, url: "/kol" },
+      { id: "kol", label: "大V观点", icon: IconUsers, url: "/kol" },
     ],
   },
   {

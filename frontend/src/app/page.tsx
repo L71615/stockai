@@ -1,96 +1,95 @@
 "use client"
 
-import { useEffect, useState, useCallback } from "react"
+import { useState } from "react"
 import { useRouter } from "next/navigation"
 import { SiteHeader } from "@/components/site-header"
 import { ChartAreaInteractive } from "@/components/chart-area-interactive"
 import { DataTable } from "@/components/data-table"
-import { Card, CardAction, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card, CardAction, CardContent, CardFooter, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
 import { cn } from "@/lib/utils"
-import { apiGet, apiPost, isAuthenticated } from "@/lib/auth"
-import { IconTrendingUp, IconTrendingDown, IconRefresh, IconBrain } from "@tabler/icons-react"
+import { usePortfolio, usePortfolioHistory, useDiversification } from "@/hooks/use-portfolio"
+import { useLatestReview } from "@/hooks/use-review"
+import { apiPost } from "@/lib/auth"
+import type { PortfolioData, PortfolioHolding } from "@/lib/api-types"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
+import { IconTrendingUp, IconTrendingDown, IconRefresh, IconBrain, IconChartBar } from "@tabler/icons-react"
 import { SectorPieChart } from "@/components/sector-pie-chart"
 
-interface HoldingItem {
-  id: number; stock_code: string; stock_name: string; asset_type: string
-  quantity: number; cost_price: number; current_price: number | null
-  market_value: number; pnl: number; pnl_pct: number; today_pnl: number
-  change_pct?: number
-}
-
-interface SummaryData {
-  total_cost: number; total_value: number; total_pnl: number
-  total_pnl_pct: number; today_pnl: number
-}
-
-interface SectorItem {
-  name: string; count: number; market_value: number; pct: number
-}
-
-interface DiversificationData {
-  by_industry: SectorItem[]
-  by_market: SectorItem[]
-  risk_level: string
-  max_single_pct: number
-}
+type HomeHolding = PortfolioHolding
 
 export default function Home() {
   const router = useRouter()
-  const [holdings, setHoldings] = useState<HoldingItem[]>([])
-  const [summary, setSummary] = useState<SummaryData | null>(null)
-  const [aiHeadline, setAiHeadline] = useState("")
-  const [diversification, setDiversification] = useState<DiversificationData | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [refreshing, setRefreshing] = useState(false)
-  const [lastUpdate, setLastUpdate] = useState("")
-  const [history, setHistory] = useState<{ date: string; cost: number; value?: number }[]>([])
 
-  const fetchData = useCallback(async () => {
+  const { data: portfolio, error: portfolioError, isLoading, isValidating, mutate } = usePortfolio()
+  const { data: reviewData } = useLatestReview()
+  const { data: diversification } = useDiversification()
+  const { data: historyData } = usePortfolioHistory()
+
+  const holdings: HomeHolding[] = Array.isArray(portfolio?.holdings)
+    ? (portfolio.holdings as unknown as HomeHolding[])
+    : []
+  const summary = portfolio?.summary ?? null
+  const aiHeadline = Array.isArray(reviewData) && reviewData[0]?.ai_headline ? reviewData[0].ai_headline : ""
+  const history = historyData?.data ?? []
+  const portfolioErrorMessage = portfolioError instanceof Error
+    ? portfolioError.message
+    : portfolioError
+      ? "持仓接口请求失败"
+      : ""
+
+  const refreshing = isValidating
+  const [lastRefreshAt, setLastRefreshAt] = useState("")
+  const [deleting, setDeleting] = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState<{ holdingId: number; code: string; name: string } | null>(null)
+  const displayUpdateTime = lastRefreshAt || (!isLoading && portfolio ? "刚刚" : "")
+
+  const refresh = () => {
+    setLastRefreshAt(new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit" }))
+    mutate()
+  }
+
+  const handleDelete = async () => {
+    if (!deleteTarget) return
+    setDeleting(true)
     try {
-      const data = await apiGet<{ holdings: HoldingItem[]; summary: SummaryData }>("/api/stocks/holdings/with-pnl")
-      if (data) {
-        setHoldings(Array.isArray(data.holdings) ? data.holdings : [])
-        setSummary(data.summary || null)
-      }
-      // Try getting AI insight
-      try {
-        const revs = await apiGet<{ ai_headline?: string }[]>("/api/stocks/reviews?limit=1")
-        if (Array.isArray(revs) && revs.length > 0 && revs[0].ai_headline) {
-          setAiHeadline(revs[0].ai_headline)
-        }
-      } catch { /* optional */ }
-      // Fetch diversification data
-      try {
-        const div = await apiGet<DiversificationData>("/api/stocks/diversification")
-        if (div) setDiversification(div)
-      } catch { /* optional */ }
-      // Fetch portfolio history for chart
-      try {
-        const hist = await apiGet<{ data: { date: string; cost: number; value?: number }[] }>("/api/stocks/holdings/history")
-        if (hist?.data) setHistory(hist.data)
-      } catch { /* optional */ }
-    } catch { /* */ }
-    finally { setLoading(false); setRefreshing(false) }
-    setLastUpdate(new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit" }))
-  }, [])
+      await apiPost(`/api/stocks/holdings/${deleteTarget.holdingId}`, undefined, "DELETE")
+      mutate(
+        (current: PortfolioData | undefined) => {
+          if (!current) return current
+          return {
+            ...current,
+            holdings: (current.holdings as any[]).filter((h: any) => h.id !== deleteTarget.holdingId),
+            summary: {
+              ...current.summary,
+              total_cost: 0,
+            },
+          }
+        },
+        { revalidate: true }
+      )
+    } catch (e: any) {
+      alert(`删除失败: ${e.message}`)
+    } finally {
+      setDeleting(false)
+      setDeleteTarget(null)
+    }
+  }
 
-  useEffect(() => {
-    if (!isAuthenticated()) { router.push("/login"); return }
-    fetchData()
-    const timer = setInterval(fetchData, 30000)
-    return () => clearInterval(timer)
-  }, [fetchData, router])
-
-  const refresh = () => { setRefreshing(true); fetchData() }
-
-  // Helper: decimal places for price display
   const decimals = (assetType: string) => assetType === "fund" ? 4 : 3
 
-  // Convert holdings to DataTable format
-  const tableData = holdings.map((h, i) => ({
-    id: i + 1,
+  const tableData = holdings.map((h) => ({
+    id: h.id,
     code: h.stock_code,
     name: h.stock_name,
     shares: `${h.quantity}${h.asset_type === "fund" ? "份" : "股"}`,
@@ -98,10 +97,12 @@ export default function Home() {
     cost: `¥ ${Number(h.cost_price).toFixed(decimals(h.asset_type))}`,
     pnl: h.pnl != null ? `${h.pnl >= 0 ? "+" : ""}¥ ${Number(h.pnl).toFixed(2)}` : "—",
     pnlPct: h.pnl_pct != null ? `${h.pnl_pct >= 0 ? "+" : ""}${Number(h.pnl_pct).toFixed(2)}%` : "—",
+    holdingId: h.id,
   }))
 
   const upCount = holdings.filter((h) => (h.pnl || 0) > 0).length
   const downCount = holdings.filter((h) => (h.pnl || 0) < 0).length
+  const holdingTypes = holdings.map((h) => h.asset_type).filter((t, i, a) => a.indexOf(t) === i).join(" / ") || "--"
 
   return (
     <>
@@ -109,17 +110,32 @@ export default function Home() {
       <div className="flex flex-1 flex-col">
         <div className="@container/main flex flex-1 flex-col gap-2">
           <div className="flex flex-col gap-4 py-4 md:gap-6 md:py-6">
-            {/* KPI Cards */}
-            {loading ? (
+            {isLoading ? (
               <div className="grid grid-cols-1 gap-4 px-4 lg:px-6 @xl/main:grid-cols-2 @5xl/main:grid-cols-4">
                 {[1, 2, 3, 4].map((i) => <Skeleton key={i} className="h-[120px]" />)}
+              </div>
+            ) : portfolioErrorMessage ? (
+              <div className="px-4 lg:px-6">
+                <Card className="border-amber-500/40 bg-amber-500/5">
+                  <CardContent className="space-y-2 py-6">
+                    <p className="text-sm font-medium text-amber-500">持仓数据加载失败</p>
+                    <p className="text-sm text-muted-foreground">
+                      前端运行在 <span className="font-mono">3001</span>，持仓数据通过后端 <span className="font-mono">3000</span> 的
+                      <span className="font-mono">/api/stocks/holdings/with-pnl</span> 获取。
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      当前请求失败：{portfolioErrorMessage}。如果你是本地启动，请先确认后端已经在 <span className="font-mono">3000</span> 端口运行，
+                      或者直接使用项目根目录的 <span className="font-mono">start.bat</span> 同时启动前后端。
+                    </p>
+                  </CardContent>
+                </Card>
               </div>
             ) : summary ? (
               <div className="grid grid-cols-1 gap-4 px-4 *:data-[slot=card]:bg-gradient-to-t *:data-[slot=card]:from-primary/5 *:data-[slot=card]:to-card *:data-[slot=card]:shadow-xs lg:px-6 @xl/main:grid-cols-2 @5xl/main:grid-cols-4 dark:*:data-[slot=card]:bg-card">
                 <Card className="@container/card">
                   <CardHeader>
                     <CardDescription>总资产</CardDescription>
-                    <CardTitle className="text-2xl font-semibold tabular-nums @[250px]/card:text-3xl font-mono">
+                    <CardTitle className="font-mono text-2xl font-semibold tabular-nums @[250px]/card:text-3xl">
                       ¥ {Number(summary.total_value).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </CardTitle>
                     <CardAction>
@@ -142,15 +158,17 @@ export default function Home() {
                 <Card className="@container/card">
                   <CardHeader>
                     <CardDescription>今日盈亏</CardDescription>
-                    <CardTitle className={cn("text-2xl font-semibold tabular-nums @[250px]/card:text-3xl font-mono",
-                      (summary.today_pnl || 0) >= 0 ? "text-red-500" : "text-emerald-500")}>
+                    <CardTitle className={cn(
+                      "font-mono text-2xl font-semibold tabular-nums @[250px]/card:text-3xl",
+                      (summary.today_pnl || 0) >= 0 ? "text-red-500" : "text-emerald-500"
+                    )}>
                       {summary.today_pnl >= 0 ? "+" : ""}¥ {Number(summary.today_pnl || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </CardTitle>
                   </CardHeader>
                   <CardFooter className="flex-col items-start gap-1.5 text-sm">
                     <div className="flex items-center gap-2 text-xs text-muted-foreground">
                       <span className="inline-block size-1.5 rounded-full bg-emerald-500"></span>
-                      实时数据 · {lastUpdate || "加载中"}
+                      实时数据 · {displayUpdateTime || "加载中"}
                     </div>
                   </CardFooter>
                 </Card>
@@ -158,12 +176,12 @@ export default function Home() {
                 <Card className="@container/card">
                   <CardHeader>
                     <CardDescription>持仓数量</CardDescription>
-                    <CardTitle className="text-2xl font-semibold tabular-nums @[250px]/card:text-3xl font-mono">
-                      {holdings.length}<span className="text-base text-muted-foreground font-normal"> 只</span>
+                    <CardTitle className="font-mono text-2xl font-semibold tabular-nums @[250px]/card:text-3xl">
+                      {holdings.length}<span className="text-base font-normal text-muted-foreground"> 只</span>
                     </CardTitle>
                     <CardAction>
                       <Badge variant="outline" className={upCount >= downCount ? "text-red-500 border-red-500/20 bg-red-500/5" : "text-emerald-500 border-emerald-500/20 bg-emerald-500/5"}>
-                        {upCount} 盈 {downCount} 亏
+                        {upCount} 盈 / {downCount} 亏
                       </Badge>
                     </CardAction>
                   </CardHeader>
@@ -174,9 +192,9 @@ export default function Home() {
 
                 <Card className="@container/card">
                   <CardHeader>
-                    <CardDescription>持仓占比</CardDescription>
-                    <CardTitle className="text-2xl font-semibold tabular-nums @[250px]/card:text-3xl font-mono">
-                      {summary.total_cost > 0 ? `${Math.round((summary.total_value / summary.total_cost - 1) * 100)}%` : "--"}
+                    <CardDescription>总收益率</CardDescription>
+                    <CardTitle className="font-mono text-2xl font-semibold tabular-nums @[250px]/card:text-3xl">
+                      {summary.total_pnl_pct != null ? `${summary.total_pnl_pct >= 0 ? "+" : ""}${summary.total_pnl_pct}%` : "--"}
                     </CardTitle>
                     <CardAction>
                       <Badge variant="outline" className={summary.total_pnl >= 0 ? "text-red-500 border-red-500/20 bg-red-500/5" : "text-emerald-500 border-emerald-500/20 bg-emerald-500/5"}>
@@ -185,9 +203,7 @@ export default function Home() {
                     </CardAction>
                   </CardHeader>
                   <CardFooter className="flex-col items-start gap-1.5 text-sm">
-                    <div className="text-muted-foreground">
-                      持有 {holdings.map((h) => h.asset_type).filter((t, i, a) => a.indexOf(t) === i).join(" / ") || "--"}
-                    </div>
+                    <div className="text-muted-foreground">持有 {holdingTypes}</div>
                   </CardFooter>
                 </Card>
               </div>
@@ -196,21 +212,20 @@ export default function Home() {
                 <Card>
                   <CardContent className="py-12 text-center">
                     <p className="text-sm text-muted-foreground">暂无持仓数据</p>
-                    <p className="text-xs text-muted-foreground mt-1">点击"交易记录"添加第一笔持仓</p>
+                    <p className="mt-1 text-xs text-muted-foreground">点击“交易记录”添加第一笔持仓</p>
                   </CardContent>
                 </Card>
               </div>
             )}
 
-            {/* AI Insight */}
             {aiHeadline && (
               <div className="px-4 lg:px-6">
                 <Card className="border-l-[3px] border-l-purple-400">
                   <CardContent className="py-3">
-                    <p className="text-xs text-purple-400 font-medium mb-1 flex items-center gap-1">
+                    <p className="mb-1 flex items-center gap-1 text-xs font-medium text-purple-400">
                       <IconBrain className="size-3" />AI 洞察
                     </p>
-                    <p className="text-sm text-muted-foreground italic">
+                    <p className="text-sm italic text-muted-foreground">
                       &ldquo;{aiHeadline}&rdquo;
                     </p>
                   </CardContent>
@@ -218,15 +233,13 @@ export default function Home() {
               </div>
             )}
 
-            {/* Chart — only show when there are holdings */}
             {holdings.length > 0 && (
               <div className="px-4 lg:px-6">
                 <ChartAreaInteractive data={history} />
               </div>
             )}
 
-            {/* Sector Pie Chart — only show when there are holdings with industry data */}
-            {diversification && diversification.by_industry.length > 0 && (
+            {diversification && diversification.by_industry?.length > 0 && (
               <div className="px-4 lg:px-6">
                 <SectorPieChart
                   data={diversification.by_industry}
@@ -235,14 +248,21 @@ export default function Home() {
               </div>
             )}
 
-            {/* Holdings Table */}
             {holdings.length > 0 ? (
-              <DataTable data={tableData} />
-            ) : !loading && (
+              <DataTable
+                data={tableData}
+                actions={{
+                  onEdit: (item) => alert(`编辑 ${item.code} ${item.name} 暂未实现`),
+                  onView: (item) => alert(`请点击名称查看 ${item.code} ${item.name} 详情`),
+                  onAddToWatchlist: (item) => alert(`${item.code} ${item.name} 已在持仓中，可去自选股页管理`),
+                  onDelete: (item: any) => setDeleteTarget({ holdingId: item.holdingId, code: item.code, name: item.name }),
+                }}
+              />
+            ) : !isLoading && !portfolioErrorMessage && (
               <div className="px-4 lg:px-6">
                 <Card>
-                  <CardContent className="py-12 text-center space-y-2">
-                    <p className="text-4xl opacity-40">📊</p>
+                  <CardContent className="space-y-2 py-12 text-center">
+                    <IconChartBar className="mx-auto size-8 opacity-40" />
                     <p className="text-sm text-muted-foreground">暂无持仓数据</p>
                     <p className="text-xs text-muted-foreground">
                       请先前往{" "}
@@ -256,19 +276,37 @@ export default function Home() {
               </div>
             )}
 
-            {/* Refresh button */}
             <div className="flex justify-center pb-4">
               <button
                 onClick={refresh}
-                className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+                className="inline-flex items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
               >
                 <IconRefresh className={cn("size-3", refreshing && "animate-spin")} />
-                {lastUpdate ? `最后更新 ${lastUpdate}` : "点击刷新"}
+                {displayUpdateTime ? `最后更新 ${displayUpdateTime}` : "点击刷新"}
               </button>
             </div>
           </div>
         </div>
       </div>
+
+      <AlertDialog open={!!deleteTarget} onOpenChange={(open) => { if (!open) setDeleteTarget(null) }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>确认删除持仓</AlertDialogTitle>
+            <AlertDialogDescription>
+              将删除 <span className="font-mono font-semibold text-foreground">{deleteTarget?.code}</span> {deleteTarget?.name} 的持仓记录。
+              <br />
+              此操作不会删除已有的交易记录。删除后可在交易记录中重新添加。
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleting}>取消</AlertDialogCancel>
+            <AlertDialogAction onClick={handleDelete} disabled={deleting} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+              {deleting ? "删除中…" : "确认删除"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </>
   )
 }

@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState, useCallback } from "react"
+import { useEffect, useState, useCallback, Suspense } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { SiteHeader } from "@/components/site-header"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -46,7 +46,7 @@ interface MCResult {
   distribution?: { price: number; count: number }[]
 }
 
-export default function QuantPage() {
+function QuantPageInner() {
   const router = useRouter()
   const params = useSearchParams()
 
@@ -147,7 +147,7 @@ export default function QuantPage() {
       <SiteHeader title="量化分析" />
       <div className="flex flex-1 flex-col overflow-auto p-4 lg:p-6 space-y-4">
         {/* Stock input */}
-        <div className="flex items-end gap-2">
+        <div className="flex flex-wrap items-end gap-2">
           <div className="space-y-1">
             <Label className="text-xs">股票代码</Label>
             <Input value={code} onChange={(e) => setCode(e.target.value)} placeholder="000001" className="h-8 w-28 font-mono" />
@@ -167,7 +167,7 @@ export default function QuantPage() {
         {error && <p className="text-xs text-red-500">{error}</p>}
 
         <Tabs value={tab} onValueChange={(v) => { setTab(v); if (v === "risk") fetchRisk() }}>
-          <TabsList>
+          <TabsList className="overflow-x-auto flex-nowrap">
             <TabsTrigger value="insight" className="text-xs">个股透视</TabsTrigger>
             <TabsTrigger value="risk" className="text-xs">组合风险</TabsTrigger>
             <TabsTrigger value="backtest" className="text-xs">策略回测</TabsTrigger>
@@ -177,7 +177,7 @@ export default function QuantPage() {
           {/* Tab 1: Stock Insight */}
           <TabsContent value="insight" className="space-y-4">
             {loading ? (
-              <div className="space-y-3"><Skeleton className="h-[300px] w-full" /><Skeleton className="h-20 w-full" /></div>
+              <div className="space-y-3"><Skeleton className="h-[250px] sm:h-[300px] w-full" /><Skeleton className="h-20 w-full" /></div>
             ) : insight ? (
               <>
                 <div className="flex items-center gap-2 text-sm">
@@ -189,7 +189,7 @@ export default function QuantPage() {
                 {klineData.length > 0 && (
                   <Card>
                     <CardContent className="pt-4">
-                      <ChartContainer config={priceChartConfig} className="h-[300px] w-full">
+                      <ChartContainer config={priceChartConfig} className="h-[250px] sm:h-[300px] w-full">
                         <AreaChart data={klineData}>
                           <CartesianGrid vertical={false} strokeDasharray="3 3" />
                           <XAxis dataKey="date" tickLine={false} axisLine={false} tickMargin={8} minTickGap={32}
@@ -274,7 +274,7 @@ export default function QuantPage() {
           <TabsContent value="risk" className="space-y-4">
             {risk ? (
               <>
-                <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
                   <KpiCard label="Sharpe 比率" value={risk.sharpe?.toFixed(2) || "--"} />
                   <KpiCard label="最大回撤" value={risk.max_drawdown != null ? `${(risk.max_drawdown * 100).toFixed(1)}%` : "--"}
                     className="text-emerald-500" />
@@ -333,7 +333,7 @@ export default function QuantPage() {
               <Card>
                 <CardHeader className="pb-2"><CardTitle className="text-sm">定投回测结果</CardTitle></CardHeader>
                 <CardContent>
-                  <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 text-center">
+                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 text-center">
                     <div><p className="text-xs text-muted-foreground">总投资</p><p className="text-lg font-mono font-semibold">¥ {btResult.total_invested?.toLocaleString()}</p></div>
                     <div><p className="text-xs text-muted-foreground">终值</p><p className="text-lg font-mono font-semibold">¥ {btResult.final_value?.toLocaleString()}</p></div>
                     <div><p className="text-xs text-muted-foreground">定投收益</p><p className={cn("text-lg font-mono font-semibold", (btResult.total_return || 0) >= 0 ? "text-red-500" : "text-emerald-500")}>{btResult.total_return != null ? `${(btResult.total_return * 100).toFixed(1)}%` : "--"}</p></div>
@@ -391,7 +391,7 @@ export default function QuantPage() {
               <Card>
                 <CardHeader className="pb-2"><CardTitle className="text-sm">蒙特卡洛模拟</CardTitle></CardHeader>
                 <CardContent>
-                  <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 text-center">
+                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 text-center">
                     <div><p className="text-xs text-muted-foreground">当前价格</p><p className="text-lg font-mono font-semibold">¥ {mcResult.current_price?.toFixed(2)}</p></div>
                     <div><p className="text-xs text-muted-foreground">预期终值</p><p className="text-lg font-mono font-semibold">¥ {mcResult.mean_final?.toFixed(2)}</p></div>
                     <div><p className="text-xs text-muted-foreground">亏损概率</p><p className="text-lg font-mono font-semibold text-emerald-500">{mcResult.prob_loss != null ? `${(mcResult.prob_loss * 100).toFixed(1)}%` : "--"}</p></div>
@@ -407,8 +407,8 @@ export default function QuantPage() {
                           <XAxis dataKey="price" tickLine={false} axisLine={false} tickMargin={4} tickFormatter={(v) => `¥${Number(v).toFixed(0)}`} />
                           <ChartTooltip content={<ChartTooltipContent />} />
                           <Bar dataKey="count" fill="var(--color-count)" radius={0}>
-                            {mcResult.distribution.map((_, i) => (
-                              <Cell key={i} fill={mcResult.distribution[i].price >= mcResult.current_price ? "#ef5350" : "#26a69a"} fillOpacity={0.7} />
+                            {mcResult.distribution.map((item, i) => (
+                              <Cell key={i} fill={item.price >= mcResult.current_price ? "#ef5350" : "#26a69a"} fillOpacity={0.7} />
                             ))}
                           </Bar>
                         </BarChart>
@@ -433,5 +433,20 @@ function KpiCard({ label, value, className }: { label: string; value: string; cl
         <p className={cn("text-lg font-semibold font-mono mt-0.5", className)}>{value}</p>
       </CardContent>
     </Card>
+  )
+}
+
+export default function QuantPage() {
+  return (
+    <Suspense fallback={
+      <div className="flex flex-1 flex-col">
+        <SiteHeader title="量化分析" />
+        <div className="flex flex-1 flex-col overflow-auto p-4 lg:p-6">
+          <Skeleton className="h-[300px] w-full" />
+        </div>
+      </div>
+    }>
+      <QuantPageInner />
+    </Suspense>
   )
 }

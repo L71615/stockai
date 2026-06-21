@@ -493,8 +493,8 @@ export function DataTable({
         </div>
         <div className="flex items-center justify-between px-4">
           <div className="hidden flex-1 text-sm text-muted-foreground lg:flex">
-            宸查€?{table.getFilteredSelectedRowModel().rows.length} /{" "}
-            {table.getFilteredRowModel().rows.length} 琛?
+            共 {table.getFilteredSelectedRowModel().rows.length} /{" "}
+            {table.getFilteredRowModel().rows.length} 条
           </div>
           <div className="flex w-full items-center gap-8 lg:w-fit">
             <div className="hidden items-center gap-2 lg:flex">

@@ -85,20 +85,20 @@ export default function ScreenerPage() {
     { value: 0, label: "全市场扫描 (全部A股)" },
   ]
 
-  const pollScan = useCallback(async () => {
+  async function pollScan() {
     try {
       const s = await apiGet<{ running: boolean; progress: number; total: number; has_result: boolean }>("/api/screener/status")
       setScanning(s.running)
       setProgress(s.total ? Math.round((s.progress / s.total) * 100) : 0)
       setStatusText(s.running ? `扫描中 ${s.progress}/${s.total}` : "")
       if (s.running) {
-        setTimeout(pollScan, 2000)
+        setTimeout(() => { void pollScan() }, 2000)
       } else if (s.has_result) {
         const r = await apiGet<any>("/api/screener/results?limit=30")
         setResults(r?.candidates || [])
       }
     } catch { /* */ }
-  }, [])
+  }
 
   const fetchData = useCallback(async () => {
     try {

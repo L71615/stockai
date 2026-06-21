@@ -3,7 +3,6 @@
 import * as React from "react"
 import { Area, AreaChart, CartesianGrid, XAxis } from "recharts"
 
-import { useIsMobile } from "@/hooks/use-mobile"
 import {
   Card,
   CardAction,
@@ -52,22 +51,15 @@ const chartConfig = {
 } satisfies ChartConfig
 
 export function ChartAreaInteractive({ data }: ChartAreaInteractiveProps) {
-  const isMobile = useIsMobile()
-  const [timeRange, setTimeRange] = React.useState("90d")
+  const [timeRange, setTimeRange] = React.useState(
+    () => (typeof window !== "undefined" && window.innerWidth < 768 ? "30d" : "90d")
+  )
 
-  React.useEffect(() => {
-    if (isMobile) {
-      setTimeRange("30d")
-    }
-  }, [isMobile])
-
-  // Convert to chart data: use value if available, otherwise cost
   const chartData = data.map((d) => ({
     ...d,
     value: d.value ?? d.cost,
   }))
 
-  // Use actual latest date as reference
   const referenceDate = chartData.length > 0
     ? new Date(chartData[chartData.length - 1].date)
     : new Date()
@@ -105,9 +97,9 @@ export function ChartAreaInteractive({ data }: ChartAreaInteractiveProps) {
             variant="outline"
             className="hidden *:data-[slot=toggle-group-item]:px-4! @[767px]/card:flex"
           >
-            <ToggleGroupItem value="90d">近 3 月</ToggleGroupItem>
-            <ToggleGroupItem value="30d">近 30 天</ToggleGroupItem>
-            <ToggleGroupItem value="7d">近 7 天</ToggleGroupItem>
+            <ToggleGroupItem value="90d">近3月</ToggleGroupItem>
+            <ToggleGroupItem value="30d">近30天</ToggleGroupItem>
+            <ToggleGroupItem value="7d">近7天</ToggleGroupItem>
           </ToggleGroup>
           <Select value={timeRange} onValueChange={setTimeRange}>
             <SelectTrigger
@@ -115,12 +107,12 @@ export function ChartAreaInteractive({ data }: ChartAreaInteractiveProps) {
               size="sm"
               aria-label="选择时间范围"
             >
-              <SelectValue placeholder="近 3 月" />
+              <SelectValue placeholder="近3月" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="90d">近 3 月</SelectItem>
-              <SelectItem value="30d">近 30 天</SelectItem>
-              <SelectItem value="7d">近 7 天</SelectItem>
+              <SelectItem value="90d">近3月</SelectItem>
+              <SelectItem value="30d">近30天</SelectItem>
+              <SelectItem value="7d">近7天</SelectItem>
             </SelectContent>
           </Select>
         </CardAction>

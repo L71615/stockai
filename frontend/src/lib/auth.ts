@@ -1,7 +1,11 @@
 "use client"
 
+import { shouldHandleUnauthorized } from "./auth-redirect"
+
 const TOKEN_KEY = "stockai_token"
 const USER_KEY = "stockai_user"
+
+let unauthorizedRedirectPending = false
 
 export function getToken(): string | null {
   if (typeof window === "undefined") return null
@@ -27,6 +31,15 @@ export function isAuthenticated(): boolean {
   return !!getToken()
 }
 
+function redirectToLoginOnce() {
+  if (typeof window === "undefined" || unauthorizedRedirectPending) {
+    return
+  }
+
+  unauthorizedRedirectPending = true
+  window.location.replace("/login")
+}
+
 async function apiRequest<T = unknown>(path: string, options: RequestInit = {}): Promise<T> {
   const token = getToken()
   const headers: Record<string, string> = {
@@ -38,9 +51,9 @@ async function apiRequest<T = unknown>(path: string, options: RequestInit = {}):
   }
 
   const res = await fetch(path, { ...options, headers })
-  if (res.status === 401) {
+  if (shouldHandleUnauthorized(res.status)) {
     clearAuth()
-    window.location.href = "/login"
+    redirectToLoginOnce()
     throw new Error("登录已过期")
   }
   if (!res.ok) {
