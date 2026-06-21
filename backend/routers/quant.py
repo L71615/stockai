@@ -94,13 +94,127 @@ def stock_insight(code: str, days: int = 120):
         "signal": indicators.get("signal", ""),
         "factors": {
             "pe": factors.get("pe"),
+            "pb": factors.get("pb"),
             "roe": factors.get("roe"),
             "eps": factors.get("eps"),
             "market_cap_billion": factors.get("market_cap_billion"),
+            "dividend": factors.get("dividend"),
             "industry": factors.get("industry", ""),
             "industry_type": factors.get("industry_type", ""),
         },
     }
+
+
+# ==================== AI 量化解读 ====================
+
+class StockExplainRequest(BaseModel):
+    provider: str = ""  # 空则使用默认供应商
+    include_kline: bool = False  # 是否包含K线摘要
+
+
+@router.post("/stock/{code}/explain")
+async def stock_explain(code: str, body: StockExplainRequest = None):
+    """单股量化 AI 解读：技术面 + 基本面 + 风险提示
+
+    每条 reason 必须引用具体因子值，不做空泛表述。
+    异常降级：超时/429/空响应 → 返回 error 字段而非 500。
+    """
+    from services.ai_service import ai_chat, get_default_provider
+    from services.utils import get_market
+
+    body = body or StockExplainRequest()
+
+    # 收集数据
+    from services.technical import get_indicators as calc_indicators
+    from services.baostock_adapter import get_stock_factors
+
+    try:
+        indicators = calc_indicators(code, get_market(code), days=120)
+    except Exception:
+        indicators = {}
+
+    try:
+        factors = get_stock_factors(code)
+    except Exception:
+        factors = {}
+
+    price = indicators.get("price") or factors.get("price") or 0
+    name = indicators.get("name") or factors.get("industry") or code
+    ma = indicators.get("MA") or {}
+    macd = indicators.get("MACD") or {}
+    rsi_val = indicators.get("RSI")
+    signal = indicators.get("signal") or ""
+
+    pe = factors.get("pe")
+    pb = factors.get("pb")
+    roe = factors.get("roe")
+    eps = factors.get("eps")
+    mktcap = factors.get("market_cap_billion")
+    div = factors.get("dividend")
+
+    prompt = f"""你是专业A股分析师。请严格按以下JSON格式输出，不要加任何markdown标记。
+
+股票：{name}（{code}）
+最新价：{price}元
+
+技术面数据：
+- 均线：MA5={ma.get('MA5')}，MA10={ma.get('MA10')}，MA20={ma.get('MA20')}，MA60={ma.get('MA60')}
+- MACD：DIF={macd.get('DIF')}，DEA={macd.get('DEA')}，MACD={macd.get('MACD')}
+- RSI(14)：{rsi_val}
+- AI信号描述：{signal}
+
+基本面数据（TTM）：
+- PE={pe}，PB={pb}，ROE={roe}%，EPS={eps}元
+- 市值={mktcap}亿元，股息={div}元/股
+
+请输出JSON（不超过800字）：
+{{"technical":{{"verdict":"string","signals":[{{"indicator":"string","value":"string","reason":"必须引用上面具体数值"}}]}},"fundamental":{{"verdict":"string","signals":[{{"indicator":"string","value":"string","reason":"必须引用上面具体数值"}}]}},"risk_alerts":[{{"level":"warn|info","message":"string"}}]}}
+"""
+
+    try:
+        provider = body.provider or get_default_provider()
+        raw = await ai_chat(prompt, provider=provider)
+    except Exception as e:
+        return {"error": f"AI 服务暂时不可用：{e}"}
+
+    # ai_chat 不抛异常，错误时返回 "（...）" 格式的字符串
+    if not raw or not raw.strip():
+        return {"error": "AI 返回为空，请稍后重试"}
+    text = raw.strip()
+    if text.startswith("（") and text.endswith("）"):
+        return {"error": text[1:-1]}  # 返回原始错误消息
+
+    # 尝试解析 JSON
+    import re, json as _json
+    if text.startswith("```"):
+        lines = text.split("\n")
+        text = "\n".join(lines[1:]) if len(lines) > 1 else text
+        if text.rstrip().endswith("```"):
+            text = text[:text.rstrip().rfind("```")].strip()
+
+    try:
+        result = _json.loads(text)
+        return {
+            "stock": {"code": code, "name": name},
+            "technical": result.get("technical", {}),
+            "fundamental": result.get("fundamental", {}),
+            "risk_alerts": result.get("risk_alerts", []),
+        }
+    except Exception:
+        # 尝试从文本中提取 JSON 片段
+        m = re.search(r"\{.*\}", text, re.DOTALL)
+        if m:
+            try:
+                result = _json.loads(m.group(0))
+                return {
+                    "stock": {"code": code, "name": name},
+                    "technical": result.get("technical", {}),
+                    "fundamental": result.get("fundamental", {}),
+                    "risk_alerts": result.get("risk_alerts", []),
+                }
+            except Exception:
+                pass
+        return {"error": "AI 返回格式解析失败，请稍后重试"}
 
 
 # ==================== AI 策略对抗（虚拟资金 + 真实行情） ====================
