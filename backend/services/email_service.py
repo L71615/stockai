@@ -1,11 +1,14 @@
 """StockAI — SMTP 邮件发送与配置管理"""
 
+import logging
 import smtplib
 import json
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
 from config import SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD
+
+logger = logging.getLogger("stockai")
 from database import query_one, execute
 
 CYCLE_LABELS = {"daily": "每日", "weekly": "每周", "biweekly": "双周", "monthly": "每月"}
@@ -22,10 +25,10 @@ def _smtp_config() -> dict:
                 try:
                     cfg["password"] = decrypt(cfg["password"].encode())
                 except Exception:
-                    pass  # 兼容旧明文数据
+                    logger.debug("email_service: 密码解密失败，使用旧明文数据")
             return cfg
         except (json.JSONDecodeError, TypeError):
-            pass
+            logger.debug("email_service: SMTP配置JSON解析失败，使用环境变量")
     return {
         "host": SMTP_HOST,
         "port": SMTP_PORT,

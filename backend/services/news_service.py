@@ -5,11 +5,14 @@
 """
 
 import json
+import logging
 import re
 import time
 import urllib.parse
 
 from services.utils import run_curl, get_market
+
+logger = logging.getLogger("stockai")
 
 # 新闻缓存（15 分钟 TTL）
 _NEWS_CACHE: dict[str, tuple[float, list[dict]]] = {}
@@ -49,7 +52,7 @@ def get_industry(code: str, market: str | None = None) -> dict | None:
             _INDUSTRY_CACHE[cache_key] = (now, result)
             return result
     except Exception:
-        pass
+        logger.warning("news_service: akshare get_stock_info failed for %s", code, exc_info=True)
 
     # 兜底：东方财富 API
     try:

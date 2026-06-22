@@ -13,6 +13,7 @@ export interface PortfolioHolding {
   stock_code: string
   stock_name: string
   asset_type: string
+  portfolio_id: number | null
   quantity: number
   cost_price: number
   current_price: number | null

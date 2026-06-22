@@ -7,9 +7,10 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
 import { cn } from "@/lib/utils"
-import { apiGet, apiPost, getUsername, isAuthenticated } from "@/lib/auth"
+import { apiGet, apiPost, getUsername } from "@/lib/auth"
 import { IconSend, IconRobot, IconUser } from "@tabler/icons-react"
 
 interface Agent { id: number; name: string; description?: string; tools?: string }
@@ -36,7 +37,6 @@ export default function AiAssistantPage() {
   const username = getUsername()
 
   useEffect(() => {
-    if (!isAuthenticated()) { router.push("/login"); return }
     apiGet<Agent[]>("/api/agents/agents").then((d) => {
       if (Array.isArray(d) && d.length > 0) {
         setAgents(d)
@@ -73,18 +73,19 @@ export default function AiAssistantPage() {
         <div className="flex flex-1 flex-col max-w-3xl mx-auto w-full p-4 lg:p-6">
           {/* Toolbar */}
           <div className="flex items-center gap-2 mb-3 shrink-0">
-            <select
-              value={agentId}
-              onChange={(e) => {
-                setAgentId(e.target.value)
-                const a = agents.find((a) => String(a.id) === e.target.value)
+            <Select value={agentId} onValueChange={(v) => {
+                setAgentId(v)
+                const a = agents.find((a) => String(a.id) === v)
                 setTools(a?.tools || "")
-              }}
-              className="h-8 rounded-none border border-input bg-transparent px-2 text-xs"
-            >
-              {agents.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
-              {agents.length === 0 && <option value="">默认助手</option>}
-            </select>
+              }}>
+              <SelectTrigger className="h-8 text-xs w-auto min-w-[120px]">
+                <SelectValue placeholder="选择 Agent" />
+              </SelectTrigger>
+              <SelectContent className="max-h-48">
+                {agents.map((a) => <SelectItem key={a.id} value={String(a.id)}>{a.name}</SelectItem>)}
+                {agents.length === 0 && <SelectItem value="default">默认助手</SelectItem>}
+              </SelectContent>
+            </Select>
             {tools && (
               <div className="flex gap-1 flex-wrap">
                 {tools.split(",").map((t) => (

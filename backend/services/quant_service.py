@@ -401,7 +401,8 @@ def _sim_value_avg(dates, closes, start, end, amount):
 
     final_val = total_shares * closes[-1]
     ret = (final_val - total_invested) / total_invested if total_invested > 0 else 0
-    return {"total_invested": round(total_invested, 2), "final_value": round(final_val, 2), "return": round(ret, 4)}
+    return {"total_invested": round(total_invested, 2), "final_value": round(final_val, 2),
+            "return": round(ret, 4), "trades": sum(1 for d in dates if start <= d <= end and d[:7] != (dates[max(0, dates.index(d)-1)][:7] if dates.index(d) > 0 else ""))}
 
 
 def _sim_fixed_shares(dates, closes, start, end, amount):
@@ -426,7 +427,8 @@ def _sim_fixed_shares(dates, closes, start, end, amount):
 
     final_val = total_shares * closes[-1]
     ret = (final_val - total_invested) / total_invested if total_invested > 0 else 0
-    return {"total_invested": round(total_invested, 2), "final_value": round(final_val, 2), "return": round(ret, 4)}
+    return {"total_invested": round(total_invested, 2), "final_value": round(final_val, 2),
+            "return": round(ret, 4), "trades": sum(1 for d in dates if start <= d <= end and d[:7] != (dates[max(0, dates.index(d)-1)][:7] if dates.index(d) > 0 else ""))}
 
 
 def _sim_dip_buy(dates, closes, start, end, amount):
@@ -455,7 +457,8 @@ def _sim_dip_buy(dates, closes, start, end, amount):
 
     final_val = total_shares * closes[-1]
     ret = (final_val - total_invested) / total_invested if total_invested > 0 else 0
-    return {"total_invested": round(total_invested, 2), "final_value": round(final_val, 2), "return": round(ret, 4)}
+    return {"total_invested": round(total_invested, 2), "final_value": round(final_val, 2),
+            "return": round(ret, 4), "trades": sum(1 for d in dates if start <= d <= end and d[:7] != (dates[max(0, dates.index(d)-1)][:7] if dates.index(d) > 0 else ""))}
 
 
 # ==================== 蒙特卡洛模拟 ====================
@@ -500,7 +503,8 @@ def monte_carlo_sim(prices: list[float], days: int = 252, sims: int = 1000, conf
         sigma = 0.0001  # 避免零波动
 
     current_price = prices[-1]
-    random.seed(42)  # 可重现
+    rng = random.Random()  # 独立实例，不污染全局随机状态
+    rng.seed()             # 用系统熵源初始化（每次不同）
 
     all_paths = []
     finals = []
@@ -508,7 +512,7 @@ def monte_carlo_sim(prices: list[float], days: int = 252, sims: int = 1000, conf
         path = [current_price]
         price = current_price
         for _ in range(days):
-            daily_return = random.gauss(mu, sigma)
+            daily_return = rng.gauss(mu, sigma)
             price = price * (1 + daily_return)
             if price <= 0:
                 price = 0.01  # 截断到正数

@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
 import {
   AlertDialog,
@@ -20,7 +21,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
 import { cn } from "@/lib/utils"
-import { apiGet, apiPost, isAuthenticated } from "@/lib/auth"
+import { apiGet, apiPost } from "@/lib/auth"
 import { IconPlus, IconTrash, IconChartBar, IconFolderPlus } from "@tabler/icons-react"
 
 interface WatchItem {
@@ -83,7 +84,6 @@ export default function WatchlistPage() {
   }, [])
 
   useEffect(() => {
-    if (!isAuthenticated()) { router.push("/login"); return }
     fetchWatchlist()
     const timer = setInterval(fetchWatchlist, 30000)
     return () => clearInterval(timer)
@@ -200,15 +200,30 @@ export default function WatchlistPage() {
                 </div>
                 <div className="space-y-1">
                   <Label className="text-xs">市场</Label>
-                  <select value={market} onChange={(e) => setMarket(e.target.value)} className="h-8 rounded-none border border-input bg-background text-foreground px-2 text-xs">
-                    <option value="SH">上海</option><option value="SZ">深圳</option><option value="BJ">北京</option>
-                  </select>
+                  <Select value={market} onValueChange={setMarket}>
+                    <SelectTrigger className="h-8 text-xs w-auto min-w-[80px]">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent className="max-h-48">
+                      <SelectItem value="SH">上海</SelectItem>
+                      <SelectItem value="SZ">深圳</SelectItem>
+                      <SelectItem value="BJ">北京</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
                 <div className="space-y-1">
                   <Label className="text-xs">类型</Label>
-                  <select value={aType} onChange={(e) => setAType(e.target.value)} className="h-8 rounded-none border border-input bg-background text-foreground px-2 text-xs">
-                    <option value="auto">自动</option><option value="stock">股票</option><option value="etf">ETF</option><option value="fund">基金</option>
-                  </select>
+                  <Select value={aType} onValueChange={setAType}>
+                    <SelectTrigger className="h-8 text-xs w-auto min-w-[80px]">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent className="max-h-48">
+                      <SelectItem value="auto">自动</SelectItem>
+                      <SelectItem value="stock">股票</SelectItem>
+                      <SelectItem value="etf">ETF</SelectItem>
+                      <SelectItem value="fund">基金</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
                 <Button size="sm" onClick={add} disabled={lookingUp}>添加</Button>
               </div>

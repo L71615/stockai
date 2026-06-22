@@ -12,7 +12,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Separator } from "@/components/ui/separator"
 import { cn } from "@/lib/utils"
-import { apiGet, apiPost, isAuthenticated } from "@/lib/auth"
+import { apiGet, apiPost } from "@/lib/auth"
 import { IconPlus, IconPencil, IconTrash, IconBrain } from "@tabler/icons-react"
 
 interface Agent {
@@ -49,7 +49,6 @@ export default function SkillsPage() {
   }, [])
 
   useEffect(() => {
-    if (!isAuthenticated()) { router.push("/login"); return }
     fetchAgents()
   }, [fetchAgents, router])
 

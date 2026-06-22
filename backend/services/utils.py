@@ -1,33 +1,79 @@
 """StockAI 共享工具函数"""
 
 import json
+import logging
 import re
-import subprocess
 import time
 from datetime import datetime
 
+import httpx
+
+logger = logging.getLogger("stockai")
+
+# 共享 User-Agent（模拟 Chrome 131）
+_DEFAULT_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/131.0.0.0 Safari/537.36"
+)
+
+
 def run_curl(url: str, referer: str = "https://quote.eastmoney.com/", retries: int = 2) -> str:
-    """执行 curl 请求，返回响应文本
+    """HTTP GET 请求（同步，复用连接池），返回响应文本
 
-    - 强制 IPv4（东方财富 IPv6 不通）
+    - 使用 httpx 替代 subprocess(curl)，避免子进程开销
     - 失败时自动重试（最多 retries 次）
+    - 自动处理 gzip/deflate 解压
     """
-    last_stdout = ""
+    headers = {
+        "User-Agent": _DEFAULT_UA,
+        "Referer": referer,
+    }
+    last_body = ""
     for attempt in range(retries):
-        result = subprocess.run([
-            "curl", "-4", "-s", "--compressed",
-            "-H", "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-            "-H", f"Referer: {referer}",
-            "--connect-timeout", "8", "--max-time", "15",
-            url,
-        ], capture_output=True, encoding="utf-8", timeout=20)
-        last_stdout = result.stdout
-        if result.returncode == 0 and result.stdout.strip():
-            return result.stdout
-        if attempt < retries - 1:
-            time.sleep(0.5)
+        try:
+            resp = httpx.get(
+                url,
+                headers=headers,
+                timeout=httpx.Timeout(15.0, connect=8.0),
+                follow_redirects=True,
+            )
+            if resp.status_code == 200 and resp.text.strip():
+                return resp.text
+            last_body = resp.text
+        except Exception:
+            if attempt < retries - 1:
+                time.sleep(0.5)
+    return last_body
 
-    return last_stdout
+
+async def run_curl_async(url: str, referer: str = "https://quote.eastmoney.com/", retries: int = 2) -> str:
+    """HTTP GET 请求（异步），返回响应文本
+
+    - 供 async def 端点使用，避免阻塞事件循环
+    - 用法：data = await run_curl_async(url)
+    """
+    headers = {
+        "User-Agent": _DEFAULT_UA,
+        "Referer": referer,
+    }
+    last_body = ""
+    async with httpx.AsyncClient() as client:
+        for attempt in range(retries):
+            try:
+                resp = await client.get(
+                    url,
+                    headers=headers,
+                    timeout=httpx.Timeout(15.0, connect=8.0),
+                    follow_redirects=True,
+                )
+                if resp.status_code == 200 and resp.text.strip():
+                    return resp.text
+                last_body = resp.text
+            except Exception:
+                if attempt < retries - 1:
+                    await __import__("asyncio").sleep(0.5)
+    return last_body
 
 
 def get_market(code: str) -> str:
@@ -147,7 +193,7 @@ def get_fund_nav(code: str) -> dict | None:
             _FUND_CACHE[code] = (now, result)
             return result
     except Exception:
-        pass
+        logger.warning("get_fund_nav(%s) failed", code, exc_info=True)
     return None
 
 
@@ -181,7 +227,7 @@ def parse_ai_json(raw: str) -> dict:
     try:
         return json.loads(text)
     except json.JSONDecodeError:
-        pass
+        pass  # parse_ai_json step 2: expected to fail, try next step
 
     # Step 3: Extract JSON fragment between { and }
     match = re.search(r'\{.*\}', text, re.DOTALL)
@@ -189,7 +235,7 @@ def parse_ai_json(raw: str) -> dict:
         try:
             return json.loads(match.group(0))
         except json.JSONDecodeError:
-            pass
+            pass  # parse_ai_json step 3: expected to fail, try next step
 
     # Step 4: Repair common errors
     if match:
@@ -201,7 +247,7 @@ def parse_ai_json(raw: str) -> dict:
         try:
             return json.loads(repaired)
         except json.JSONDecodeError:
-            pass
+            pass  # parse_ai_json step 4: expected to fail, fallback to raw
 
     # Step 5: Fallback — return raw text
     return {"raw": raw, "parse_error": True}
@@ -285,7 +331,7 @@ def get_fee_config() -> FeeConfig:
                 commission_min=float(data.get("commission_min", FeeConfig.commission_min)),
             )
     except Exception:
-        pass
+        logger.warning("get_fee_config: settings read failed, using defaults", exc_info=True)
     return FeeConfig()
 
 

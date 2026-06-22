@@ -1,7 +1,10 @@
 """技术指标计算：MA / MACD / KDJ / RSI"""
 
 import json
+import logging
 from typing import Any
+
+logger = logging.getLogger("stockai")
 
 from services.utils import run_curl, get_market
 
@@ -23,7 +26,7 @@ def fetch_kline(code: str, market: str = None, days: int = 120) -> dict[str, Any
             if result and "error" not in result:
                 return result
         except Exception:
-            pass
+            logger.warning("technical: 港股K线获取失败 (%s)", code, exc_info=True)
         return {"error": "获取港股K线失败", "code": code}
 
     # ── 美股 K 线 ──
@@ -34,7 +37,7 @@ def fetch_kline(code: str, market: str = None, days: int = 120) -> dict[str, Any
             if result and "error" not in result:
                 return result
         except Exception:
-            pass
+            logger.warning("technical: 美股K线获取失败 (%s)", code, exc_info=True)
         return {"error": "获取美股K线失败", "code": code}
 
     # ── A 股 K 线 ──
@@ -45,7 +48,7 @@ def fetch_kline(code: str, market: str = None, days: int = 120) -> dict[str, Any
         if result and "error" not in result:
             return result
     except Exception:
-        pass
+        logger.warning("technical: A股akshare K线获取失败 (%s)", code, exc_info=True)
 
     # 2. 东方财富 push2his（HTTP，无锁，可并发）
     if market is None:
@@ -82,7 +85,7 @@ def fetch_kline(code: str, market: str = None, days: int = 120) -> dict[str, Any
         if result and "error" not in result:
             return result
     except Exception:
-        pass
+        logger.warning("technical: Baostock K线获取失败 (%s)", code, exc_info=True)
 
     return {"error": "获取K线数据失败", "code": code}
 
@@ -300,6 +303,6 @@ def get_indicators(code: str, market: str = None, days: int = 120) -> dict:
             raw = run_curl(f"https://push2.eastmoney.com/api/qt/stock/get?secid={m}.{code}&fields=f58")
             indicators["name"] = json.loads(raw).get("data", {}).get("f58", "")
     except Exception:
-        pass
+        logger.warning("technical: 获取股票名称失败 (%s)", code, exc_info=True)
 
     return indicators

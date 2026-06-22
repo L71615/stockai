@@ -69,7 +69,18 @@ def health():
 
 @app.get("/api/version")
 def api_version():
-    return {"version": VERSION, "name": "StockAI", "factors": 29}
+    from services.factor_service import REGISTRY_SUMMARY
+    return {
+        "version": VERSION,
+        "name": "StockAI",
+        "factors": {
+            "done": REGISTRY_SUMMARY["done"],
+            "pending": REGISTRY_SUMMARY["pending"],
+            "planned_alpha158": REGISTRY_SUMMARY["planned_alpha158"],
+            "total": REGISTRY_SUMMARY["grand_total"],
+            "categories": REGISTRY_SUMMARY["categories"],
+        }
+    }
 
 @app.on_event("startup")
 def startup():
@@ -113,6 +124,49 @@ async def auth_middleware(request: Request, call_next):
         return JSONResponse({"error": "登录无效，请重新登录"}, status_code=401)
 
     return await call_next(request)
+
+
+# ── 安全响应头中间件（最外层，确保所有响应都带安全头）──
+@app.middleware("http")
+async def security_headers_middleware(request: Request, call_next):
+    response = await call_next(request)
+
+    # HSTS — 强制 HTTPS（仅生产环境生效，max-age=1年）
+    response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+
+    # 禁止 MIME 类型嗅探
+    response.headers["X-Content-Type-Options"] = "nosniff"
+
+    # 禁止被 iframe 嵌入（防点击劫持）
+    response.headers["X-Frame-Options"] = "DENY"
+
+    # 反射型 XSS 过滤（旧浏览器兼容）
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+
+    # Referrer 策略 — 同源发完整 URL，跨域只发 origin
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+
+    # 权限策略 — 禁用摄像头/麦克风/定位等非必要 API
+    response.headers["Permissions-Policy"] = (
+        "camera=(), microphone=(), geolocation=(), "
+        "usb=(), bluetooth=(), payment=()"
+    )
+
+    # CSP — 内容安全策略
+    # API 返回主要是 JSON，但 /api/docs 返回 Swagger UI HTML
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'none'; "
+        "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net; "
+        "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com; "
+        "img-src 'self' data: https:; "
+        "font-src 'self' https://fonts.gstatic.com; "
+        "connect-src 'self'; "
+        "frame-ancestors 'none'; "
+        "base-uri 'self'; "
+        "form-action 'self'"
+    )
+
+    return response
 
 
 if __name__ == "__main__":

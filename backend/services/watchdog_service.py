@@ -154,7 +154,7 @@ def check_single_stock(code: str, name: str = "", user_id: int = 1) -> dict:
                     "message": f"成交量异常放大（{recent_vol / hist_vol:.1f}x 均量）",
                 })
     except Exception:
-        pass
+        logger.warning("watchdog: 成交量异动检测失败 (%s)", code, exc_info=True)
 
     return result
 
@@ -216,7 +216,7 @@ def check_watchlist(user_id: int = 1) -> dict:
                     title=f"盯盘异动 — {high_count} 条高级预警",
                 )
         except Exception:
-            pass
+            logger.warning("watchdog: 高级预警通知推送失败", exc_info=True)
 
     return {
         "checked_at": datetime.now().isoformat(),

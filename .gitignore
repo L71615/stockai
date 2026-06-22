@@ -36,4 +36,8 @@ docs/TODOS.md
 # --- 构建产物 ---
 backend-start.err.log
 backend-start.out.log
-第四阶段/
+*.tsbuildinfo
+
+# --- 本地报告（含交易数据/选股结果，不提交）---
+reports/
+第三方报告/

@@ -7,7 +7,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
-import { apiGet, apiPost, isAuthenticated } from "@/lib/auth"
+import { apiGet, apiPost } from "@/lib/auth"
 import { IconBrain, IconRefresh, IconFlame, IconNews } from "@tabler/icons-react"
 import useSWR from "swr"
 import { swrFetcher } from "@/lib/swr-config"
@@ -150,7 +150,6 @@ export default function KolPage() {
 
   // 首次加载
   useEffect(() => {
-    if (typeof window !== "undefined" && !isAuthenticated()) { router.push("/login"); return }
     fetchBrief()
   }, [fetchBrief, router])
 

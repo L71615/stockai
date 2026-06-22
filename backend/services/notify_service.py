@@ -49,7 +49,7 @@ def _get_config() -> dict:
             if isinstance(saved, dict):
                 cfg.update(saved)
     except Exception:
-        pass
+        logger.warning("notify_service: 加载通知配置失败，使用环境变量", exc_info=True)
     return cfg
 
 

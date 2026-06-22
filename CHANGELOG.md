@@ -1,5 +1,386 @@
 # StockAI 项目日志
 
+> StockAI 从 0 到 v3.4 的完整演进记录。按时间倒序。
+
+---
+
+## 2026-06-22（续）— `/quant` 页面 10 问规划 + 全面改版
+
+### Q1-Q10 量化页改版决策
+
+| Q | 决策 | 状态 | 内容 |
+|---|------|:---:|------|
+| Q1 | A 升级蜡烛图 | ✅ 已实现 | recharts 折线图 → lightweight-charts 蜡烛图 + MA5/10/20 |
+| Q2 | A 全面海龟 | ✅ 已实现 | 通道线叠加到K线图 + 评分卡片 + ATR/止损/仓位 |
+| Q3 | B 不对比 | 不做 | 单只深度分析 |
+| Q4 | A AI 底部 | ⬜ 未验证 | AI 解读卡片（技术面+基本面+风险）—— 需配 AI Key |
+| Q5 | C 保持现状 | 不做 | 因子面板不动，优先激活 pending 因子 |
+| Q6 | A 海龟回测 | 🔲 待实现 | 海龟S1/S2 加入策略对比 |
+| Q7 | B 手动触发 | 不做 | 不自动刷新 |
+| Q8 | A 提醒面板 | ⬜ 未验证 | 底部「我的提醒」列表+删除 —— 需进入页面确认 |
+| Q9 | C 快速选择 | ⬜ 未验证 | 持仓/自选/海龟Top10 下拉选择器 —— 需前端确认 |
+| Q10 | C 不考虑 | 不做 | 移动端不优化 |
+
+### Q1 实现 — K线图表升级
+- 后端: `stock-insight` +MA5/MA10/MA20 数组
+- 前端: `KlineChart` 替换 `AreaChart`, 5 指标切换按钮 (VOL/BOLL/MACD/RSI/KDJ), 技术指标摘要 6 列精简
+
+### Q2 实现 — 海龟全面集成
+- 后端: `stock-insight` +`_calc_turtle()` (S1/S2通道 + 突破检测 + ATR + 0-100评分)
+- KlineChart: `TurtleOverlay` prop → `createPriceLine` 画 4 条水平线 (S1入红虚线/S2入橙虚线/S1出绿点线/S2出绿点线)
+- 前端: 海龟评分卡 + S1/S2入场价+触发标记🔥 + ATR(N)/止损2N/仓位股数
+
+### Q4 实现 — AI 量化解读
+- 后端: explain prompt 补海龟数据, 链路: `ai_chat()` → `get_default_provider()` → settings表Key
+- 前端: 「AI 解读」按钮 + 紫色左边框卡片 (技术面/基本面/风险三栏)
+
+### Q8 实现 — 提醒面板
+- 数据: `GET /api/stocks/alerts`
+- 前端: Tabs 下方橙色边框卡片, 3列网格, 触发检测(红色高亮), 删除按钮
+
+### Q9 实现 — 快速选择器
+- 数据: `GET /api/stocks/holdings` + `GET /api/stocks/watchlist` (挂载时拉取)
+- UI: ▼按钮 → 下拉三组 (持仓/自选/海龟Top10) → 点击自动填入代码+触发查询
+
+### 版本
+- `config.py`: VERSION "3.2" → **"3.4"**
+
+### 文件变更
+- 修改: `backend/routers/quant.py` (+200行 MA数组+turtle计算+AI prompt增强)
+- 修改: `frontend/src/components/KlineChart.tsx` (+60行 TurtleOverlay prop+priceLine)
+- 修改: `frontend/src/app/quant/page.tsx` (+300行 KlineChart+海龟卡+AI解读+提醒+选择器)
+- 修改: `backend/config.py` (VERSION→3.4)
+- 新增: `reports/turtle_screener.py`, `analyze_top3.py`, `turtle_screen_*.json`
+
+### ⚠️ 未验证
+- [ ] Q4: AI 解读 — 需配 AI Key 后实际调用
+- [ ] Q8: 提醒面板 — 需前端页面确认 UI
+- [ ] Q9: 快速选择器 — 需前端页面确认交互
+- [ ] Q1/Q2: K线+海龟通道线 — 需浏览器实际渲染验证
+
+### 已知待修
+- `page.tsx:259` — TS2352 类型错误 (已有)
+- 端口 3000 僵尸进程
+- AI 依赖 settings 表 Key 配置
+
+---
+
+## 2026-06-22 — 海龟交易法选股 + 因子分析面板
+
+### 海龟交易法 × 多因子综合选股
+- **turtle_screener.py** — 全新海龟交易法选股脚本，组合三大维度：
+  - 海龟通道：S1(20日突破)/S2(55日突破)入场 + S1(10日低)/S2(20日低)出场
+  - ATR(N) 波动率归一化仓位计算 + 2N 止损
+  - 29 因子体系打分（动量/波动率/量价/情绪/估值）
+  - 综合评分：海龟 60% + 因子 40%
+- **筛选漏斗**：4955 只 A 股 → 2964 只(价<20+市值>5亿) → 400 只深度分析 → Top50
+- **数据源**：Baostock(股票列表) + 腾讯财经(实时行情/K线)，绕过系统代理
+- **Top3 标的**：楚江新材(78.0) / 皖维高新(76.6) / 汤臣倍健(72.2)
+- 结果保存至 `reports/turtle_screen_20260622_*.json`
+
+### 量化页「因子分析」面板
+- **后端**: `GET /api/quant/factor-panel/{code}` — 返回 7 大类 59 因子的完整评分
+  - 计算全部 29 个 done 因子 + 基于 A 股合理阈值 0-100 打分
+  - 按分类汇总：价格/成交量/技术指标/动量/波动率/量价/基本面/情绪/资金/社交
+- **前端**: 量化页新增第 5 个 Tab「因子分析」
+  - 综合评分卡片（紫色左边框 + 渐变进度条）
+  - 7 维因子雷达条（横向进度条 × 10 类因子）
+  - 因子详情网格（2 列 × 每类因子独立打分条 + 原始值）
+  - 颜色编码：绿(≥60) / 橙(40-59) / 红(<40)
+  - ↑↓ 标记因子方向（正向/负向）
+
+### 自选股 + 海龟提醒
+- 楚江新材/皖维高新/汤臣倍健 加入自选股 (`watchlist` 表)
+- 6 条海龟入场提醒 (`price_alerts` 表, `alert_type=turtle_s1_entry/turtle_s2_entry`)
+- 提醒阈值：楚江 16.19 / 皖维 9.02 / 汤臣 10.60(S1) + 10.88(S2)
+
+### 数据源调试踩坑
+- 腾讯批量行情接口 `qt.gtimg.cn/q=` 盘前返回 volume=amount=0 → 改用市值过滤
+- 腾讯市值单位为亿元 → `mcap < 5`（非 `5e8`）
+- Windows 系统代理导致 akshare 无法直连东方财富 → `ProxyHandler({})` 全局禁用
+- Baostock 字段偏移：`row[4]=type, row[5]=status`（非 `row[3]=type`）
+
+### 文件变更
+- 新增：`reports/turtle_screener.py` — 海龟选股脚本
+- 新增：`reports/analyze_top3.py` — Top3 深度技术分析脚本
+- 新增：`reports/turtle_screen_20260622_092733.json` — Top50 结果
+- 修改：`backend/routers/quant.py` — +60 行 `/factor-panel/{code}` 端点
+- 修改：`frontend/src/app/quant/page.tsx` — +130 行「因子分析」Tab
+- 修改：`frontend/package.json` 无变更、依赖不变
+
+---
+
+## 2026-06-21（续）— 开源项目缝合 + K 线多面板升级
+
+### 量化框架缝合 (4/4)
+- **qlib_factor_platform** → `factor_utils.py` (20个工具函数) + `factor_service.py` 59因子注册表 + `screener.py` 3个API (因子注册表/模板/校验)
+- **moonshot** → `monthly_backtest.py` (470行) + `POST /api/quant/monthly-backtest` 端点
+- **QuantLessMoneyMore** → `StrategyConfig` + 多权重方案(等权/市值/评分) + 仓位限制
+- **multi-factor-stock-selection** → 因子退场机制 `track_factor_performance()` + `POST /api/screener/factor-retirement`
+
+### K 线多面板升级
+- `KlineChart.tsx` 重写 (280行): 6个指标前端计算 + 多面板 (价格/MACD/RSI/KDJ/成交量)
+- `stock-chart-drawer.tsx` 重写: 5个指标切换按钮 (VOL/BOLL/MACD/RSI/KDJ)
+- 用户可自由组合显示哪些指标面板
+
+### 已知问题 (TODO)
+- K 线多面板: 指标切换后高度计算偶有抖动，待排查 ResizeObserver 时序
+- 布林带与 MA20 颜色重叠，需区分色系
+- **后端因子功能无前端 UI**: 因子注册表/模板/校验/月度回测/因子退场 5 个 API 已完成，但前端页面未接入
+
+---
+
+## 2026-05-20 ~ 06-10 — MVP 搭建（原始项目）
+
+### 项目启动
+- FastAPI 后端骨架 (JWT 认证、SQLite 数据库)
+- Vanilla JS/HTML/CSS 前端 (12 个页面)
+- AI 对话 (MiniMax/DeepSeek/OpenAI/Claude/小米)
+- A股行情数据 (腾讯财经/AKShare/新浪)
+- 量化分析引擎 (Sharpe/MaxDD/Beta/DCA/蒙特卡洛)
+- AI 策略对抗 (多 AI 选股 PK)
+- Agent 系统 (自定义 Agent + 记忆)
+- 多因子选股扫描
+- 大佬观点 X/Twitter 追踪
+- Docker 部署配置
+
+### 产品方向确定 (2026-05-30)
+- 定位: A 股持仓追踪 + AI 分析助手 → AI 投资教练
+- 新增 `review_service.py` 复盘引擎
+- 新增 `review_reports` 表
+- 确立 pytest 测试框架 (T1)
+- 确立 Playwright E2E 测试 (T2)
+- 确立 Docker 化部署 (T3)
+- 确立 GitHub Actions CI/CD (T4)
+
+---
+
+## 2026-06-12 — Next.js + shadcn/ui 前端重构
+
+### 技术栈升级
+- Vanilla JS/HTML/CSS → `npx create-next-app@latest` (Next.js 16 App Router)
+- `npx shadcn@latest init` 初始化 shadcn/ui (oklch 暗色主题)
+- 配置 Tailwind CSS 4, `--radius: 0` 直角风格
+- `next.config.ts` 添加 `/api/*` → `localhost:3000` 代理
+- 旧 HTML/JS 前端删除，`frontend-next/` 正式上位 → `frontend/`
+
+### 页面实现 (12 页)
+- 侧边栏: 3 组折叠导航 (投资/分析/工具), 12 项中文导航
+- 首页 `/`: KPI 卡片 + recharts 走势图 + DataTable + 骨架屏
+- 大盘指数 `/market`: 全球 15 指数, 30s 刷新
+- 自选股 `/watchlist`: 添加(500ms防抖查询)/删除/行情/加入持仓
+- 交易记录 `/transactions`: CRUD + 5 KPI + AI 复盘
+- 全球资讯 `/global-news`: SVG 世界地图(16金融城市) + 新闻
+- AI 复盘 `/review`: KPI + 维度分析 + 改进建议 + 历史报告
+- 量化分析 `/quant`: 4 Tab(个股透视/组合风险/回测/蒙特卡洛)
+- AI 选股 `/screener`: 多因子扫描 + AI 精选
+- 大佬观点 `/kol`: 雪球热门 + RSS + AI 日报
+- AI 对话 `/ai-assistant`: Agent 选择 + 5 快捷指令 + conversationId
+- AI 对抗 `/duel`: 6 AI 人格各 ¥10 万选股对战
+- Agent 工坊 `/skills`: Agent CRUD + 记忆面板
+- 设置 `/settings`: 6 供应商 Key + SMTP + 佣金
+- 登录 `/login`: 邮箱+密码 → JWT → localStorage
+
+### 架构变更
+- 后端去掉 StaticFiles 挂载 → 纯 API 服务器 (端口 3000)
+- `start.bat` 升级为双服务器控制面板
+
+---
+
+## 2026-06-12 ~ 06-13 — Bug 修复 + 功能增强
+
+### Bug 修复 (15 个)
+- 自选股: 现价小数位 (fund→4, etf→3, stock→2)、行情字段映射 (price vs change)、添加后数据覆盖、沪市 ETF 符号映射 (4个)
+- 交易记录: `trade_date` vs `traded_at` 字段名不匹配 (1个)
+- 量化分析: ETF 假数据、技术指标 undefined、组合风险全 "--"、Beta 始终 None、回测字段名、蒙特卡洛字段名、KPI 百分比 (7个)
+- AI 选股: 扫描无结果、页面崩溃、名称/行业空 (3个)
+
+### 新功能
+- 持仓行业分布饼图 (`sector-pie-chart.tsx`, 暗色友好 12 色调色板)
+- 手续费追踪: `calc_fee()` + `FeeConfig` + 设置页 UI + 一键重算
+- 总资产走势图真实数据 (两条线: 成本灰虚线 + 市值红实线)
+- KOL 代理支持
+- Quant 页 `useSearchParams()` → `Suspense` 修复 `next build` 崩溃
+- AI 对抗 demo 数据清理
+
+---
+
+## 2026-06-13 — 选股系统重大优化
+
+### 死因子修复
+- `eps_growth` 复活: Baostock 去年同期 EPS 真实增长率
+- `dividend_yield` 复活: `bs.query_dividend_data()` 每股分红
+- ROE 修复: Q4→Q3→Q2→Q1 逐季回退，季报自动年化
+- PB 从真实值替代反推: K 线 `pbMRQ` 字段代替 PE×ROE 估算
+- 因子状态: 21-22/25 → 23-25/25 有效，0 个死因子
+
+### IC 权重从手工改为数据驱动
+- 旧: 看大盘涨跌手工调权重
+- 新: 截面 Spearman 秩相关，每个因子 Z-score 与 ret_20d 算秩 IC
+
+### 并发性能优化
+- 5 只股票: 141s → 6.7s (21 倍加速)
+- K 线 fetch 改序: akshare→东财→Baostock (HTTP 源天然并发)
+- 基本面: akshare HTTP 并发优先，失败回退 Baostock
+- 行业分类全局缓存
+
+### 社交因子 + 通知 + KOL
+- 社交情绪因子: 25 → 28 个 (雪球关注数+微博情绪)
+- 通知推送: 企业微信 Webhook + Telegram Bot + SMTP 邮件
+- 大佬观点页: 雪球热门 + 财经 RSS + AI 摘要
+- 前端 AI 选股页: 股票池选择器 (快速30/标准500/全市场)
+
+---
+
+## 2026-06-14 — P0 安全修复 + 多 Agent 选股 + SWR 缓存
+
+### P0 安全 (7/7)
+- S01-S04: JWT_SECRET/ADMIN_PASSWORD/CORS/EASTMONEY_TOKEN 强制校验
+- S05: AI Key + SMTP 密码 AES-256-GCM 加密存储 (`crypto_service.py`)
+- S06: 全局限流 slowapi (AI 20/min, 通用 60/min)
+- S07: JWT 有效期 7天 → 2小时
+
+### 多 Agent 交叉验证选股
+- `services/multi_agent_service.py`: 5 个 AI 投资人格并行分析
+- 聚合逻辑: 投票制(≥3/5 通过) + 加权评分 + 风险否决
+- 前端新增 "5 Agent 验证" 按钮
+
+### 多市场 + SWR
+- 港股+美股行情支持 (akshare_adapter 新增 6 个函数)
+- 前端 SWR 缓存层: 5 个共享 hooks (usePortfolio/useMarket/useReview/useWatchlist/useDiversification)
+- 因子体系: 25→29 (新增资金类 3 因子: north_flow/margin_change/inst_change)
+- AI 对抗支持多供应商对战
+
+### 第三方审计 + ROADMAP
+- 解读 7 份审计报告 (架构/代码/安全/市场/面试/项目管理/基础设施)
+- 产出 `docs/ROADMAP.md` (P0-P1-P2 + 长期架构 + 产品演进)
+
+---
+
+## 2026-06-17 — 持仓删除 + 盈亏对齐同花顺
+
+### Bug 修复
+- Next.js API 代理端口错误 (3002→3000)
+- 持仓删除功能 (AlertDialog 确认 → DELETE API → SWR 乐观更新)
+- 盈亏对齐同花顺口径: 预估卖出费 + PnL/总成本×100%
+- 验证: 彩虹股份 400 股，StockAI ¥308.37 vs 同花顺 ¥308.18 (差 ¥0.19)
+
+---
+
+## 2026-06-18 — K 线图表升级 (lightweight-charts)
+
+### recharts → TradingView lightweight-charts v5.2
+- 新增 `KlineChart.tsx`: CandlestickSeries + HistogramSeries + LineSeries ×3 (MA5/10/20)
+- 删除 60+ 行废弃 recharts 代码
+- 根因修复: shadcn Drawer hidden 状态下 ResponsiveContainer 返回 -1 导致初始化失败
+- 新增 `stock-chart-drawer.tsx`: 右侧滑出面板 (5日/日K/周K/月K)
+
+---
+
+## 2026-06-21 — P1 工程规范批量修复 (10/10) + 开源缝合准备
+
+### 工程质量批量修复
+- P02: 22 个数据库索引 (零全表扫描)
+- S08: 7 项安全响应头 (HSTS/CSP/X-Frame-Options 等)
+- U05: subprocess curl → httpx (utils.py)
+- U07: passlib → bcrypt 直接调用 (database.py + auth.py)
+- P07: random.seed(42) → random.Random 独立实例 (quant_service.py)
+- P10: 后端+前端依赖版本全部锁定
+- T01: Next.js Proxy 统一认证守卫 (12 页删除 useEffect 重复代码)
+- P08: 71 处裸 except:pass 全部消除 (9 个 services 文件 + scheduler.py)
+- T03: 16 处前端 any 类型全部替换为明确类型
+- P06: O(n²) → O(n) 性能修复 (500 只 8.9ms→0.1ms, 75x)
+
+### 开源缝合准备
+- 创建 `D:\some-oss\` 素材库目录
+- 下载 11 个开源项目 (量化框架 4+TradingView 4+Pine Script 3)
+- 制定 13 项融合任务 (F01-F13)
+
+### 文档整合
+- 旧文档 (TODOS/PROJECT_PLAN/ai-investment-coach) → 吸收到 CHANGELOG
+- `docs/ROADMAP.md` 更新: 合并融合计划 + 标注已完成项
+- 新增 `docs/ARCHIVE.md` 归档说明
+
+---
+
+> 版本演进: v3.0 (AI选股+对抗) → v3.1 (社交因子+通知) → v3.2 (K线+SWR) → v3.3 (P1工程收债+融合准备)
+
+### 开源项目缝合准备
+- 创建 `D:\some-oss\` 缝合素材库目录
+- 下载 11 个开源项目：
+  - 量化框架 (4): qlib_factor_platform, moonshot, QuantLessMoneyMore, multi-factor-stock-selection
+  - TradingView/图表 (4): lightweight-charts(官方), lightweight-charts-python(30+指标), streamlit-lightweight-charts-v5, KLineChart
+  - Pine Script (3): pinescript(QuanTAlib), pine-script-libraries, tradingview-pinescript-lab
+- 1 个不可用: python-lightweight-charts (repo 404)
+- 新增 `reports/stockai-status-2026-06-21.txt` — 以项目融合为核心的完整状态报告
+
+### 数据库
+
+**数据库索引 (P02)**
+- `backend/database.py` `init_db()` 新增 22 个索引
+- 覆盖: holdings / transactions / watchlist / ai_messages / price_alerts / review_reports / screener_* / backtest_results / dca_plans / dividends / ai_duel_* / kol_*
+- 验证: 11/11 核心查询全部 USING INDEX，零全表扫描
+
+### 安全
+
+**安全响应头 (S08)**
+- `backend/main.py` 新增 `security_headers_middleware`
+- 7 项头: HSTS / X-Content-Type-Options / X-Frame-Options / X-XSS-Protection / Referrer-Policy / Permissions-Policy / Content-Security-Policy
+- 验证: 200/401/API Docs 三种场景全部返回安全头
+
+### 工程质量
+
+**curl → httpx (U05)**
+- `backend/services/utils.py` `run_curl()` 从 `subprocess.run(curl)` 重写为 `httpx.get()`
+- 新增 `run_curl_async()` 异步版本供未来使用
+- 验证: 全球指数 + 基金净值 + 新闻搜索 + K线 全部正常
+
+**passlib → bcrypt (U07)**
+- `backend/database.py` + `backend/routers/auth.py` 两处替换
+- `bcrypt.verify()` → `_bcrypt.checkpw()` / `bcrypt.hash()` → `_bcrypt.hashpw()`
+- `requirements.txt` 删除 `passlib[bcrypt]>=1.7`
+- 验证: passlib 已卸载，登录/错误密码 全部正常
+
+**random.seed(42) → Random 实例 (P07)**
+- `backend/services/quant_service.py:503` 修复
+- `random.seed(42)` (污染全局) → `rng = random.Random(); rng.seed()` (独立实例)
+- 验证: 5 次模拟结果各不相同，测试 3/3 通过
+
+**依赖版本锁定 (P10)**
+- `backend/requirements.txt`: 14 个 `>=` → `==`，新增 `requests==2.32.2` + `feedparser==6.0.12`
+- `frontend/package.json`: 28 个 `^` → 精确版本
+- 验证: pip install --dry-run 全部满足，npm ls 无错误
+
+**统一认证守卫 (T01)**
+- 新建 `frontend/src/proxy.ts` (Next.js 16 proxy 中间件)
+- cookie 检查 → 无 token 重定向 /login → 有 token 放行
+- 12 个页面删除 `useEffect + isAuthenticated()` 重复代码 (~30 行)
+- `frontend/src/lib/auth.ts` `setAuth()`/`clearAuth()` 同步写 cookie
+- 验证: 307/200 三种路由场景正确，next build 通过
+
+**消除裸 except pass (P08)**
+- 两轮修复: 18 个文件 / 71 处
+- 全部替换为 `logger.warning()` 或 `logger.debug()` + 上下文消息
+- `parse_ai_json()` 的 `json.JSONDecodeError: pass` 添加注释说明降级意图
+- 验证: `grep` 零残留，132/133 测试通过
+
+**前端 any 类型消除 (T03)**
+- 5 个页面: page.tsx / duel / screener / settings / quant
+- 16 处 `any` 全部替换为明确类型 + 3 个新 interface
+- 删除 2 条 eslint-disable 注释
+- 验证: `grep` 零残留，`next build` Compiled successfully
+
+**O(n²) 性能 Bug (P06)**
+- `backend/services/screener_service.py:510`
+- `stock_name_map` 从循环内移到循环外一次性构建
+- 验证: 500 只股票打分 8.9ms → 0.1ms (75x 加速)
+
+### 项目更新
+- 新增 `D:\stocks\reports\stockai-status-2026-06-21.txt` — 完整项目状态报告
+- 新增 `D:\some-oss\README.txt` — 开源缝合素材库目录说明
+
+---
+
 ## 2026-06-18 — K 线图表升级（lightweight-charts）+ TradingView 集成
 
 ### 新功能

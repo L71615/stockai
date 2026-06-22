@@ -5,8 +5,11 @@
 """
 
 import json
+import logging
 import time
 import random
+
+logger = logging.getLogger("stockai")
 
 from database import query_all, execute
 
@@ -92,6 +95,7 @@ def _get_cookies() -> list[dict]:
         with open(cookie_file, 'r', encoding='utf-8') as f:
             return json.load(f)
     except Exception:
+        logger.warning("kol_crawler: _get_cookies failed to load cookies", exc_info=True)
         return []
 
 
@@ -106,7 +110,7 @@ def _get_proxy() -> str | None:
         if row and row.get("value"):
             return row["value"].strip()
     except Exception:
-        pass
+        logger.warning("kol_crawler: _get_proxy settings read failed", exc_info=True)
     return None
 
 
@@ -155,7 +159,7 @@ def crawl_account(username: str, max_posts: int = 20) -> tuple[list[dict], str]:
                         if body and len(body) > 100:
                             captured_responses.append(body)
                     except Exception:
-                        pass
+                        logger.warning("kol_crawler: intercept_response body read failed", exc_info=True)
 
             page.on("response", intercept_response)
 
@@ -163,7 +167,7 @@ def crawl_account(username: str, max_posts: int = 20) -> tuple[list[dict], str]:
             try:
                 page.goto(target_url, wait_until="domcontentloaded", timeout=30000)
             except Exception:
-                pass  # X 后台请求永不停止，超时正常
+                logger.debug("kol_crawler: X background request timeout (normal)")
 
 
             page.wait_for_timeout(3000)  # 等待 GraphQL 数据包加载
@@ -241,7 +245,7 @@ def crawl_all(user_id: int = 1, max_posts_per_account: int = 20) -> dict:
                     if result["changes"] > 0:
                         saved += 1
                 except Exception:
-                    pass
+                    logger.warning("kol_crawler: save post insert failed", exc_info=True)
 
             execute("UPDATE kol_accounts SET last_error = '' WHERE id = ?", (account["id"],))
             total_posts += saved

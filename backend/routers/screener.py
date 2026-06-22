@@ -580,3 +580,178 @@ async def full_pipeline(body: AIScreenRequest):
             results["briefing"] = "简报生成失败"
 
     return results
+
+
+# ═══════════════════════════════════════════════════════════════
+#  因子注册表 & 自定义因子 — 源自 qlib_factor_platform
+# ═══════════════════════════════════════════════════════════════
+
+@router.get("/factor-registry")
+def get_factor_registry(category: str = ""):
+    """
+    获取因子注册表
+
+    可选查询参数:
+      category: 按分类筛选 (价格因子/成交量因子/技术指标因子/动量因子/
+                波动率因子/量价因子/基本面因子/情绪因子/资金因子/社交因子)
+    """
+    from services.factor_service import FACTOR_REGISTRY
+
+    items = []
+    for name, info in FACTOR_REGISTRY.items():
+        if category and info["category"] != category:
+            continue
+        items.append({"name": name, **info})
+
+    return {
+        "factors": items,
+        "total": len(items),
+        "categories": sorted(set(info["category"] for info in FACTOR_REGISTRY.values())),
+    }
+
+
+# ── 因子模板 (来自 qlib_factor_platform custom.py) ──
+FACTOR_TEMPLATES = [
+    {
+        "id": "momentum",
+        "name": "N日动量因子",
+        "description": "计算N日前的价格相对于当前价格的变化率",
+        "params": [{"key": "n", "type": "int", "default": 5, "min": 1, "max": 60,
+                     "label": "回看天数"}],
+    },
+    {
+        "id": "mean_reversion",
+        "name": "均值回归因子",
+        "description": "当前价格相对于N日均值的标准差倍数 (Z-Score)",
+        "params": [{"key": "n", "type": "int", "default": 20, "min": 5, "max": 120,
+                     "label": "均值窗口"}],
+    },
+    {
+        "id": "volatility",
+        "name": "N日波动率因子",
+        "description": "N日收益率的标准差",
+        "params": [{"key": "n", "type": "int", "default": 20, "min": 5, "max": 60,
+                     "label": "波动率窗口"}],
+    },
+    {
+        "id": "amount_ratio",
+        "name": "成交额均值比因子",
+        "description": "短期成交额均值与长期成交额均值的比值",
+        "params": [
+            {"key": "n", "type": "int", "default": 5, "min": 1, "max": 30, "label": "短期窗口"},
+            {"key": "m", "type": "int", "default": 20, "min": 10, "max": 60, "label": "长期窗口"},
+        ],
+    },
+    {
+        "id": "price_position",
+        "name": "价格位置因子",
+        "description": "收盘价在N日高低点区间的相对位置 (0~1)",
+        "params": [{"key": "n", "type": "int", "default": 20, "min": 5, "max": 120,
+                     "label": "区间天数"}],
+    },
+]
+
+
+@router.get("/factor-templates")
+def get_factor_templates():
+    """获取可用的因子模板列表 (用于前端因子编辑器)"""
+    return {"templates": FACTOR_TEMPLATES}
+
+
+# ── 因子表达式校验 (来自 qlib_factor_platform custom.py validate方法) ──
+_VALID_FIELDS = {"$open", "$high", "$low", "$close", "$volume", "$amount",
+                 "$vwap", "$market_cap", "$returns", "$pe", "$pb"}
+_VALID_FUNCTIONS = {"Ref", "Mean", "Std", "Var", "Max", "Min", "Sum", "Count",
+                    "Rank", "Quantile", "Corr", "Cov", "Slope", "Rsquare",
+                    "IdxMax", "IdxMin", "Greater", "Less", "Abs", "Sign",
+                    "Log", "Power", "Sqrt"}
+
+
+@router.post("/factor-validate")
+def validate_factor_expression(body: dict):
+    """
+    校验自定义因子表达式
+
+    请求体: {"expression": "$close/Mean($close, 20) - 1"}
+
+    返回:
+      - valid: bool
+      - error: 错误描述 (if any)
+      - fields: 检测到的字段
+      - functions: 检测到的函数
+      - complexity: "简单" | "中等" | "复杂"
+    """
+    expr = (body.get("expression") or "").strip()
+    if not expr:
+        return {"valid": False, "error": "表达式不能为空"}
+
+    import re
+
+    # 1. 检查字段
+    field_pattern = r'\$[a-zA-Z_]+'
+    found_fields = set(re.findall(field_pattern, expr))
+    invalid_fields = found_fields - _VALID_FIELDS
+    if invalid_fields:
+        return {"valid": False, "error": f"无效字段: {', '.join(invalid_fields)}",
+                "error_type": "field"}
+
+    # 2. 检查函数
+    func_pattern = r'\b([A-Z][a-zA-Z]*)\s*\('
+    found_funcs = re.findall(func_pattern, expr)
+    invalid_funcs = [f for f in found_funcs if f not in _VALID_FUNCTIONS]
+    if invalid_funcs:
+        return {"valid": False, "error": f"无效函数: {', '.join(invalid_funcs)}",
+                "error_type": "function"}
+
+    # 3. 检查除零保护
+    if "/" in expr:
+        div_parts = expr.split("/")
+        for part in div_parts[1:]:
+            part = part.strip()
+            if part.startswith("("):
+                continue
+            if "1e-12" not in part and not any(part.startswith(f + "(") for f in _VALID_FUNCTIONS):
+                return {"valid": False,
+                        "error": "除法运算缺少除零保护，建议分母添加 +1e-12",
+                        "error_type": "math"}
+
+    # 4. 复杂度
+    func_count = len(found_funcs)
+    nesting = max((expr[:i].count("(") - expr[:i].count(")") for i in range(len(expr))), default=0)
+    if func_count <= 2 and nesting <= 1:
+        complexity = "简单"
+    elif func_count <= 5 and nesting <= 2:
+        complexity = "中等"
+    else:
+        complexity = "复杂"
+
+    return {"valid": True, "fields": sorted(found_fields),
+            "functions": found_funcs, "complexity": complexity}
+
+
+# ═══════════════════════════════════════════════════════════════
+#  因子退场评估 — 源自 multi-factor-stock-selection
+# ═══════════════════════════════════════════════════════════════
+
+@router.post("/factor-retirement")
+def check_factor_retirement(body: dict):
+    """
+    因子退场评估
+
+    请求体:
+      {"factors": {"PE": [0.5, 0.4, 0.1, 0.05, 0.02], "ROE": [0.6, 0.2, 0.5, ...]}}
+
+    返回:
+      - retired: 退场因子 (连续3月ICIR<0.3)
+      - warned: 警告因子 (连续1-2月不达标)
+      - healthy: 健康因子
+      - registry_updated: 更新后的注册表统计
+    """
+    from services.factor_service import apply_factor_retirement
+
+    factors = body.get("factors", {})
+    if not factors:
+        return {"error": "请提供因子ICIR历史数据: {\"factors\": {\"factor_name\": [icir_values...]}}"}
+
+    result = apply_factor_retirement(factors)
+    return result

@@ -346,7 +346,7 @@ def _aggregate_results(
                     entry["total_score"] += float(score)
                     entry["score_count"] += 1
                 except (ValueError, TypeError):
-                    pass
+                    logger.warning("multi_agent: 聚合时分数转换失败 code=%s score=%s", code, score)
             entry["reasons"].append({
                 "agent": agent_name,
                 "color": agent_color,

@@ -3,8 +3,12 @@
 支持的供应商：MiniMax / Claude / OpenAI / OpenAI 兼容
 """
 
+import logging
+
 from anthropic import AsyncAnthropic
 from openai import AsyncOpenAI
+
+logger = logging.getLogger("stockai")
 
 from config import (
     AI_PROVIDER, CLAUDE_API_KEY, CLAUDE_MODEL,
@@ -107,7 +111,7 @@ def get_default_provider() -> str:
             if isinstance(cfg, dict) and cfg.get("default_provider"):
                 return cfg["default_provider"]
     except Exception:
-        pass
+        logger.debug("get_default_provider: settings read failed, using env fallback")
     return AI_PROVIDER or "deepseek"
 
 
@@ -208,7 +212,7 @@ def _load_stored_ai_config(provider: str = "") -> dict:
                 # 不指定 provider，返回原始数据
                 return cfg
     except Exception:
-        pass
+        logger.debug("load_stored_ai_config: settings read failed")
     return {}
 
 

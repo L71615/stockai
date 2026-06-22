@@ -55,7 +55,7 @@ def _fill_empty_names(stocks: list[dict]) -> None:
                         if s["code"] in name_map:
                             s["name"] = name_map[s["code"]]
     except Exception:
-        pass
+        logger.warning("screener_service: _fill_empty_names Baostock lookup failed", exc_info=True)
     # 2. 剩余尝试从 akshare 获取
     still_need = [s for s in need_name if not s.get("name")]
     if still_need:
@@ -66,7 +66,7 @@ def _fill_empty_names(stocks: list[dict]) -> None:
                 if n:
                     s["name"] = n
         except Exception:
-            pass
+            logger.warning("screener_service: _fill_empty_names akshare lookup failed", exc_info=True)
 
 
 def get_all_stock_list(force_refresh: bool = False) -> list[dict]:
@@ -166,10 +166,10 @@ DEFAULT_FACTOR_WEIGHTS = {
     "eps_growth": 0.04, "market_cap_ln": -0.02, "dividend_yield": 0.02,
     # 情绪类（总权重 10%）
     "strength_20d": 0.06, "momentum_composite": 0.04,
-    # 资金类（总权重 9%，北向/融资/机构）
-    "north_flow": 0.04, "margin_change": 0.03, "inst_change": 0.02,
-    # 社交情绪（雪球 + 微博，总权重 6%）
-    "social_rank": 0.02, "social_buzz": 0.02, "weibo_sentiment": 0.02,
+    # 资金类（总权重 9%，北向/机构）
+    "north_flow": 0.05, "inst_change": 0.04,
+    # 社交情绪（雪球，总权重 6%）
+    "social_rank": 0.03, "social_buzz": 0.03,
 }
 
 
@@ -316,7 +316,7 @@ def score_stock(factors: dict[str, Optional[float]],
     return round(score / total_weight, 6)
 
 
-def _process_single_stock(code: str, margin_map: dict[str, dict] = None) -> Optional[dict]:
+def _process_single_stock(code: str) -> Optional[dict]:
     """处理单只股票：取K线 → 算因子 → 返回"""
     try:
         mkt = get_market(code)
@@ -349,7 +349,7 @@ def _process_single_stock(code: str, margin_map: dict[str, dict] = None) -> Opti
                     if code in ind_map:
                         fund.update(ind_map[code])
                 except Exception:
-                    pass
+                    logger.warning("screener_service: industry map lookup failed for %s", code, exc_info=True)
             else:
                 # akshare 失败 — 完整走 Baostock
                 try:
@@ -358,9 +358,9 @@ def _process_single_stock(code: str, margin_map: dict[str, dict] = None) -> Opti
                     if isinstance(bs, dict) and "error" not in bs:
                         fund = bs
                 except Exception:
-                    pass
+                    logger.warning("screener_service: Baostock factors fallback failed for %s", code, exc_info=True)
         except Exception:
-            pass
+            logger.warning("screener_service: fundamentals fetch failed for %s", code, exc_info=True)
 
         # 注入雪球社交数据（已在 run_screener 预热缓存）
         try:
@@ -370,21 +370,15 @@ def _process_single_stock(code: str, margin_map: dict[str, dict] = None) -> Opti
         except Exception:
             fund["_social"] = {}
 
-        # 获取北向资金 / 融资融券 / 机构持仓数据
+        # 获取北向资金 / 机构持仓数据
         north_flow_data = None
-        margin_data = None
         inst_data = None
         try:
-            from services.akshare_adapter import get_north_flow, get_margin_data, get_inst_holding
+            from services.akshare_adapter import get_north_flow, get_inst_holding
             north_flow_data = get_north_flow(code)
-            # 优先用预热好的全市场 margin_map，没有则实时拉取
-            if margin_map is not None:
-                margin_data = margin_map.get(code)
-            if margin_data is None:
-                margin_data = get_margin_data(code)
             inst_data = get_inst_holding(code)
         except Exception:
-            pass
+            logger.warning("screener_service: north_flow/inst fetch failed for %s", code, exc_info=True)
 
         result = compute_all_factors(
             code=code,
@@ -396,7 +390,6 @@ def _process_single_stock(code: str, margin_map: dict[str, dict] = None) -> Opti
             prev_eps=fund.get("prev_eps"),
             dividend=fund.get("dividend"),
             north_flow_data=north_flow_data,
-            margin_data=margin_data,
             inst_data=inst_data,
         )
 
@@ -407,6 +400,7 @@ def _process_single_stock(code: str, margin_map: dict[str, dict] = None) -> Opti
 
         return result
     except Exception:
+        logger.warning("screener_service: _process_single_stock failed for %s", code, exc_info=True)
         return None
 
 
@@ -454,7 +448,7 @@ def run_screener(
         from services.baostock_adapter import _get_industry_map
         _get_industry_map()  # 一次性查询全市场行业分类，后续线程直接读缓存
     except Exception:
-        pass
+        logger.warning("screener_service: industry map preheat failed", exc_info=True)
 
     # 预热雪球人气榜缓存（一次拉取，线程内直接匹配）
     hot_stocks = []
@@ -462,16 +456,7 @@ def run_screener(
         from services.social_service import get_hot_stocks
         hot_stocks = get_hot_stocks(50)
     except Exception:
-        pass
-
-    # 预热融资融券全市场数据（2 次 AKShare 调用 → 全市场 code→margin 映射）
-    # 避免 _process_single_stock 中每只股票拉一次全市场数据
-    margin_map: dict[str, dict] = {}
-    try:
-        from services.akshare_adapter import get_all_margin_data
-        margin_map = get_all_margin_data()
-    except Exception:
-        pass
+        logger.warning("screener_service: hot stocks preheat failed", exc_info=True)
 
     # 并发计算因子
     all_factors = []
@@ -479,7 +464,7 @@ def run_screener(
     codes = [s["code"] for s in stock_list if s.get("code")]
 
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = {executor.submit(_process_single_stock, c, margin_map): c for c in codes}
+        futures = {executor.submit(_process_single_stock, c): c for c in codes}
         for i, future in enumerate(as_completed(futures)):
             try:
                 result = future.result(timeout=30)
@@ -489,8 +474,8 @@ def run_screener(
                 if progress_callback:
                     progress_callback(scanned, total)
             except Exception:
+                logger.warning("screener_service: future.result() failed for %s", futures[future], exc_info=True)
                 scanned += 1
-                pass
 
     if not all_factors:
         return {"error": "未能计算出任何有效因子", "total_stocks": total, "scanned": scanned, "candidates": []}
@@ -502,11 +487,11 @@ def run_screener(
     weights = compute_ic_weights(normalized, bench_returns)
 
     # 打分排序
+    # 名称兜底：提前构建 stock_list 查找表（O(n)），避免循环内重复构建（原 O(n²)）
+    stock_name_map = {s["code"]: s for s in stock_list}
     scored = []
     for nf in normalized:
         score = score_stock(nf["factors"], weights)
-        # 名称兜底：processor 没取到的从 stock_list 补
-        stock_name_map = {s["code"]: s for s in stock_list}
         scored.append({
             "code": nf["code"],
             "name": nf.get("name", "") or stock_name_map.get(nf["code"], {}).get("name", ""),

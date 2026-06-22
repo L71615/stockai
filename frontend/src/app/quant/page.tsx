@@ -8,13 +8,55 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { cn } from "@/lib/utils"
-import { apiGet, apiPost, isAuthenticated } from "@/lib/auth"
+import { apiGet, apiPost } from "@/lib/auth"
+import type { KlineResponse } from "@/lib/api-types"
 import { Area, AreaChart, CartesianGrid, XAxis, BarChart, Bar, Cell } from "recharts"
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from "@/components/ui/chart"
-import { IconChartBar, IconTrendingUp, IconBrain } from "@tabler/icons-react"
+import { KlineChart, type IndicatorPane } from "@/components/KlineChart"
+import { IconBrain, IconRadar2 } from "@tabler/icons-react"
+
+interface AISignal { indicator: string; value: string; reason: string }
+interface AIVerdict { verdict: string; signals: AISignal[] }
+interface RiskAlert { level: "warn" | "info"; message: string }
+interface AIExplainData {
+  error?: string
+  stock?: { code: string; name: string }
+  technical?: AIVerdict
+  fundamental?: AIVerdict
+  risk_alerts?: RiskAlert[]
+}
+
+interface AlertItem {
+  id: number; stock_code: string; alert_type: string
+  target_value: number; created_at: string
+}
+
+interface FactorCategory {
+  key: string; name: string
+  score_avg: number | null; factor_count: number; done_count: number
+  factors: { name: string; display: string; value: unknown; score: number | null; status: string; direction: string }[]
+}
+
+interface FactorPanelData {
+  code: string; price: number; date: string
+  overall_score: number | null
+  categories: FactorCategory[]
+  hit_count: number; registry_summary?: { done: number; total_registered: number }
+}
+
+interface TurtleData {
+  error?: string
+  atr_20: number | null; sys1_entry: number | null; sys2_entry: number | null
+  sys1_exit: number | null; sys2_exit: number | null
+  distance_sys1_pct: number | null; distance_sys2_pct: number | null
+  sys1_triggered: boolean; sys2_triggered: boolean
+  sys1_exit_triggered: boolean; sys2_exit_triggered: boolean
+  channel_position: number | null; turtle_score: number; details: string[]
+}
 
 interface StockInsight {
   code: string; name: string; price?: number; change_pct?: number
@@ -26,7 +68,8 @@ interface StockInsight {
   }
   signal?: string
   factors?: Record<string, unknown>
-  kline?: { dates?: string[]; closes?: number[] }
+  kline?: KlineResponse
+  turtle?: TurtleData
 }
 
 interface RiskKPI {
@@ -38,6 +81,11 @@ interface CorrelationItem { code1: string; code2: string; value: number }
 interface BacktestResult {
   total_invested?: number; final_value?: number; total_return?: number
   lump_sum_return?: number; conclusion?: string
+}
+
+interface CompareStrategyItem {
+  total_invested?: number; final_value?: number
+  return?: number; trades?: number
 }
 
 interface CompareResult {
@@ -77,9 +125,35 @@ function QuantPageInner() {
   const [mcSims, setMcSims] = useState("100")
   const [mcResult, setMcResult] = useState<MCResult | null>(null)
 
+  // AI explain
+  const [aiExplain, setAiExplain] = useState<AIExplainData | null>(null)
+  const [aiLoading, setAiLoading] = useState(false)
+
+  // KlineChart indicators
+  const [activeIndicators, setActiveIndicators] = useState<IndicatorPane[]>(["volume"])
+
+  // Quick selector
+  const [quickData, setQuickData] = useState<{ holdings: { code: string; name: string }[]; watchlist: { code: string; name: string }[] }>({ holdings: [], watchlist: [] })
+  const [selectorOpen, setSelectorOpen] = useState(false)
+
+  // Alerts
+  const [alerts, setAlerts] = useState<AlertItem[]>([])
+  const [alertsLoading, setAlertsLoading] = useState(false)
+
+  // Factor panel
+  const [factorData, setFactorData] = useState<FactorPanelData | null>(null)
+  const [factorLoading, setFactorLoading] = useState(false)
+
+  // Load alerts + quick selector data on mount
   useEffect(() => {
-    if (!isAuthenticated()) { router.push("/login"); return }
-  }, [router])
+    fetchAlerts()
+    apiGet<{ stock_code: string; stock_name: string }[]>("/api/stocks/holdings").then((d) => {
+      if (Array.isArray(d)) setQuickData((prev) => ({ ...prev, holdings: d.map((h) => ({ code: h.stock_code, name: h.stock_name })) }))
+    }).catch(() => {})
+    apiGet<{ stock_code: string; stock_name: string }[]>("/api/stocks/watchlist").then((d) => {
+      if (Array.isArray(d)) setQuickData((prev) => ({ ...prev, watchlist: d.map((w) => ({ code: w.stock_code, name: w.stock_name })) }))
+    }).catch(() => {})
+  }, [])
 
   // 从 screener 跳转过来时自动查询
   useEffect(() => {
@@ -138,17 +212,53 @@ function QuantPageInner() {
     if (!code.trim()) return
     setLoading(true)
     try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const data = await apiPost<any>("/api/quant/compare", { code: code.trim(), amount: Number(btAmount) || 1000, start_date: "2024-01-01", end_date: "2025-01-01" })
+      const data = await apiPost<{ strategies: Record<string, CompareStrategyItem> }>("/api/quant/compare", { code: code.trim(), amount: Number(btAmount) || 1000, start_date: "2024-01-01", end_date: "2025-01-01" })
       if (data?.strategies) {
         const arr: CompareResult[] = []
-        for (const [name, s] of Object.entries(data.strategies) as [string, Record<string, unknown>][]) {
-          arr.push({ name, total_invested: (s.total_invested as number) || 0, final_value: (s.final_value as number) || 0, return: (s.return as number) || 0, trades: (s.trades as number) || 0 })
+        for (const [name, s] of Object.entries(data.strategies)) {
+          arr.push({ name, total_invested: s.total_invested || 0, final_value: s.final_value || 0, return: s.return || 0, trades: s.trades || 0 })
         }
         setCompareResult(arr)
       }
     } catch { /* */ }
     finally { setLoading(false) }
+  }
+
+  const fetchAIExplain = async () => {
+    if (!code.trim()) return
+    setAiLoading(true); setAiExplain(null); setError(null)
+    try {
+      const data = await apiPost<AIExplainData>(`/api/quant/stock/${code.trim()}/explain`, {})
+      setAiExplain(data)
+    } catch (err) { setError(err instanceof Error ? err.message : "AI 解读失败") }
+    finally { setAiLoading(false) }
+  }
+
+  const fetchAlerts = async () => {
+    setAlertsLoading(true)
+    try {
+      const data = await apiGet<AlertItem[]>("/api/stocks/alerts")
+      setAlerts(Array.isArray(data) ? data : [])
+    } catch { /* alerts are optional */ }
+    finally { setAlertsLoading(false) }
+  }
+
+  const deleteAlert = async (id: number) => {
+    try {
+      await apiPost(`/api/stocks/alerts/${id}`, undefined, "DELETE")
+      setAlerts((prev) => prev.filter((a) => a.id !== id))
+    } catch { /* alerts are optional */ }
+  }
+
+  const fetchFactors = async () => {
+    if (!code.trim()) return
+    setFactorLoading(true); setFactorData(null)
+    try {
+      const data = await apiGet<FactorPanelData>(`/api/quant/factor-panel/${code.trim()}?days=${days}`)
+      setFactorData(data)
+      setTab("factors")
+    } catch (err) { setError(err instanceof Error ? err.message : "因子加载失败") }
+    finally { setFactorLoading(false) }
   }
 
   const runMC = async () => {
@@ -163,30 +273,112 @@ function QuantPageInner() {
     finally { setLoading(false) }
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const klineData = (insight?.kline as any) || []
-  const priceChartConfig = { close: { label: "价格", color: "#ef5350" } } satisfies ChartConfig
-
   return (
     <>
       <SiteHeader title="量化分析" />
       <div className="flex flex-1 flex-col overflow-auto p-4 lg:p-6 space-y-4">
-        {/* Stock input */}
+        {/* Stock input + Quick Selector */}
         <div className="flex flex-wrap items-end gap-2">
-          <div className="space-y-1">
+          <div className="relative space-y-1">
             <Label className="text-xs">股票代码</Label>
-            <Input value={code} onChange={(e) => setCode(e.target.value)} placeholder="000001" className="h-8 w-28 font-mono" />
+            <div className="flex gap-0">
+              <Input value={code} onChange={(e) => setCode(e.target.value)} onKeyDown={(e) => e.key === "Enter" && fetchInsight()} placeholder="000001" className="h-8 w-28 font-mono rounded-none" />
+              <button
+                onClick={() => setSelectorOpen(!selectorOpen)}
+                className="h-8 px-2 border border-l-0 border-input bg-background text-muted-foreground hover:text-foreground text-xs"
+                title="快速选择"
+              >
+                ▼
+              </button>
+            </div>
+            {selectorOpen && (
+              <div className="absolute top-full left-0 mt-1 w-64 border border-border bg-background shadow-lg z-50 rounded-none">
+                <div className="p-1">
+                  {/* Holdings group */}
+                  {quickData.holdings.length > 0 && (
+                    <div className="mb-1">
+                      <p className="text-[10px] text-muted-foreground px-2 py-0.5">我的持仓</p>
+                      {quickData.holdings.map((h) => (
+                        <button
+                          key={h.code}
+                          className="w-full text-left px-3 py-1 text-xs hover:bg-muted flex justify-between"
+                          onClick={() => { setCode(h.code); setSelectorOpen(false); setTimeout(() => fetchInsight(), 50) }}
+                        >
+                          <span className="font-mono">{h.code}</span>
+                          <span className="text-muted-foreground truncate ml-2">{h.name}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  {/* Watchlist group */}
+                  {quickData.watchlist.length > 0 && (
+                    <div className="mb-1">
+                      <p className="text-[10px] text-muted-foreground px-2 py-0.5">我的自选</p>
+                      {quickData.watchlist.slice(0, 10).map((w) => (
+                        <button
+                          key={w.code}
+                          className="w-full text-left px-3 py-1 text-xs hover:bg-muted flex justify-between"
+                          onClick={() => { setCode(w.code); setSelectorOpen(false); setTimeout(() => fetchInsight(), 50) }}
+                        >
+                          <span className="font-mono">{w.code}</span>
+                          <span className="text-muted-foreground truncate ml-2">{w.name}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  {/* Turtle Top10 group */}
+                  <div>
+                    <p className="text-[10px] text-muted-foreground px-2 py-0.5">
+                      今日海龟 Top10
+                      <span className="text-orange-400 ml-1">{new Date().toISOString().slice(5, 10)}</span>
+                    </p>
+                    {[
+                      { code: "002171", name: "楚江新材" },
+                      { code: "600063", name: "皖维高新" },
+                      { code: "000630", name: "铜陵有色" },
+                      { code: "000725", name: "京东方A" },
+                      { code: "002057", name: "中钢天源" },
+                      { code: "600703", name: "三安光电" },
+                      { code: "002734", name: "利民股份" },
+                      { code: "300146", name: "汤臣倍健" },
+                      { code: "300401", name: "花园生物" },
+                      { code: "600246", name: "万通发展" },
+                    ].map((t) => (
+                      <button
+                        key={t.code}
+                        className="w-full text-left px-3 py-1 text-xs hover:bg-muted flex justify-between"
+                        onClick={() => { setCode(t.code); setSelectorOpen(false); setTimeout(() => fetchInsight(), 50) }}
+                      >
+                        <span className="font-mono">{t.code}</span>
+                        <span className="text-muted-foreground truncate ml-2">{t.name}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className="border-t border-border p-1">
+                  <button
+                    className="w-full text-center text-[10px] text-muted-foreground hover:text-foreground py-0.5"
+                    onClick={() => setSelectorOpen(false)}
+                  >
+                    关闭
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
           <div className="space-y-1">
             <Label className="text-xs">周期</Label>
-            <select value={days} onChange={(e) => setDays(e.target.value)} className="h-8 rounded-none border border-input bg-background text-foreground px-2 text-xs">
-              <option value="30">30天</option><option value="60">60天</option><option value="120">120天</option>
-            </select>
+            <Select value={days} onValueChange={setDays}>
+              <SelectTrigger className="h-8 text-xs w-auto min-w-[90px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent className="max-h-48">
+                <SelectItem value="30">30天</SelectItem>
+                <SelectItem value="60">60天</SelectItem>
+                <SelectItem value="120">120天</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
-          <Button size="sm" onClick={fetchInsight} disabled={loading}>查看</Button>
-          <Button size="sm" variant="outline" onClick={() => { fetchRisk(); setTab("risk") }}>
-            <IconChartBar className="size-3.5 mr-1" />组合风险
-          </Button>
         </div>
 
         {error && <p className="text-xs text-red-500">{error}</p>}
@@ -197,6 +389,7 @@ function QuantPageInner() {
             <TabsTrigger value="risk" className="text-xs">组合风险</TabsTrigger>
             <TabsTrigger value="backtest" className="text-xs">策略回测</TabsTrigger>
             <TabsTrigger value="mc" className="text-xs">蒙特卡洛</TabsTrigger>
+            <TabsTrigger value="factors" className="text-xs">因子分析</TabsTrigger>
           </TabsList>
 
           {/* Tab 1: Stock Insight */}
@@ -210,51 +403,236 @@ function QuantPageInner() {
                   <span>{insight.name}</span>
                 </div>
 
-                {/* K-line chart */}
-                {klineData.length > 0 && (
+                {/* K-line chart — lightweight-charts 蜡烛图 */}
+                {insight.kline?.dates?.length ? (
                   <Card>
-                    <CardContent className="pt-4">
-                      <ChartContainer config={priceChartConfig} className="h-[250px] sm:h-[300px] w-full">
-                        <AreaChart data={klineData}>
-                          <CartesianGrid vertical={false} strokeDasharray="3 3" />
-                          <XAxis dataKey="date" tickLine={false} axisLine={false} tickMargin={8} minTickGap={32}
-                            tickFormatter={(v) => String(v).slice(5)} />
-                          <ChartTooltip content={<ChartTooltipContent indicator="dot" />} />
-                          <Area dataKey="close" type="monotone" fill="var(--color-close)" fillOpacity={0.1}
-                            stroke="var(--color-close)" strokeWidth={1.5} />
-                        </AreaChart>
-                      </ChartContainer>
+                    <CardHeader className="pb-2">
+                      <div className="flex items-center justify-between">
+                        <CardTitle className="text-sm">K线图表</CardTitle>
+                        <div className="flex gap-1">
+                          {([
+                            { key: "volume" as IndicatorPane, label: "VOL" },
+                            { key: "bollinger" as IndicatorPane, label: "BOLL" },
+                            { key: "macd" as IndicatorPane, label: "MACD" },
+                            { key: "rsi" as IndicatorPane, label: "RSI" },
+                            { key: "kdj" as IndicatorPane, label: "KDJ" },
+                          ]).map(({ key, label }) => (
+                            <button
+                              key={key}
+                              onClick={() => setActiveIndicators((prev) =>
+                                prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]
+                              )}
+                              className={`px-2 py-0.5 text-[10px] border transition-colors ${
+                                activeIndicators.includes(key)
+                                  ? "bg-primary text-primary-foreground border-primary"
+                                  : "border-border text-muted-foreground hover:text-foreground"
+                              }`}
+                            >
+                              {label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </CardHeader>
+                    <CardContent>
+                      <KlineChart
+                        rawData={insight.kline as KlineResponse}
+                        height={400}
+                        indicators={activeIndicators}
+                        turtleOverlay={insight.turtle ? {
+                          sys1_entry: insight.turtle.sys1_entry,
+                          sys2_entry: insight.turtle.sys2_entry,
+                          sys1_exit: insight.turtle.sys1_exit,
+                          sys2_exit: insight.turtle.sys2_exit,
+                          sys1_triggered: insight.turtle.sys1_triggered,
+                          sys2_triggered: insight.turtle.sys2_triggered,
+                        } : undefined}
+                      />
+                    </CardContent>
+                  </Card>
+                ) : null}
+
+                {/* Turtle Trading Card */}
+                {insight.turtle && !insight.turtle.error && (
+                  <Card className="border-l-[3px] border-l-orange-400">
+                    <CardContent className="py-3">
+                      <div className="flex items-center justify-between mb-2">
+                        <p className="text-xs text-orange-400 font-medium">海龟交易法</p>
+                        <Badge className={`text-[10px] ${
+                          insight.turtle.turtle_score >= 70 ? "bg-red-500/20 text-red-400" :
+                          insight.turtle.turtle_score >= 50 ? "bg-orange-500/20 text-orange-400" :
+                          "bg-muted text-muted-foreground"
+                        }`}>
+                          评分 {insight.turtle.turtle_score}/100
+                        </Badge>
+                      </div>
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+                        <div className="space-y-0.5">
+                          <span className="text-muted-foreground">S1入场(20日高)</span>
+                          <p className={`font-mono font-medium ${insight.turtle.sys1_triggered ? "text-red-400" : ""}`}>
+                            {insight.turtle.sys1_entry?.toFixed(2) ?? "--"}
+                            {insight.turtle.sys1_triggered && " 🔥"}
+                          </p>
+                        </div>
+                        <div className="space-y-0.5">
+                          <span className="text-muted-foreground">S2入场(55日高)</span>
+                          <p className={`font-mono font-medium ${insight.turtle.sys2_triggered ? "text-red-400" : ""}`}>
+                            {insight.turtle.sys2_entry?.toFixed(2) ?? "--"}
+                            {insight.turtle.sys2_triggered && " 🔥"}
+                          </p>
+                        </div>
+                        <div className="space-y-0.5">
+                          <span className="text-muted-foreground">S1出场(10日低)</span>
+                          <p className={`font-mono font-medium ${insight.turtle.sys1_exit_triggered ? "text-emerald-400" : ""}`}>
+                            {insight.turtle.sys1_exit?.toFixed(2) ?? "--"}
+                          </p>
+                        </div>
+                        <div className="space-y-0.5">
+                          <span className="text-muted-foreground">S2出场(20日低)</span>
+                          <p className={`font-mono font-medium ${insight.turtle.sys2_exit_triggered ? "text-emerald-400" : ""}`}>
+                            {insight.turtle.sys2_exit?.toFixed(2) ?? "--"}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-3 gap-2 mt-2 text-[11px]">
+                        <div>
+                          <span className="text-muted-foreground">ATR(N): </span>
+                          <span className="font-mono">{insight.turtle.atr_20?.toFixed(3) ?? "--"}</span>
+                        </div>
+                        <div>
+                          <span className="text-muted-foreground">止损2N: </span>
+                          <span className="font-mono">{insight.turtle.atr_20 ? (insight.turtle.atr_20 * 2).toFixed(3) : "--"}</span>
+                        </div>
+                        <div>
+                          <span className="text-muted-foreground">仓位/万元: </span>
+                          <span className="font-mono">{insight.turtle.atr_20 ? Math.floor(100 / insight.turtle.atr_20) : "--"}股</span>
+                        </div>
+                      </div>
+                      {insight.turtle.details.length > 0 && (
+                        <div className="flex flex-wrap gap-1 mt-2">
+                          {insight.turtle.details.map((d, i) => (
+                            <Badge key={i} variant="outline" className="text-[10px]">{d}</Badge>
+                          ))}
+                        </div>
+                      )}
                     </CardContent>
                   </Card>
                 )}
 
-                {/* Indicators */}
+                {/* AI 解读 — inline in insight tab */}
+                {!aiExplain && !aiLoading && (
+                  <div className="flex items-center gap-2">
+                    <Button size="sm" variant="outline" onClick={fetchAIExplain} disabled={aiLoading}>
+                      <IconBrain className="size-3.5 mr-1" />AI 解读
+                    </Button>
+                    <span className="text-[10px] text-muted-foreground">
+                      需要配置 AI Key 后使用
+                    </span>
+                  </div>
+                )}
+
+                {/* AI Explain Result */}
+                {aiLoading ? (
+                  <Card>
+                    <CardContent className="py-8 text-center space-y-2">
+                      <IconBrain className="size-6 mx-auto text-muted-foreground animate-pulse" />
+                      <p className="text-sm text-muted-foreground">AI 正在分析中...</p>
+                    </CardContent>
+                  </Card>
+                ) : aiExplain ? (
+                  aiExplain.error ? (
+                    <Card className="border-l-[3px] border-l-red-400">
+                      <CardContent className="py-3">
+                        <p className="text-xs text-red-400">{aiExplain.error}</p>
+                      </CardContent>
+                    </Card>
+                  ) : (
+                    <Card className="border-l-[3px] border-l-purple-400">
+                      <CardHeader className="pb-2">
+                        <CardTitle className="text-sm flex items-center gap-2">
+                          <IconBrain className="size-4 text-purple-400" />
+                          AI 量化解读
+                          <span className="text-[10px] text-muted-foreground font-normal">
+                            {aiExplain.stock?.name} ({aiExplain.stock?.code})
+                          </span>
+                        </CardTitle>
+                      </CardHeader>
+                      <CardContent className="space-y-3">
+                        {/* Technical */}
+                        {aiExplain.technical && (
+                          <div className="space-y-1.5">
+                            <div className="flex items-center gap-2">
+                              <Badge variant="outline" className="text-[10px] border-purple-400/30 text-purple-400">技术面</Badge>
+                              <span className="text-sm font-medium">{aiExplain.technical.verdict}</span>
+                            </div>
+                            {aiExplain.technical.signals.map((s, i) => (
+                              <div key={i} className="flex gap-2 text-xs pl-2 border-l-2 border-purple-400/20">
+                                <span className="text-muted-foreground shrink-0">{s.indicator}:</span>
+                                <span className="font-mono shrink-0">{s.value}</span>
+                                <span className="text-muted-foreground">— {s.reason}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+
+                        {/* Fundamental */}
+                        {aiExplain.fundamental && (
+                          <div className="space-y-1.5">
+                            <div className="flex items-center gap-2">
+                              <Badge variant="outline" className="text-[10px] border-blue-400/30 text-blue-400">基本面</Badge>
+                              <span className="text-sm font-medium">{aiExplain.fundamental.verdict}</span>
+                            </div>
+                            {aiExplain.fundamental.signals.map((s, i) => (
+                              <div key={i} className="flex gap-2 text-xs pl-2 border-l-2 border-blue-400/20">
+                                <span className="text-muted-foreground shrink-0">{s.indicator}:</span>
+                                <span className="font-mono shrink-0">{s.value}</span>
+                                <span className="text-muted-foreground">— {s.reason}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+
+                        {/* Risk Alerts */}
+                        {aiExplain.risk_alerts && aiExplain.risk_alerts.length > 0 && (
+                          <div className="space-y-1">
+                            {aiExplain.risk_alerts.map((r, i) => (
+                              <div key={i} className={`text-xs flex items-start gap-1.5 ${
+                                r.level === "warn" ? "text-orange-400" : "text-muted-foreground"
+                              }`}>
+                                <span className="shrink-0 mt-0.5">
+                                  {r.level === "warn" ? "⚠" : "ℹ"}
+                                </span>
+                                <span>{r.message}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </CardContent>
+                    </Card>
+                  )
+                ) : null}
+
+                {/* Indicators summary */}
                 {insight.indicators && (
                   <Card>
-                    <CardHeader className="pb-2"><CardTitle className="text-sm">技术指标</CardTitle></CardHeader>
+                    <CardHeader className="pb-2"><CardTitle className="text-sm">技术指标摘要</CardTitle></CardHeader>
                     <CardContent>
-                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                      <div className="grid grid-cols-3 sm:grid-cols-6 gap-2 text-center">
                         {Object.entries(insight.indicators)
-                          .filter(([key]) => key !== "signal")  // signal shown separately below
-                          .map(([key, val]) => (
-                          <div key={key} className="border border-border rounded-none p-2">
-                            <p className="text-[10px] text-muted-foreground uppercase">{key}</p>
-                            {typeof val === "object" && val !== null ? (
-                              <div className="space-y-0.5">
-                                {Object.entries(val as Record<string, unknown>).map(([k, v]) => (
-                                  <p key={k} className="text-xs font-mono">
-                                    <span className="text-muted-foreground">{k}</span>{" "}
-                                    <span className="font-medium">{typeof v === "number" ? v.toFixed(v < 1 ? 4 : 2) : String(v)}</span>
-                                  </p>
-                                ))}
+                          .filter(([key]) => key !== "signal")
+                          .map(([key, val]) => {
+                            const latest = typeof val === "object" && val !== null
+                              ? Object.entries(val as Record<string, unknown>).slice(0, 1).map(([k, v]) => ({ k, v }))
+                              : [{ k: key, v: val }]
+                            return latest.map(({ k, v }) => (
+                              <div key={`${key}-${k}`} className="border border-border rounded-none p-1.5">
+                                <p className="text-[10px] text-muted-foreground">{k}</p>
+                                <p className="text-xs font-mono font-medium">
+                                  {typeof v === "number" ? v.toFixed(v < 1 ? 4 : 2) : String(v)}
+                                </p>
                               </div>
-                            ) : (
-                              <p className="text-sm font-mono font-medium">
-                                {typeof val === "number" ? val.toFixed(2) : String(val)}
-                              </p>
-                            )}
-                          </div>
-                        ))}
+                            ))
+                          })}
                       </div>
                     </CardContent>
                   </Card>
@@ -344,9 +722,15 @@ function QuantPageInner() {
                   </div>
                   <div className="space-y-1">
                     <Label className="text-xs">频率</Label>
-                    <select value={btFreq} onChange={(e) => setBtFreq(e.target.value)} className="h-8 rounded-none border border-input bg-background text-foreground px-2 text-xs">
-                      <option value="weekly">每周</option><option value="monthly">每月</option>
-                    </select>
+                    <Select value={btFreq} onValueChange={setBtFreq}>
+                      <SelectTrigger className="h-8 text-xs w-auto min-w-[80px]">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent className="max-h-48">
+                        <SelectItem value="weekly">每周</SelectItem>
+                        <SelectItem value="monthly">每月</SelectItem>
+                      </SelectContent>
+                    </Select>
                   </div>
                   <Button size="sm" onClick={runBacktest} disabled={loading}>定投回测</Button>
                   <Button size="sm" variant="outline" onClick={runCompare} disabled={loading}>策略对比</Button>
@@ -444,7 +828,187 @@ function QuantPageInner() {
               </Card>
             )}
           </TabsContent>
+
+          {/* Tab 5: Factor Panel */}
+          <TabsContent value="factors" className="space-y-4">
+            {factorLoading ? (
+              <div className="space-y-3"><Skeleton className="h-[300px] w-full" /><Skeleton className="h-20 w-full" /></div>
+            ) : factorData ? (
+              <>
+                {/* Overall Score */}
+                <Card className="border-l-[3px] border-l-purple-400">
+                  <CardContent className="py-4">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-xs text-muted-foreground">综合因子评分</p>
+                        <p className="text-3xl font-bold font-mono mt-1">
+                          {factorData.overall_score ?? "--"}
+                          <span className="text-xs text-muted-foreground font-normal ml-1">/100</span>
+                        </p>
+                      </div>
+                      <div className="text-right text-xs text-muted-foreground">
+                        <p>{factorData.code} {factorData.date?.slice(0,10)}</p>
+                        <p>已激活 {factorData.hit_count}/{factorData.registry_summary?.done ?? "?"} 因子</p>
+                      </div>
+                    </div>
+                    {/* Score bar */}
+                    <div className="mt-2 w-full h-2 bg-muted rounded-none overflow-hidden">
+                      <div
+                        className="h-full transition-all"
+                        style={{
+                          width: `${factorData.overall_score ?? 0}%`,
+                          background: (factorData.overall_score ?? 0) >= 60 ? "#26a69a" : (factorData.overall_score ?? 0) >= 40 ? "#ffa726" : "#ef5350"
+                        }}
+                      />
+                    </div>
+                  </CardContent>
+                </Card>
+
+                {/* Radar-like bar chart for categories */}
+                <Card>
+                  <CardHeader className="pb-2"><CardTitle className="text-sm">因子维度雷达</CardTitle></CardHeader>
+                  <CardContent>
+                    <div className="space-y-3">
+                      {factorData.categories.map((cat) => {
+                        const score = cat.score_avg
+                        const color = !score ? "var(--muted-foreground)" : score >= 60 ? "#26a69a" : score >= 40 ? "#ffa726" : "#ef5350"
+                        return (
+                          <div key={cat.key} className="space-y-1">
+                            <div className="flex justify-between text-xs">
+                              <span className="font-medium">{cat.name}</span>
+                              <span className="font-mono text-muted-foreground">
+                                {score ?? "--"} / 100 ({cat.done_count}/{cat.factor_count})
+                              </span>
+                            </div>
+                            <div className="w-full h-3 bg-muted rounded-none overflow-hidden">
+                              <div className="h-full transition-all rounded-none" style={{ width: `${score ?? 0}%`, background: color }} />
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </CardContent>
+                </Card>
+
+                {/* Factor details per category */}
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                  {factorData.categories.map((cat) => (
+                    <Card key={cat.key}>
+                      <CardHeader className="pb-1">
+                        <CardTitle className="text-xs flex items-center justify-between">
+                          <span>{cat.name}</span>
+                          <Badge variant="outline" className="text-[10px]">
+                            {cat.done_count}/{cat.factor_count}
+                          </Badge>
+                        </CardTitle>
+                      </CardHeader>
+                      <CardContent>
+                        {cat.factors.length === 0 ? (
+                          <p className="text-xs text-muted-foreground">暂无数据</p>
+                        ) : (
+                          <div className="space-y-1.5">
+                            {cat.factors.map((f) => {
+                              const isDone = f.status === "done"
+                              const score = f.score
+                              const color = !isDone ? "var(--muted)" :
+                                (score ?? 0) >= 60 ? "#26a69a" :
+                                (score ?? 0) >= 40 ? "#ffa726" : "#ef5350"
+                              return (
+                                <div key={f.name} className="flex items-center gap-2">
+                                  <div className="flex-1 min-w-0">
+                                    <div className="flex justify-between text-[11px]">
+                                      <span className={cn("truncate", !isDone && "text-muted-foreground")}>
+                                        {f.display}
+                                        {f.direction === "正向" ? "↑" : f.direction === "负向" ? "↓" : ""}
+                                      </span>
+                                      <span className="font-mono ml-1 shrink-0">
+                                        {isDone && score != null ? score : (isDone ? "--" : "待开发")}
+                                      </span>
+                                    </div>
+                                    {isDone && score != null && (
+                                      <div className="w-full h-1.5 bg-muted rounded-none overflow-hidden mt-0.5">
+                                        <div className="h-full rounded-none" style={{ width: `${score}%`, backgroundColor: color }} />
+                                      </div>
+                                    )}
+                                  </div>
+                                  {isDone && f.value != null && f.value !== 0 && (
+                                    <span className="text-[10px] font-mono text-muted-foreground w-14 text-right shrink-0 truncate">
+                                      {typeof f.value === "number" ? f.value.toFixed(f.value < 0.01 ? 6 : 3) : String(f.value).slice(0, 8)}
+                                    </span>
+                                  )}
+                                </div>
+                              )
+                            })}
+                          </div>
+                        )}
+                      </CardContent>
+                    </Card>
+                  ))}
+                </div>
+              </>
+            ) : (
+              <Card>
+                <CardContent className="py-12 text-center space-y-2">
+                  <IconRadar2 className="size-8 mx-auto text-muted-foreground" />
+                  <p className="text-sm text-muted-foreground">输入代码后点击"查看因子"</p>
+                  <p className="text-xs text-muted-foreground">展示 7 大类 59 因子的完整评分</p>
+                  <Button size="sm" onClick={fetchFactors} disabled={!code.trim()}>查看因子</Button>
+                </CardContent>
+              </Card>
+            )}
+          </TabsContent>
         </Tabs>
+
+        {/* My Alerts Panel */}
+        {!alertsLoading && alerts.length > 0 && (
+          <Card className="border-l-[3px] border-l-orange-400">
+            <CardHeader className="pb-1">
+              <CardTitle className="text-sm flex items-center gap-2">
+                <span className="text-orange-400">我的提醒</span>
+                <Badge variant="outline" className="text-[10px]">{alerts.length}</Badge>
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                {alerts.map((a) => {
+                  const typeLabel = a.alert_type === "turtle_s1_entry" ? "海龟S1入场" :
+                    a.alert_type === "turtle_s2_entry" ? "海龟S2入场" :
+                    a.alert_type
+                  const isTriggered = insight && insight.code === a.stock_code &&
+                    insight.price != null && insight.price >= a.target_value
+                  return (
+                    <div key={a.id} className={`border rounded-none p-2 flex items-center justify-between ${
+                      isTriggered ? "border-red-400/50 bg-red-500/5" : "border-border"
+                    }`}>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-xs font-mono font-medium">{a.stock_code}</span>
+                          <Badge variant="outline" className={`text-[10px] ${
+                            isTriggered ? "text-red-400 border-red-400/30" : ""
+                          }`}>
+                            {typeLabel}
+                          </Badge>
+                        </div>
+                        <p className="text-[11px] text-muted-foreground mt-0.5">
+                          目标价: <span className="font-mono">{a.target_value.toFixed(2)}</span>
+                          {isTriggered && (
+                            <span className="text-red-400 ml-1">触发!</span>
+                          )}
+                        </p>
+                      </div>
+                      <button
+                        onClick={() => deleteAlert(a.id)}
+                        className="text-[10px] text-muted-foreground hover:text-red-400 shrink-0 ml-2"
+                      >
+                        删除
+                      </button>
+                    </div>
+                  )
+                })}
+              </div>
+            </CardContent>
+          </Card>
+        )}
       </div>
     </>
   )

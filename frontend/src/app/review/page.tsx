@@ -8,8 +8,9 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { cn } from "@/lib/utils"
-import { apiGet, apiPost, isAuthenticated } from "@/lib/auth"
+import { apiGet, apiPost } from "@/lib/auth"
 import { IconBrain, IconChevronDown, IconChevronRight, IconHistory } from "@tabler/icons-react"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 
 interface Dimension {
   title: string
@@ -27,7 +28,7 @@ interface ReviewData {
   id?: number
   created_at?: string
   total_pnl?: number
-  trade_count?: number
+  transactions_count?: number
   avg_score?: number
   ai_headline?: string
   dimensions?: Dimension[]
@@ -64,7 +65,6 @@ export default function ReviewPage() {
   }, [])
 
   useEffect(() => {
-    if (!isAuthenticated()) { router.push("/login"); return }
     fetchLatest()
   }, [fetchLatest, router])
 
@@ -81,7 +81,7 @@ export default function ReviewPage() {
     finally { setGenerating(false) }
     // Refresh latest in background (no loading flash)
     try {
-      const revs = await apiGet<ReviewData[]>("api/stocks/reviews?limit=10")
+      const revs = await apiGet<ReviewData[]>("/api/stocks/reviews?limit=10")
       if (Array.isArray(revs)) setHistory(revs)
     } catch { /* optional */ }
   }
@@ -119,18 +119,18 @@ export default function ReviewPage() {
           </Button>
           {genError && <p className="text-xs text-red-500">{genError}</p>}
           {history.length > 0 && (
-            <select
-              className="h-8 rounded-none border border-input bg-background text-foreground px-2 text-xs"
-              onChange={(e) => { const id = Number(e.target.value); if (id) loadReview(id) }}
-              defaultValue=""
-            >
-              <option value="" disabled>历史报告</option>
-              {history.map((h) => (
-                <option key={h.id} value={h.id}>
-                  {h.created_at?.slice(0, 10)} · {h.trade_count || 0} 笔交易
-                </option>
-              ))}
-            </select>
+            <Select onValueChange={(v) => { const id = Number(v); if (id) loadReview(id) }}>
+              <SelectTrigger className="h-8 text-xs w-auto min-w-[140px]">
+                <SelectValue placeholder="历史报告" />
+              </SelectTrigger>
+              <SelectContent className="max-h-48">
+                {history.map((h) => (
+                  <SelectItem key={h.id} value={String(h.id)}>
+                    {h.created_at?.slice(0, 10)} · {h.transactions_count || 0} 笔交易
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           )}
         </div>
 
@@ -161,7 +161,7 @@ export default function ReviewPage() {
             <div className="grid grid-cols-3 gap-3">
               <StatCard label="总盈亏" value={review.total_pnl ? `¥ ${review.total_pnl.toLocaleString()}` : "--"}
                 className={review.total_pnl && review.total_pnl > 0 ? "text-red-500" : review.total_pnl && review.total_pnl < 0 ? "text-emerald-500" : ""} />
-              <StatCard label="交易次数" value={review.trade_count?.toString() || "--"} />
+              <StatCard label="交易次数" value={review.transactions_count?.toString() || "--"} />
               <StatCard label="综合评分" value={review.avg_score ? `${review.avg_score} 分` : "--"} />
             </div>
 

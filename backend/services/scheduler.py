@@ -1,10 +1,13 @@
 """StockAI — 后台定时任务（DCA 邮件提醒）"""
 
+import logging
 import threading
 import time
 from datetime import datetime, timedelta
 
 from database import query_all, query_one, execute
+
+logger = logging.getLogger("stockai")
 
 
 def _check_and_remind():
@@ -49,7 +52,7 @@ def start_dca_reminder_thread(interval_seconds: int = 3600):
             try:
                 _check_and_remind()
             except Exception:
-                pass  # 静默吞掉所有异常，保证线程不挂
+                logger.warning("scheduler: DCA提醒线程异常", exc_info=True)
             time.sleep(interval_seconds)
 
     t = threading.Thread(target=_loop, daemon=True, name="dca-reminder")
@@ -79,7 +82,7 @@ def _check_and_run_kol_daily():
             # 有新帖子才生成日报
             generate_brief(user_id=1)
     except Exception:
-        pass
+        logger.warning("scheduler: KOL日报生成失败", exc_info=True)
 
 
 def start_kol_daily_thread(interval_seconds: int = 1800):
@@ -89,7 +92,7 @@ def start_kol_daily_thread(interval_seconds: int = 1800):
             try:
                 _check_and_run_kol_daily()
             except Exception:
-                pass
+                logger.warning("scheduler: KOL日报线程异常", exc_info=True)
             time.sleep(interval_seconds)
 
     t = threading.Thread(target=_loop, daemon=True, name="kol-daily")

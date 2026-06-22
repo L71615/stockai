@@ -10,9 +10,14 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { Progress } from "@/components/ui/progress"
 import { Separator } from "@/components/ui/separator"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { cn } from "@/lib/utils"
-import { apiGet, apiPost, isAuthenticated } from "@/lib/auth"
+import { apiGet, apiPost } from "@/lib/auth"
 import { IconSearch, IconBrain, IconBolt, IconStar, IconTrash, IconChartBar, IconUsers, IconCheck, IconX, IconCoin, IconShield, IconFlame, IconWorld } from "@tabler/icons-react"
+
+interface ScreenerResultsResponse {
+  candidates: ScanResult[]
+}
 
 interface ScanResult {
   code: string; name: string; industry?: string; score: number; top_factors?: string[]
@@ -94,7 +99,7 @@ export default function ScreenerPage() {
       if (s.running) {
         setTimeout(() => { void pollScan() }, 2000)
       } else if (s.has_result) {
-        const r = await apiGet<any>("/api/screener/results?limit=30")
+        const r = await apiGet<ScreenerResultsResponse>("/api/screener/results?limit=30")
         setResults(r?.candidates || [])
       }
     } catch { /* */ }
@@ -103,7 +108,7 @@ export default function ScreenerPage() {
   const fetchData = useCallback(async () => {
     try {
       const [res, wl] = await Promise.all([
-        apiGet<any>("/api/screener/results?limit=30").catch(() => ({ candidates: [] })),
+        apiGet<ScreenerResultsResponse>("/api/screener/results?limit=30").catch(() => ({ candidates: [] })),
         apiGet<WatchItem[]>("/api/screener/watchlist").catch(() => []),
       ])
       const candidates = Array.isArray(res) ? res : (res?.candidates || [])
@@ -114,7 +119,6 @@ export default function ScreenerPage() {
   }, [])
 
   useEffect(() => {
-    if (!isAuthenticated()) { router.push("/login"); return }
     fetchData()
     pollScan()
   }, [fetchData, pollScan, router])
@@ -144,10 +148,10 @@ export default function ScreenerPage() {
       if (result && result.aggregation) {
         setMultiAgentResult(result)
       } else if (result && "error" in result) {
-        setMultiAgentError((result as any).error || "Agent 分析返回异常")
+        setMultiAgentError((result as { error?: string }).error || "Agent 分析返回异常")
       }
-    } catch (e: any) {
-      setMultiAgentError(e?.message || "Agent 分析请求失败，请检查网络后重试")
+    } catch (e: unknown) {
+      setMultiAgentError((e as Error).message || "Agent 分析请求失败，请检查网络后重试")
     }
     finally { setMultiAgentLoading(false) }
   }
@@ -188,16 +192,16 @@ export default function ScreenerPage() {
         <div className="p-4 lg:p-6 space-y-4">
           {/* Toolbar */}
           <div className="flex items-center gap-2 flex-wrap">
-            <select
-              value={stockPool}
-              onChange={(e) => setStockPool(Number(e.target.value))}
-              className="h-8 rounded-md border border-input bg-background px-2 text-xs"
-              disabled={scanning}
-            >
-              {POOL_OPTIONS.map((opt) => (
-                <option key={opt.value} value={opt.value}>{opt.label}</option>
-              ))}
-            </select>
+            <Select value={String(stockPool)} onValueChange={(v) => setStockPool(Number(v))} disabled={scanning}>
+              <SelectTrigger className="h-8 text-xs w-auto min-w-[140px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent className="max-h-48">
+                {POOL_OPTIONS.map((opt) => (
+                  <SelectItem key={opt.value} value={String(opt.value)}>{opt.label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
             <Button size="sm" onClick={startScan} disabled={scanning}>
               <IconSearch className="size-3.5 mr-1" />
               {scanning ? `扫描中 ${progress}%` : "开始扫描"}

@@ -8,8 +8,9 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Separator } from "@/components/ui/separator"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { cn } from "@/lib/utils"
-import { apiGet, apiPost, isAuthenticated } from "@/lib/auth"
+import { apiGet, apiPost } from "@/lib/auth"
 import {
   IconSwords, IconTrophy, IconTrendingUp, IconTrendingDown,
   IconRefresh, IconChevronDown, IconChevronUp, IconHistory,
@@ -43,6 +44,10 @@ interface RoundStatus {
   round_id: number; period_days: number; initial_capital: number
   started_at?: string; status: string
   players: PlayerStatus[]
+}
+
+interface DuelStartResponse {
+  round_id: number
 }
 
 interface HistoryRound {
@@ -87,7 +92,6 @@ export default function DuelPage() {
   }, [])
 
   useEffect(() => {
-    if (!isAuthenticated()) { router.push("/login"); return }
     fetchStatus()
   }, [fetchStatus, router])
 
@@ -100,7 +104,7 @@ export default function DuelPage() {
     }
     setStarting(true)
     try {
-      await apiPost<any>("/api/quant/ai-duel/start", {
+      await apiPost<DuelStartResponse>("/api/quant/ai-duel/start", {
         providers: uniqueProviders,
         period_days: 7,
         capital: 100000,
@@ -108,8 +112,8 @@ export default function DuelPage() {
       await fetchStatus()
       // 滚动到对战区域
       setTimeout(() => window.scrollTo({ top: 200, behavior: "smooth" }), 300)
-    } catch (e: any) {
-      alert(e?.message || "开局失败")
+    } catch (e: unknown) {
+      alert((e as Error).message || "开局失败")
     }
     finally { setStarting(false) }
   }
@@ -120,8 +124,8 @@ export default function DuelPage() {
     try {
       await apiPost(`/api/quant/ai-duel/rebalance/${activeRound.round_id}`, {})
       await fetchStatus()
-    } catch (e: any) {
-      alert(e?.message || "调仓失败")
+    } catch (e: unknown) {
+      alert((e as Error).message || "调仓失败")
     }
     finally { setRebalancing(false) }
   }
@@ -281,20 +285,20 @@ export default function DuelPage() {
                   <div className="grid grid-cols-2 gap-2">
                     {duelProviders.map((provider, i) => (
                       <div key={i} className="flex items-center gap-1.5">
-                        <select
-                          value={provider}
-                          onChange={(e) => {
+                        <Select value={provider} onValueChange={(v) => {
                             const next = [...duelProviders]
-                            next[i] = e.target.value
+                            next[i] = v
                             setDuelProviders(next)
-                          }}
-                          className="h-8 flex-1 rounded-none border border-input bg-background text-xs px-2"
-                        >
-                          <option value="">-- 不选 --</option>
-                          {AVAILABLE_PROVIDERS.map((ap) => (
-                            <option key={ap.key} value={ap.key}>{ap.label}</option>
-                          ))}
-                        </select>
+                          }}>
+                          <SelectTrigger className="h-8 text-xs flex-1">
+                            <SelectValue placeholder="-- 不选 --" />
+                          </SelectTrigger>
+                          <SelectContent className="max-h-48">
+                            {AVAILABLE_PROVIDERS.map((ap) => (
+                              <SelectItem key={ap.key} value={ap.key}>{ap.label}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
                         {duelProviders.length > 2 && (
                           <button
                             onClick={() => setDuelProviders(duelProviders.filter((_, j) => j !== i))}

@@ -27,6 +27,7 @@ class TransactionBody(BaseModel):
     fee: float | None = None   # None = 自动计算，有值 = 手动覆盖
     traded_at: str
     note: str = ""
+    portfolio_id: int | None = None  # 可选：买入时自动创建的持仓归属组合
 
 
 @router.post("/transactions")
@@ -61,9 +62,14 @@ def add_transaction(body: TransactionBody):
         )
         if not holding:
             market = get_market(body.stock_code)
+            # 若未指定 portfolio_id，尝试继承用户首个组合
+            pid = body.portfolio_id
+            if pid is None:
+                pf = query_one("SELECT id FROM portfolios WHERE user_id = ? ORDER BY id LIMIT 1", (get_current_user_id(),))
+                pid = pf["id"] if pf else None
             execute(
-                """INSERT INTO holdings (user_id, stock_code, stock_name, market, asset_type, quantity, cost_price, shares)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                """INSERT INTO holdings (user_id, stock_code, stock_name, market, asset_type, quantity, cost_price, shares, portfolio_id)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     get_current_user_id(),
                     body.stock_code,
@@ -73,6 +79,7 @@ def add_transaction(body: TransactionBody):
                     0,
                     body.price,
                     0 if at != "fund" else 0,
+                    pid,
                 ),
             )
         holding_result = _recalc_holding_for_code(body.stock_code)

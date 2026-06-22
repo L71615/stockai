@@ -201,7 +201,7 @@ def _get_industry_map() -> dict[str, dict]:
                 _INDUSTRY_CACHE = new_map
                 _industry_ts = now
         except Exception:
-            pass
+            logger.warning("baostock_adapter: _get_industry_map query failed", exc_info=True)
     return _INDUSTRY_CACHE
 
 
@@ -239,7 +239,7 @@ def get_stock_factors(code: str) -> dict:
         if code in ind_map:
             result.update(ind_map[code])
     except Exception:
-        pass
+        logger.warning("baostock_adapter: industry map lookup failed for %s", code, exc_info=True)
 
     # 2. 利润表（当年 → 去年 → 前年，Q4→Q1 逐季回退，每次查询独立加锁）
     try:
@@ -264,12 +264,15 @@ def get_stock_factors(code: str) -> dict:
             if roe_pct is not None and quarter != 4:
                 factors = {1: 4.0, 2: 2.0, 3: 4.0 / 3.0}
                 roe_pct = round(roe_pct * factors.get(quarter, 1.0), 2)
+            gp_raw = _f(row[5]) if len(row) > 5 else None
+            gp_pct = round(gp_raw * 100, 2) if gp_raw is not None else None  # ratio → %
             return {
                 "roe": roe_pct,
                 "eps": _f(row[7]) if len(row) > 7 else None,
                 "net_profit": _f(row[6]) if len(row) > 6 else None,
                 "revenue": _f(row[8]) if len(row) > 8 else None,
                 "total_shares": _f(row[9]) if len(row) > 9 else None,
+                "gross_margin": gp_pct,  # 毛利率(%), 利润表 row[5]
             }
 
         # 2a. 逐级回退取主财务数据
@@ -281,9 +284,8 @@ def get_stock_factors(code: str) -> dict:
                 result.update(fin)
                 break
 
-        # 2b. 往前取 prev_eps
+        # 2b. 往前取 prev_eps + prev_revenue + prev_net_profit
         if "eps" in result and result["eps"] is not None:
-            eps_found = False
             for y_offset in (0, 1, 2):
                 row, _ = _query_latest_row(year - y_offset)
                 if row and _f(row[7]) == result["eps"]:
@@ -292,16 +294,27 @@ def get_stock_factors(code: str) -> dict:
                         prev_eps = _f(prev_row[7]) if len(prev_row) > 7 else None
                         if prev_eps is not None and prev_eps != 0:
                             result["prev_eps"] = prev_eps
-                            eps_found = True
-                    if not eps_found:
+                        prev_rev = _f(prev_row[8]) if len(prev_row) > 8 else None
+                        if prev_rev is not None:
+                            result["prev_revenue"] = prev_rev
+                        prev_np = _f(prev_row[6]) if len(prev_row) > 6 else None
+                        if prev_np is not None:
+                            result["prev_net_profit"] = prev_np
+                    if "prev_eps" not in result or "prev_revenue" not in result:
                         prev_row, _ = _query_latest_row(year - y_offset - 2)
                         if prev_row:
                             prev_eps = _f(prev_row[7]) if len(prev_row) > 7 else None
-                            if prev_eps is not None and prev_eps != 0:
-                                result["prev_eps"] = prev_eps
+                            if prev_eps is not None:
+                                result.setdefault("prev_eps", prev_eps)
+                            prev_rev = _f(prev_row[8]) if len(prev_row) > 8 else None
+                            if prev_rev is not None:
+                                result.setdefault("prev_revenue", prev_rev)
+                            prev_np = _f(prev_row[6]) if len(prev_row) > 6 else None
+                            if prev_np is not None:
+                                result.setdefault("prev_net_profit", prev_np)
                     break
     except Exception:
-        pass
+        logger.warning("baostock_adapter: profit data / prev_eps query failed for %s", code, exc_info=True)
 
     # 3. 分红数据（每年独立加锁查询）
     try:
@@ -323,7 +336,7 @@ def get_stock_factors(code: str) -> dict:
                 result["dividend"] = div
                 break
     except Exception:
-        pass
+        logger.warning("baostock_adapter: dividend data query failed for %s", code, exc_info=True)
 
     # 4. 真实 PB（从 K 线 pbMRQ 字段，独立加锁）
     try:
@@ -346,7 +359,42 @@ def get_stock_factors(code: str) -> dict:
         if pb is not None:
             result["pb"] = pb
     except Exception:
-        pass
+        logger.warning("baostock_adapter: PB MRQ query failed for %s", code, exc_info=True)
+
+    # 5. 资产负债率（balance sheet，独立加锁）
+    try:
+        import datetime
+        year = datetime.date.today().year
+
+        def _query_debt():
+            for q in (4, 3, 2, 1):
+                rs = bs.query_balance_data(sym, year=year, quarter=q)
+                if rs.error_code == "0":
+                    while rs.next():
+                        row = rs.get_row_data()
+                        # 字段: ... debtRatio / assetLiabilityRatio 通常在末尾列
+                        # 尝试多个位置找资产负债率(%), 合理范围 0-100
+                        for idx in range(len(row) - 1, 2, -1):
+                            val = _f(row[idx])
+                            if val is not None and 0 < val < 100:
+                                return val
+                # 回退一年
+                for y in (year - 1, year - 2):
+                    rs2 = bs.query_balance_data(sym, year=y, quarter=4)
+                    if rs2.error_code == "0":
+                        while rs2.next():
+                            row2 = rs2.get_row_data()
+                            for idx in range(len(row2) - 1, 2, -1):
+                                val = _f(row2[idx])
+                                if val is not None and 0 < val < 100:
+                                    return val
+            return None
+
+        debt = _bs_locked(_query_debt)
+        if debt is not None:
+            result["debt_ratio"] = round(debt, 2)
+    except Exception:
+        logger.warning("baostock_adapter: balance sheet query failed for %s", code, exc_info=True)
 
     # ── 以下不依赖 Baostock 连接 ──
 
@@ -356,9 +404,9 @@ def get_stock_factors(code: str) -> dict:
         if "error" not in kline and kline.get("closes"):
             result["price"] = kline["closes"][-1]
     except Exception:
-        pass
+        logger.warning("baostock_adapter: kline fetch for price failed for %s", code, exc_info=True)
 
-    # 5. 计算 PE / 市值
+    # 6. 计算 PE / 市值
     price = result.get("price")
     eps = result.get("eps")
     total_shares = result.get("total_shares")

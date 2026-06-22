@@ -1,25 +1,30 @@
-fastapi>=0.115.0
-uvicorn[standard]>=0.30.0
-pydantic>=2.0
-python-dotenv>=1.0
+fastapi==0.115.0
+uvicorn[standard]==0.47.0
+pydantic==2.13.4
+python-dotenv==1.0.1
 
 # Stock data (Tencent real-time + Baostock history)
-akshare>=1.16.0
-baostock>=0.8.8
-pandas>=2.0
+akshare==1.18.62
+baostock==0.9.1
+pandas==3.0.3
+polars>=1.0
+pyarrow>=14.0
 
 # AI (required by ai_service.py)
-anthropic>=0.40.0
-openai>=1.60.0
-httpx>=0.28
+anthropic==0.102.0
+openai==1.97.0
+httpx==0.28.1
+
+# HTTP / RSS (required by notify_service / kol_service)
+requests==2.32.2
+feedparser==6.0.12
 
 # Auth
-passlib[bcrypt]>=1.7
-bcrypt>=4.0,<5.0
-pyjwt>=2.8
+bcrypt==4.0.1
+pyjwt==2.13.0
 
 # Encryption (for stored secrets)
-cryptography>=43.0
+cryptography==43.0.0
 
 # Rate limiting
-slowapi>=0.1
+slowapi==0.1.10

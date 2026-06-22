@@ -8,10 +8,11 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Separator } from "@/components/ui/separator"
 import { cn } from "@/lib/utils"
-import { apiGet, apiPost, isAuthenticated } from "@/lib/auth"
+import { apiGet, apiPost } from "@/lib/auth"
 import { IconPlus, IconPencil, IconTrash, IconBrain } from "@tabler/icons-react"
 
 interface Transaction {
@@ -43,7 +44,6 @@ export default function TransactionsPage() {
   }, [])
 
   useEffect(() => {
-    if (!isAuthenticated()) { router.push("/login"); return }
     fetchTxns()
   }, [fetchTxns, router])
 
@@ -129,15 +129,28 @@ export default function TransactionsPage() {
                 </div>
                 <div className="space-y-1">
                   <Label className="text-xs">类型</Label>
-                  <select value={aType} onChange={(e) => setAType(e.target.value)} className="h-8 w-full rounded-none border border-input bg-background text-foreground px-2 text-xs">
-                    <option value="stock">股票</option><option value="etf">ETF</option><option value="fund">基金</option>
-                  </select>
+                  <Select value={aType} onValueChange={setAType}>
+                    <SelectTrigger className="h-8 text-xs">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent className="max-h-48">
+                      <SelectItem value="stock">股票</SelectItem>
+                      <SelectItem value="etf">ETF</SelectItem>
+                      <SelectItem value="fund">基金</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
                 <div className="space-y-1">
                   <Label className="text-xs">方向</Label>
-                  <select value={direction} onChange={(e) => setDirection(e.target.value)} className="h-8 w-full rounded-none border border-input bg-background text-foreground px-2 text-xs">
-                    <option value="buy">买入</option><option value="sell">卖出</option>
-                  </select>
+                  <Select value={direction} onValueChange={setDirection}>
+                    <SelectTrigger className="h-8 text-xs">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent className="max-h-48">
+                      <SelectItem value="buy">买入</SelectItem>
+                      <SelectItem value="sell">卖出</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
                 <div className="space-y-1">
                   <Label className="text-xs">价格</Label>

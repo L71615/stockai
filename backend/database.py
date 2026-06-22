@@ -365,6 +365,47 @@ def init_db():
             UNIQUE(user_id, brief_date)
         )""")
 
+        # ── 数据库索引（性能关键）──
+        # 使用 IF NOT EXISTS 幂等，已有索引不重复创建
+        indexes = [
+            # 持仓
+            "CREATE INDEX IF NOT EXISTS idx_holdings_user ON holdings(user_id)",
+            "CREATE INDEX IF NOT EXISTS idx_holdings_user_code ON holdings(user_id, stock_code)",
+            # 自选股
+            "CREATE INDEX IF NOT EXISTS idx_watchlist_user ON watchlist(user_id)",
+            # 交易记录
+            "CREATE INDEX IF NOT EXISTS idx_transactions_user ON transactions(user_id)",
+            "CREATE INDEX IF NOT EXISTS idx_transactions_date ON transactions(traded_at)",
+            "CREATE INDEX IF NOT EXISTS idx_transactions_stock ON transactions(stock_code)",
+            # AI 消息 (会话内按时间查历史)
+            "CREATE INDEX IF NOT EXISTS idx_ai_messages_conv ON ai_messages(conversation_id)",
+            # 价格提醒
+            "CREATE INDEX IF NOT EXISTS idx_alerts_user ON price_alerts(user_id)",
+            # 复盘报告
+            "CREATE INDEX IF NOT EXISTS idx_review_reports_user ON review_reports(user_id)",
+            # 选股系统
+            "CREATE INDEX IF NOT EXISTS idx_screener_results_user ON screener_results(user_id)",
+            "CREATE INDEX IF NOT EXISTS idx_screener_watchlist_user ON screener_watchlist(user_id)",
+            "CREATE INDEX IF NOT EXISTS idx_screener_alerts_user ON screener_alerts(user_id)",
+            # 回测结果
+            "CREATE INDEX IF NOT EXISTS idx_backtest_results_user ON backtest_results(user_id)",
+            "CREATE INDEX IF NOT EXISTS idx_backtest_results_code ON backtest_results(stock_code)",
+            # 定投计划
+            "CREATE INDEX IF NOT EXISTS idx_dca_plans_user ON dca_plans(user_id)",
+            "CREATE INDEX IF NOT EXISTS idx_dca_plans_holding ON dca_plans(holding_id)",
+            # 分红
+            "CREATE INDEX IF NOT EXISTS idx_dividends_user ON dividends(user_id, stock_code)",
+            # AI 对战
+            "CREATE INDEX IF NOT EXISTS idx_duel_rounds_status ON ai_duel_rounds(status)",
+            "CREATE INDEX IF NOT EXISTS idx_duel_picks_round ON ai_duel_picks(round_id)",
+            # KOL
+            "CREATE INDEX IF NOT EXISTS idx_kol_posts_username ON kol_posts(username)",
+            "CREATE INDEX IF NOT EXISTS idx_kol_posts_fetched ON kol_posts(fetched_at)",
+            "CREATE INDEX IF NOT EXISTS idx_kol_daily_briefs_user_dt ON kol_daily_briefs(user_id, brief_date)",
+        ]
+        for sql in indexes:
+            conn.execute(sql)
+
         conn.commit()
     finally:
         conn.close()
@@ -373,7 +414,7 @@ def init_db():
 def ensure_admin_user():
     """启动时确保管理员账号存在（不开放注册，唯一用户）"""
     from config import ADMIN_EMAIL, ADMIN_PASSWORD
-    from passlib.hash import bcrypt
+    import bcrypt as _bcrypt
 
     if not ADMIN_PASSWORD:
         raise ValueError("ADMIN_PASSWORD environment variable must be set — cannot use default or empty value")
@@ -391,17 +432,17 @@ def ensure_admin_user():
         ).fetchone()
         if row:
             # 用户已存在，检查密码是否与 .env 一致（不一致则更新）
-            if bcrypt.verify(pwd, row["password"]):
+            if _bcrypt.checkpw(pwd.encode("utf-8"), row["password"].encode("utf-8")):
                 print(f"[AUTH] 管理员账号已存在: {ADMIN_EMAIL}")
             else:
-                hashed = bcrypt.hash(pwd)
+                hashed = _bcrypt.hashpw(pwd.encode("utf-8"), _bcrypt.gensalt()).decode("utf-8")
                 conn.execute("UPDATE users SET password = ? WHERE id = ?", (hashed, row["id"]))
                 conn.commit()
                 print(f"[AUTH] 管理员密码已更新: {ADMIN_EMAIL}")
         else:
-            hashed = bcrypt.hash(pwd)
+            hashed = _bcrypt.hashpw(pwd.encode("utf-8"), _bcrypt.gensalt()).decode("utf-8")
             conn.execute(
-                "INSERT INTO users (username, email, password) VALUES (?, ?, ?)",
+                "INSERT INTO users (id, username, email, password) VALUES (1, ?, ?, ?)",
                 ("admin", ADMIN_EMAIL, hashed),
             )
             conn.commit()

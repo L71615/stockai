@@ -10,7 +10,7 @@ import { Label } from "@/components/ui/label"
 import { Separator } from "@/components/ui/separator"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
-import { apiGet, apiPost, isAuthenticated, clearAuth } from "@/lib/auth"
+import { apiGet, apiPost, clearAuth } from "@/lib/auth"
 import { IconLogout, IconMail } from "@tabler/icons-react"
 
 interface AIProvider { key: string; label: string; api_key: string; model: string; base_url: string }
@@ -73,15 +73,14 @@ export default function SettingsPage() {
   }, [])
 
   useEffect(() => {
-    if (!isAuthenticated()) { router.push("/login"); return }
     fetchConfigs()
   }, [fetchConfigs, router])
 
   const saveAI = async () => {
     setSaving(true); setMsg("")
-    const configs: Record<string, { api_key?: string; model?: string; base_url?: string }> = {}
+    const configs: Record<string, { api_key?: string; model?: string; base_url?: string } | string> = {}
     providers.forEach((p) => { configs[p.key] = { api_key: p.api_key, model: p.model, base_url: p.base_url } })
-    ;(configs as any).default_provider = defaultProvider
+    configs.default_provider = defaultProvider
     try {
       await apiPost("/api/settings/ai-configs", configs, "PUT")
       setMsg("AI 配置已保存")
@@ -101,7 +100,12 @@ export default function SettingsPage() {
   const testSMTP = async () => {
     setMsg("")
     try {
-      await apiPost("/api/settings/smtp/test", {})
+      await apiPost("/api/settings/smtp/test", {
+        host: smtp.host,
+        port: Number(smtp.port) || 465,
+        user: smtp.user,
+        password: smtp.password,
+      })
       setMsg("测试邮件发送成功")
     } catch (err) { setMsg(err instanceof Error ? err.message : "测试失败") }
   }
@@ -207,6 +211,14 @@ export default function SettingsPage() {
                 } catch (err) { setMsg(err instanceof Error ? err.message : "保存失败") }
                 finally { setSaving(false) }
               }} disabled={saving}>保存佣金配置</Button>
+              <Button size="sm" variant="outline" onClick={async () => {
+                setSaving(true); setMsg("")
+                try {
+                  await apiPost("/api/stocks/recalc-fees", {})
+                  setMsg("手续费已全部重算")
+                } catch (err) { setMsg(err instanceof Error ? err.message : "重算失败") }
+                finally { setSaving(false) }
+              }} disabled={saving}>重算全部手续费</Button>
             </div>
           </CardContent>
         </Card>

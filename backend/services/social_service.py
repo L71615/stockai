@@ -11,8 +11,11 @@
   - stock_hot_follow_xq:   雪球热门关注榜
 """
 
+import logging
 import time
 from typing import Optional
+
+logger = logging.getLogger("stockai")
 
 # ── 缓存 ──
 
@@ -41,7 +44,7 @@ def _load_follow_counts() -> dict[str, int]:
             _FOLLOW_COUNT_CACHE = new_cache
             _FOLLOW_COUNT_TS = now
     except Exception:
-        pass
+        logger.warning("social_service: 加载雪球关注数失败", exc_info=True)
     return _FOLLOW_COUNT_CACHE
 
 
@@ -116,7 +119,7 @@ def _load_weibo_sentiment() -> dict[str, float]:
             _WEIBO_CACHE = new_cache
             _WEIBO_TS = now
     except Exception:
-        pass
+        logger.warning("social_service: 加载微博情绪数据失败", exc_info=True)
     return _WEIBO_CACHE
 
 

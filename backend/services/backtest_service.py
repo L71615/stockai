@@ -450,6 +450,7 @@ def _build_result(dates, closes, initial_cash, final_value,
             days = (d1 - d0).days or 1
             ann_return = (1 + total_return) ** (365 / days) - 1
         except Exception:
+            logger.warning("backtest_service: annual return calculation failed, using total_return", exc_info=True)
             ann_return = total_return
     else:
         ann_return = total_return
@@ -602,7 +603,7 @@ def run_backtest_batch(
                 r = run_backtest(code, strat, initial_cash, days)
                 results.append(r)
             except Exception:
-                pass
+                logger.warning("backtest_service: run_backtest failed for %s strategy=%s", code, strat, exc_info=True)
 
     # 汇总：每只股票的最佳策略
     best_per_stock = {}

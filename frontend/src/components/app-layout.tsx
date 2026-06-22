@@ -50,7 +50,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
           <SidebarInset>
             <header className="flex h-12 shrink-0 items-center gap-2 border-b border-border px-4">
               <SidebarTrigger />
-              <span className="text-sm text-muted-foreground font-mono">v0.1</span>
+              <span className="text-sm text-muted-foreground font-mono">v3.4</span>
             </header>
             <div className="flex flex-1 flex-col">{children}</div>
           </SidebarInset>

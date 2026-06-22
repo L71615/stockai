@@ -8,7 +8,7 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { cn } from "@/lib/utils"
-import { apiGet, isAuthenticated } from "@/lib/auth"
+import { apiGet } from "@/lib/auth"
 import { IconExternalLink, IconRefresh, IconMapPin } from "@tabler/icons-react"
 
 // --- Data ---
@@ -108,10 +108,6 @@ export default function GlobalNewsPage() {
   }, [])
 
   useEffect(() => {
-    if (!isAuthenticated()) {
-      router.push("/login")
-      return
-    }
     fetchNews(selected)
   }, [selected, fetchNews, router])
 

@@ -20,11 +20,15 @@ export function getUsername(): string | null {
 export function setAuth(token: string, username: string) {
   localStorage.setItem(TOKEN_KEY, token)
   localStorage.setItem(USER_KEY, username)
+  // 同步 cookie 供 middleware 使用
+  document.cookie = `stockai_token=${token}; path=/; max-age=${2 * 3600}; SameSite=Lax`
 }
 
 export function clearAuth() {
   localStorage.removeItem(TOKEN_KEY)
   localStorage.removeItem(USER_KEY)
+  // 清除 middleware cookie
+  document.cookie = "stockai_token=; path=/; max-age=0"
 }
 
 export function isAuthenticated(): boolean {

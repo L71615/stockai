@@ -459,6 +459,7 @@ def get_stock_factors_http(code: str) -> dict | None:
         return result
 
     except Exception:
+        logger.warning("akshare_adapter: get_stock_factors_http failed for %s", code, exc_info=True)
         return None
 
 
@@ -467,9 +468,6 @@ def get_stock_factors_http(code: str) -> dict | None:
 _NORTH_FLOW_CACHE: dict[str, tuple[float, dict]] = {}
 _NORTH_FLOW_TTL = 3600.0  # 1 小时
 
-_MARGIN_CACHE: dict[str, tuple[float, dict]] = {}
-_MARGIN_TTL = 3600.0
-
 _INST_HOLD_CACHE: dict[str, tuple[float, dict]] = {}
 _INST_HOLD_TTL = 7200.0  # 2 小时
 
@@ -477,7 +475,7 @@ _INST_HOLD_TTL = 7200.0  # 2 小时
 def get_north_flow(code: str) -> dict | None:
     """获取个股北向资金净流入数据
 
-    通过 akshare 沪深港通个股资金流向接口获取。
+    通过 akshare stock_hsgt_individual_em (沪深港通个股成交统计) 获取。
     Returns: {"net_flow": float (亿元), "buy_amount": float, "sell_amount": float} or None
     """
     cache_key = f"north:{code}"
@@ -489,26 +487,22 @@ def get_north_flow(code: str) -> dict | None:
 
     try:
         import akshare as ak
-        # akshare 沪深港通个股资金流向
-        df = ak.stock_hsgt_individual_north_net_flow_in_em(symbol=code)
+        # akshare 1.18+ 沪深港通个股持股统计 (替代已删除的 stock_hsgt_individual_north_net_flow_in_em)
+        df = ak.stock_hsgt_individual_em(symbol=code)
         if df is None or df.empty:
             return None
 
-        # 取最近一条记录
+        # 取最近一条记录：当日买卖资金 = 北向净买卖额（元）
         latest = df.iloc[-1]
-        net_flow = float(latest.get("netFlow", 0) or 0)  # 净流入（万元）
+        net_flow_yuan = float(latest.iloc[-3] if len(latest) >= 8 else 0)  # 当日买卖资金列
 
         result = {
-            "net_flow": round(net_flow / 10000, 4),  # 万元 → 亿元
+            "net_flow": round(net_flow_yuan / 1e8, 4),  # 元 → 亿元
         }
 
-        # 尝试获取买卖金额
-        buy = latest.get("buyAmount") if "buyAmount" in df.columns else None
-        sell = latest.get("sellAmount") if "sellAmount" in df.columns else None
-        if buy is not None:
-            result["buy_amount"] = round(float(buy) / 10000, 4)
-        if sell is not None:
-            result["sell_amount"] = round(float(sell) / 10000, 4)
+        # 当日持股数量变化 (股)
+        qty_change = float(latest.iloc[-4] if len(latest) >= 7 else 0)
+        result["change_qty"] = int(qty_change)
 
         _NORTH_FLOW_CACHE[cache_key] = (now, result)
         return result
@@ -516,155 +510,6 @@ def get_north_flow(code: str) -> dict | None:
     except Exception as e:
         logger.warning(f"get_north_flow({code}): {e}")
         return None
-
-
-def get_margin_data(code: str) -> dict | None:
-    """获取个股融资融券数据
-
-    Returns: {"rzye": float (融资余额/万元), "change_pct": float (变化率)} or None
-    """
-    cache_key = f"margin:{code}"
-    now = time.time()
-    if cache_key in _MARGIN_CACHE:
-        ts, data = _MARGIN_CACHE[cache_key]
-        if now - ts < _MARGIN_TTL:
-            return data
-
-    try:
-        import akshare as ak
-
-        # 根据代码选交易所
-        if code.startswith(("60", "68")):
-            df = ak.stock_margin_detail_sse(date="")
-        else:
-            df = ak.stock_margin_detail_szse(date="")
-
-        if df is None or df.empty:
-            return None
-
-        # 筛选该个股
-        row = df[df["stockCode"] == code]
-        if row is None or row.empty:
-            # 尝试用不同列名
-            for col in ["证券代码", "股票代码", "stockCode"]:
-                if col in df.columns:
-                    row = df[df[col].astype(str).str.startswith(code[-4:]) if len(code) >= 4 else False]
-                    if not row.empty:
-                        break
-
-        if row is None or row.empty:
-            return None
-
-        latest = row.iloc[0]
-        rzye = None
-        for col in ["rzye", "融资余额", "finBalance"]:
-            if col in df.columns and latest.get(col) is not None:
-                rzye = float(latest[col])
-                break
-
-        if rzye is None:
-            return None
-
-        result = {
-            "rzye": rzye,  # 融资余额（万元）
-        }
-
-        # 尝试获取买入额和偿还额，计算变化
-        for buy_col, repay_col in [
-            ("buyAmount", "repayAmount"),
-            ("融资买入额", "融资偿还额"),
-            ("finBuyAmount", "finRepayAmount"),
-        ]:
-            if buy_col in df.columns and repay_col in df.columns:
-                buy_amt = float(latest.get(buy_col, 0) or 0)
-                repay_amt = float(latest.get(repay_col, 0) or 0)
-                if rzye > 0:
-                    result["change_pct"] = round((buy_amt - repay_amt) / rzye, 6)
-                break
-
-        _MARGIN_CACHE[cache_key] = (now, result)
-        return result
-
-    except Exception as e:
-        logger.warning(f"get_margin_data({code}): {e}")
-        return None
-
-
-def get_all_margin_data() -> dict[str, dict]:
-    """一次性获取全市场融资融券数据（SSE + SZSE），按 code 索引
-
-    替代逐个调用 get_margin_data()——扫描 500 只股票只需 2 次 AKShare 调用
-    而非 500 次全市场拉取。
-
-    Returns: {"000001": {"rzye": float, "change_pct": float}, ...}
-    """
-    now = time.time()
-    result: dict[str, dict] = {}
-
-    try:
-        import akshare as ak
-
-        for exchange, fetch_fn in [
-            ("sse", ak.stock_margin_detail_sse),
-            ("szse", ak.stock_margin_detail_szse),
-        ]:
-            try:
-                df = fetch_fn(date="")
-                if df is None or df.empty:
-                    continue
-
-                # 探测代码列名
-                code_col = None
-                for col in ["stockCode", "证券代码", "股票代码"]:
-                    if col in df.columns:
-                        code_col = col
-                        break
-                if code_col is None:
-                    continue
-
-                # 探测融资余额列名
-                rzye_col = None
-                for col in ["rzye", "融资余额", "finBalance"]:
-                    if col in df.columns:
-                        rzye_col = col
-                        break
-                if rzye_col is None:
-                    continue
-
-                for _, row in df.iterrows():
-                    code = str(row.get(code_col, "")).strip()
-                    if not code:
-                        continue
-                    rzye = float(row.get(rzye_col, 0) or 0)
-                    if rzye <= 0:
-                        continue
-
-                    entry = {"rzye": rzye}
-
-                    # 尝试计算变化率
-                    for buy_col, repay_col in [
-                        ("buyAmount", "repayAmount"),
-                        ("融资买入额", "融资偿还额"),
-                        ("finBuyAmount", "finRepayAmount"),
-                    ]:
-                        if buy_col in df.columns and repay_col in df.columns:
-                            buy_amt = float(row.get(buy_col, 0) or 0)
-                            repay_amt = float(row.get(repay_col, 0) or 0)
-                            if rzye > 0:
-                                entry["change_pct"] = round((buy_amt - repay_amt) / rzye, 6)
-                            break
-
-                    result[code] = entry
-                    # 同时写入单股缓存
-                    _MARGIN_CACHE[f"margin:{code}"] = (now, entry)
-
-            except Exception:
-                continue
-
-    except Exception:
-        pass
-
-    return result
 
 
 def get_inst_holding(code: str) -> dict | None:
@@ -681,31 +526,56 @@ def get_inst_holding(code: str) -> dict | None:
 
     try:
         import akshare as ak
-        # 机构持仓（东方财富）
-        df = ak.stock_institute_hold_em(symbol=code)
+        import datetime
+        # akshare 1.18+ 机构持仓明细 (替代已删除的 stock_institute_hold_em)
+        year = datetime.date.today().year
+        df = None
+        for q in (1, 4, 3, 2):  # 从当年Q1往前试
+            for y in (year, year - 1):
+                qtr = f"{y}{q}"
+                try:
+                    df = ak.stock_institute_hold_detail(stock=code, quarter=qtr)
+                    if df is not None and not df.empty:
+                        break
+                except Exception:
+                    continue
+            if df is not None and not df.empty:
+                break
+
         if df is None or df.empty:
             return None
 
-        result = {}
+        # 汇总所有机构的持股比例
+        total_hold_pct = 0.0
+        for _, row in df.iterrows():
+            try:
+                # 持股比例列（第7列，0-indexed = index 6）
+                hold_pct = float(row.iloc[6]) if len(row) > 6 else 0
+                total_hold_pct += hold_pct
+            except (ValueError, TypeError):
+                continue
 
-        # 取最新一期
-        latest = df.iloc[-1]
-        for col in ["holdRatio", "持仓比例", "hold_ratio"]:
-            if col in df.columns and latest.get(col) is not None:
-                result["hold_pct"] = float(latest[col])
-                break
+        result = {"hold_pct": round(total_hold_pct, 4)}
 
-        # 如果有历史数据，计算变动
-        if len(df) >= 2:
-            prev = df.iloc[-2]
-            curr = df.iloc[-1]
-            for col in ["holdRatio", "持仓比例", "hold_ratio"]:
-                if col in df.columns:
-                    curr_val = float(curr.get(col, 0) or 0)
-                    prev_val = float(prev.get(col, 0) or 0)
-                    if prev_val != 0:
-                        result["change_pct"] = round((curr_val - prev_val) / abs(prev_val), 6)
-                    break
+        # 尝试取上一季度数据计算变动
+        try:
+            prev_q = q - 1 if q > 1 else 4
+            prev_year = year if q > 1 else year - 1
+            prev_qtr = f"{prev_year}{prev_q}"
+            df_prev = ak.stock_institute_hold_detail(stock=code, quarter=prev_qtr)
+            if df_prev is not None and not df_prev.empty:
+                prev_total = 0.0
+                for _, row in df_prev.iterrows():
+                    try:
+                        prev_total += float(row.iloc[6]) if len(row) > 6 else 0
+                    except (ValueError, TypeError):
+                        continue
+                if prev_total > 0:
+                    result["change_pct"] = round((total_hold_pct - prev_total) / prev_total, 6)
+                elif total_hold_pct > 0:
+                    result["change_pct"] = 1.0  # 从0到有持仓=100%增长
+        except Exception:
+            pass
 
         _INST_HOLD_CACHE[cache_key] = (now, result if result else None)
         return result if result else None
@@ -798,7 +668,7 @@ def get_hk_factors(code: str) -> dict | None:
                         try:
                             result[en_name] = float(val)
                         except (ValueError, TypeError):
-                            pass
+                            pass  # 字段类型转换失败，跳过该字段继续处理
                     break
 
         if "eps" not in result:

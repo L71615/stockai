@@ -6,14 +6,15 @@
 # ═══════════════════════════════════════════════════════════
 # ⚠️ 重要：默认用户 ID 配置
 # ═══════════════════════════════════════════════════════════
-# 系统默认为 admin 用户（user_id = 2）。
+# 系统默认为 admin 用户（user_id = 1）。
+# ensure_admin_user() 在全新部署时使用显式 id=1 创建管理员。
 # 如需修改为其他用户，请先在数据库中确认目标用户的 id 值，
 # 然后将下方的 CURRENT_USER_ID 改为对应数字。
 #
-# 查询用户 ID：sqlite2 "D:\stocks\database\stockai.db" "SELECT id, username FROM users;"
+# 查询用户 ID：sqlite3 "D:\stocks\database\stockai.db" "SELECT id, username FROM users;"
 # ═══════════════════════════════════════════════════════════
 
-CURRENT_USER_ID = 2
+CURRENT_USER_ID = 1
 
 
 def get_current_user_id() -> int:

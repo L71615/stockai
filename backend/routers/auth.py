@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 import jwt as pyjwt
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
-from passlib.hash import bcrypt
+import bcrypt as _bcrypt
 
 from database import query_one
 from config import JWT_SECRET, JWT_EXPIRES, LOGIN_RATE_LIMIT, LOGIN_LOCK_MINUTES
@@ -68,7 +68,7 @@ def login(req: LoginRequest, request: Request):
 
     # 2. 验证账号
     user = query_one("SELECT id, username, password FROM users WHERE email = ?", (req.email,))
-    if not user or not bcrypt.verify(req.password, user["password"]):
+    if not user or not _bcrypt.checkpw(req.password.encode("utf-8"), user["password"].encode("utf-8")):
         _record_fail(ip)
         raise HTTPException(401, "邮箱或密码错误")
 

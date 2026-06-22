@@ -69,7 +69,7 @@ export default function Home() {
           if (!current) return current
           return {
             ...current,
-            holdings: (current.holdings as any[]).filter((h: any) => h.id !== deleteTarget.holdingId),
+            holdings: current.holdings.filter((h) => h.id !== deleteTarget.holdingId),
             summary: {
               ...current.summary,
               total_cost: 0,
@@ -78,8 +78,9 @@ export default function Home() {
         },
         { revalidate: true }
       )
-    } catch (e: any) {
-      alert(`删除失败: ${e.message}`)
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "删除失败"
+      alert(msg)
     } finally {
       setDeleting(false)
       setDeleteTarget(null)
@@ -255,7 +256,7 @@ export default function Home() {
                   onEdit: (item) => alert(`编辑 ${item.code} ${item.name} 暂未实现`),
                   onView: (item) => alert(`请点击名称查看 ${item.code} ${item.name} 详情`),
                   onAddToWatchlist: (item) => alert(`${item.code} ${item.name} 已在持仓中，可去自选股页管理`),
-                  onDelete: (item: any) => setDeleteTarget({ holdingId: item.holdingId, code: item.code, name: item.name }),
+                  onDelete: (item) => setDeleteTarget({ holdingId: item.id, code: item.code, name: item.name }),
                 }}
               />
             ) : !isLoading && !portfolioErrorMessage && (
