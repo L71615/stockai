@@ -66,6 +66,7 @@ async def chat(req: ChatRequest, request: Request):
     reply = await ai_chat(
         req.message,
         history,
+        function="chat",
         provider=req.provider,
         api_key=req.apiKey,
         model=req.model,

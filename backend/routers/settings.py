@@ -43,33 +43,76 @@ def api_save_ai_config(body: AiConfigBody):
 
 @router.get("/api/settings/ai-configs")
 def api_get_all_ai_configs():
-    """获取所有已保存的 AI 供应商配置（api_key 脱敏）"""
+    """获取所有已保存的 AI 供应商配置（api_key 脱敏）+ function_providers 映射"""
     cfg = _load_stored_ai_config()
-    result = {}
+    provider_configs = {}
+    function_providers = {}
+    default_provider = ""
     if isinstance(cfg, dict):
-        for provider, c in cfg.items():
+        default_provider = cfg.get("default_provider", "")
+        function_providers = cfg.get("function_providers", {})
+        if not isinstance(function_providers, dict):
+            function_providers = {}
+        for key, c in cfg.items():
+            if key in ("default_provider", "function_providers"):
+                continue
             if isinstance(c, dict):
-                key = c.get("api_key", "")
-                result[provider] = {
-                    "api_key": (key[:4] + "****" + key[-4:]) if len(key) > 8 else ("****" if key else ""),
+                api_key = c.get("api_key", "")
+                provider_configs[key] = {
+                    "api_key": (api_key[:4] + "****" + api_key[-4:]) if len(api_key) > 8 else ("****" if api_key else ""),
                     "model": c.get("model", ""),
                     "base_url": c.get("base_url", ""),
                 }
     # 旧版单配置兼容
-    if not result and cfg.get("api_key"):
-        result[cfg.get("provider", "minimax")] = {
+    if not provider_configs and cfg.get("api_key"):
+        provider_configs[cfg.get("provider", "minimax")] = {
             "api_key": "****",
             "model": cfg.get("model", ""),
             "base_url": cfg.get("base_url", ""),
         }
-    return {"configs": result}
+    # 标记哪些供应商在 .env 中配置了 Key
+    import os as _os
+    env_keys = {
+        "minimax": bool(_os.getenv("MINIMAX_API_KEY")),
+        "deepseek": bool(_os.getenv("DEEPSEEK_API_KEY")),
+        "openai": bool(_os.getenv("OPENAI_API_KEY")),
+        "claude": bool(_os.getenv("CLAUDE_API_KEY")),
+        "custom": False,
+    }
+    return {
+        "configs": provider_configs,
+        "function_providers": function_providers,
+        "default_provider": default_provider,
+        "env_keys": env_keys,
+    }
 
 
 @router.put("/api/settings/ai-configs")
 def api_save_all_ai_configs(body: MultiAiConfigBody):
-    """保存多个 AI 供应商配置"""
+    """保存多个 AI 供应商配置（含 function_providers 映射）"""
     save_stored_ai_config(body.configs)
     return {"ok": True, "count": len(body.configs)}
+
+
+class AiTestBody(BaseModel):
+    provider: str
+    api_key: str = ""
+    model: str = ""
+    base_url: str = ""
+
+
+@router.post("/api/settings/ai-test")
+async def api_ai_test(body: AiTestBody):
+    """测试 AI 供应商连通性 — 发送 "ping" 验证 Key 是否可用"""
+    from services.ai_service import ai_chat
+    result = await ai_chat(
+        "ping", provider=body.provider,
+        api_key=body.api_key, model=body.model, base_url=body.base_url,
+    )
+    # ai_chat 错误时返回 "（...）" 格式
+    if result.startswith("（") and result.endswith("）"):
+        return {"ok": False, "error": result[1:-1]}
+    return {"ok": True, "response": result[:200]}
 
 
 class SmtpBody(BaseModel):

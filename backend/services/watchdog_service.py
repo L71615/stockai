@@ -282,6 +282,7 @@ async def generate_daily_briefing(user_id: int = 1, provider: str = "") -> str:
         from services.ai_service import ai_chat
         briefing = await ai_chat(
             prompt,
+            function="watchdog",
             provider=provider,
             system_prompt="你是专业A股分析师。你的回复简洁、专业、可操作。用中文回复。",
         )

@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from "react"
 import { useRouter } from "next/navigation"
 import { SiteHeader } from "@/components/site-header"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -11,7 +12,8 @@ import { Separator } from "@/components/ui/separator"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
 import { apiGet, apiPost, clearAuth } from "@/lib/auth"
-import { IconLogout, IconMail } from "@tabler/icons-react"
+import { IconLogout, IconMail, IconCheck, IconX } from "@tabler/icons-react"
+import { cn } from "@/lib/utils"
 
 interface AIProvider { key: string; label: string; api_key: string; model: string; base_url: string }
 
@@ -20,49 +22,50 @@ const PROVIDERS: AIProvider[] = [
   { key: "deepseek", label: "DeepSeek", api_key: "", model: "deepseek-chat", base_url: "https://api.deepseek.com/v1" },
   { key: "openai", label: "OpenAI", api_key: "", model: "gpt-4o", base_url: "" },
   { key: "claude", label: "Claude / Anthropic", api_key: "", model: "claude-opus-4-7", base_url: "" },
-  { key: "xiaomi", label: "小米", api_key: "", model: "", base_url: "" },
   { key: "custom", label: "自定义 OpenAI 兼容", api_key: "", model: "", base_url: "" },
 ]
 
-// AI 功能说明——所有功能共用默认供应商
-const AI_FEATURES = [
-  "AI 选股（二次筛选 + 5 Agent 交叉验证）",
-  "AI 复盘（结构化投资复盘报告）",
-  "AI 对抗（6 人格选股对战）",
-  "AI 对话（投资助手聊天）",
-  "AI 盯盘简报（异动推送摘要）",
-  "大佬观点日报（社区+新闻情绪分析）",
+const AI_FUNCTIONS = [
+  { key: "screener", label: "AI 选股", desc: "二次筛选 + Agent 交叉验证" },
+  { key: "review", label: "AI 复盘", desc: "结构化投资复盘报告" },
+  { key: "duel", label: "AI 对抗", desc: "6 人格选股对战" },
+  { key: "chat", label: "AI 对话", desc: "投资助手聊天" },
+  { key: "watchdog", label: "AI 盯盘简报", desc: "异动推送摘要" },
+  { key: "kol", label: "大佬观点日报", desc: "社区+新闻情绪分析" },
+  { key: "explain", label: "AI 量化解读", desc: "个股技术面+基本面分析" },
 ]
 
 export default function SettingsPage() {
   const router = useRouter()
   const [providers, setProviders] = useState<AIProvider[]>(PROVIDERS)
-  const [defaultProvider, setDefaultProvider] = useState("deepseek")
+  const [functionProviders, setFunctionProviders] = useState<Record<string, string>>({})
+  const [envKeys, setEnvKeys] = useState<Record<string, boolean>>({})
   const [smtp, setSmtp] = useState({ host: "", port: "465", user: "", password: "", sender: "" })
   const [feeRate, setFeeRate] = useState("0.025")
   const [feeMin, setFeeMin] = useState("5")
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [msg, setMsg] = useState("")
+  const [testResults, setTestResults] = useState<Record<string, { ok: boolean; msg: string } | null>>({})
 
   const fetchConfigs = useCallback(async () => {
     try {
       const [ai, smtpData] = await Promise.all([
-        apiGet<Record<string, { api_key?: string; model?: string; base_url?: string }>>("/api/settings/ai-configs").catch(() => ({})),
+        apiGet<{ configs?: Record<string, { api_key?: string; model?: string; base_url?: string }>; function_providers?: Record<string, string>; env_keys?: Record<string, boolean> }>("/api/settings/ai-configs").catch(() => ({ configs: {}, function_providers: {}, env_keys: {} })),
         apiGet<{ host?: string; port?: string; user?: string; sender?: string }>("/api/settings/smtp").catch(() => ({})),
       ])
-      if (ai && typeof ai === "object") {
-        const cfg = ai as Record<string, { api_key?: string; model?: string; base_url?: string }> & { default_provider?: string }
-        setDefaultProvider(cfg.default_provider || "deepseek")
+      if (ai) {
+        setFunctionProviders(ai.function_providers || {})
+        setEnvKeys(ai.env_keys || {})
+        const cfgs: Record<string, { api_key?: string; model?: string; base_url?: string }> = ai.configs || {}
         setProviders((prev) => prev.map((p) => ({
           ...p,
-          api_key: cfg[p.key]?.api_key || "",
-          model: cfg[p.key]?.model || p.model,
-          base_url: cfg[p.key]?.base_url || p.base_url,
+          api_key: cfgs[p.key]?.api_key || "",
+          model: cfgs[p.key]?.model || p.model,
+          base_url: cfgs[p.key]?.base_url || p.base_url,
         })))
       }
       if (smtpData) setSmtp((prev) => ({ ...prev, ...smtpData, password: "" }))
-      // Fee config
       try {
         const fee = await apiGet<{ commission_rate?: number; commission_min?: number }>("/api/settings/fee-config")
         if (fee && fee.commission_rate != null) setFeeRate(String(fee.commission_rate * 100))
@@ -76,13 +79,73 @@ export default function SettingsPage() {
     fetchConfigs()
   }, [fetchConfigs, router])
 
+  const updateFunctionProvider = (funcKey: string, providerKey: string) => {
+    setFunctionProviders((prev) => ({ ...prev, [funcKey]: providerKey }))
+  }
+
+  const updateProviderField = (key: string, field: "api_key" | "model" | "base_url", value: string) => {
+    setProviders((prev) => prev.map((p) => p.key === key ? { ...p, [field]: value } : p))
+  }
+
+  const getConfigSource = (providerKey: string): { label: string; color: string } => {
+    const p = providers.find((x) => x.key === providerKey)
+    if (p?.api_key) return { label: "已保存", color: "text-emerald-400 border-emerald-400/30" }
+    if (envKeys[providerKey]) return { label: ".env", color: "text-blue-400 border-blue-400/30" }
+    if (p?.model) return { label: "默认", color: "text-muted-foreground border-muted" }
+    return { label: "未配置", color: "text-orange-400 border-orange-400/30" }
+  }
+
+  const getFunctionStatus = (funcKey: string): { label: string; color: string; ok: boolean } => {
+    const pk = functionProviders[funcKey]
+    if (!pk) return { label: "未选择", color: "text-muted-foreground", ok: false }
+    const p = providers.find((x) => x.key === pk)
+    if (p?.api_key || envKeys[pk]) return { label: "已配置", color: "text-emerald-400", ok: true }
+    return { label: "缺 Key", color: "text-orange-400", ok: false }
+  }
+
+  const usedProviders = new Set(Object.values(functionProviders).filter(Boolean))
+
+  const testProvider = async (providerKey: string) => {
+    setTestResults((prev) => ({ ...prev, [providerKey]: null }))
+    const p = providers.find((x) => x.key === providerKey)
+    if (!p) return
+    try {
+      const res = await apiPost<{ ok: boolean; error?: string; response?: string }>("/api/settings/ai-test", {
+        provider: providerKey,
+        api_key: p.api_key,
+        model: p.model,
+        base_url: p.base_url,
+      })
+      setTestResults((prev) => ({
+        ...prev,
+        [providerKey]: { ok: res.ok, msg: res.ok ? (res.response || "连通") : (res.error || "失败") },
+      }))
+    } catch (err) {
+      setTestResults((prev) => ({ ...prev, [providerKey]: { ok: false, msg: err instanceof Error ? err.message : "测试失败" } }))
+    }
+  }
+
   const saveAI = async () => {
     setSaving(true); setMsg("")
-    const configs: Record<string, { api_key?: string; model?: string; base_url?: string } | string> = {}
-    providers.forEach((p) => { configs[p.key] = { api_key: p.api_key, model: p.model, base_url: p.base_url } })
-    configs.default_provider = defaultProvider
+    const configs: Record<string, unknown> = {}
+    // 供应商密钥配置 — 掩码(****)表示未修改，不发送以避免覆盖真实 Key
+    providers.forEach((p) => {
+      const defaults = PROVIDERS.find((d) => d.key === p.key)
+      const isMasked = p.api_key.includes("****")
+      const hasCustomKey = p.api_key && !isMasked
+      const hasCustomModel = p.model !== (defaults?.model || "")
+      const hasCustomBaseUrl = !!p.base_url && p.base_url !== (defaults?.base_url || "")
+      if (hasCustomKey || hasCustomModel || hasCustomBaseUrl) {
+        configs[p.key] = {
+          api_key: hasCustomKey ? p.api_key : "",
+          model: p.model,
+          base_url: p.base_url,
+        }
+      }
+    })
+    configs.function_providers = functionProviders
     try {
-      await apiPost("/api/settings/ai-configs", configs, "PUT")
+      await apiPost("/api/settings/ai-configs", { configs }, "PUT")
       setMsg("AI 配置已保存")
     } catch (err) { setMsg(err instanceof Error ? err.message : "保存失败") }
     finally { setSaving(false) }
@@ -120,60 +183,157 @@ export default function SettingsPage() {
         <Card>
           <CardHeader>
             <CardTitle className="text-sm">AI 模型配置</CardTitle>
-            <CardDescription>配置各 AI 供应商的 API Key。选择一个默认供应商，所有 AI 功能将共用它。</CardDescription>
+            <CardDescription>每个 AI 功能独立选择供应商。下方只展开被引用的供应商密钥配置。</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            {/* 默认供应商选择 */}
-            <div className="border border-purple-500/20 bg-purple-500/5 rounded-none p-3 space-y-2">
-              <p className="text-xs font-medium text-purple-400">默认供应商</p>
-              <Select value={defaultProvider} onValueChange={setDefaultProvider}>
-                <SelectTrigger className="h-8 text-xs">
-                  <SelectValue placeholder="选择默认 AI 供应商" />
-                </SelectTrigger>
-                <SelectContent className="max-h-48">
-                  {providers.map((p) => (
-                    <SelectItem key={p.key} value={p.key}>{p.label}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <p className="text-[10px] text-muted-foreground">
-                以下功能均使用此默认供应商：
-              </p>
-              <ul className="text-[10px] text-muted-foreground list-disc list-inside space-y-0.5">
-                {AI_FEATURES.map((f, i) => <li key={i}>{f}</li>)}
-              </ul>
-            </div>
-
             {loading ? (
-              <div className="space-y-2"><Skeleton className="h-12 w-full" /><Skeleton className="h-12 w-full" /></div>
+              <div className="space-y-2"><Skeleton className="h-48 w-full" /></div>
             ) : (
-              providers.map((p) => (
-                <div key={p.key} className="border border-border rounded-none p-3 space-y-2">
-                  <p className="text-xs font-medium">{p.label}</p>
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
-                    <div className="space-y-1">
-                      <Label className="text-[10px]">API Key</Label>
-                      <Input
-                        type="password"
-                        value={p.api_key}
-                        onChange={(e) => setProviders((prev) => prev.map((x) => x.key === p.key ? { ...x, api_key: e.target.value } : x))}
-                        className="h-7 text-xs"
-                        placeholder={p.api_key ? "••••••••" : "填入 Key"}
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <Label className="text-[10px]">Model</Label>
-                      <Input value={p.model} onChange={(e) => setProviders((prev) => prev.map((x) => x.key === p.key ? { ...x, model: e.target.value } : x))} className="h-7 text-xs" />
-                    </div>
-                    <div className="space-y-1">
-                      <Label className="text-[10px]">Base URL</Label>
-                      <Input value={p.base_url} onChange={(e) => setProviders((prev) => prev.map((x) => x.key === p.key ? { ...x, base_url: e.target.value } : x))} className="h-7 text-xs" placeholder="默认" />
-                    </div>
-                  </div>
+              <>
+                {/* Function → Provider mapping table */}
+                <div className="border border-border overflow-x-auto">
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="border-b border-border bg-muted/50">
+                        <th className="text-left p-2 font-medium">AI 功能</th>
+                        <th className="text-left p-2 font-medium w-40">供应商</th>
+                        <th className="text-center p-2 font-medium w-20">状态</th>
+                        <th className="text-center p-2 font-medium w-16">测试</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {AI_FUNCTIONS.map((f) => {
+                        const status = getFunctionStatus(f.key)
+                        const pk = functionProviders[f.key]
+                        const tr = pk ? testResults[pk] : null
+                        return (
+                          <tr key={f.key} className="border-b border-border last:border-b-0 hover:bg-muted/30">
+                            <td className="p-2">
+                              <p className="font-medium">{f.label}</p>
+                              <p className="text-[10px] text-muted-foreground">{f.desc}</p>
+                            </td>
+                            <td className="p-2">
+                              <Select
+                                value={functionProviders[f.key] || ""}
+                                onValueChange={(v) => updateFunctionProvider(f.key, v)}
+                              >
+                                <SelectTrigger className="h-7 text-xs">
+                                  <SelectValue placeholder="选择供应商" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {providers.map((p) => (
+                                    <SelectItem key={p.key} value={p.key}>{p.label}</SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            </td>
+                            <td className="p-2 text-center">
+                              <Badge variant="outline" className={cn("text-[10px]", status.color)}>
+                                {status.label}
+                              </Badge>
+                            </td>
+                            <td className="p-2 text-center">
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                className="h-7 w-7 p-0"
+                                title={tr ? (tr.ok ? "连通" : tr.msg) : "测试连通"}
+                                disabled={!pk}
+                                onClick={() => pk && testProvider(pk)}
+                              >
+                                {tr ? (
+                                  tr.ok ? <IconCheck className="size-3.5 text-emerald-400" /> :
+                                    <IconX className="size-3.5 text-red-400" />
+                                ) : (
+                                  <span className="text-[10px]">🧪</span>
+                                )}
+                              </Button>
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
                 </div>
-              ))
+
+                {/* 已引用的供应商配置 — 只展开被选中的 */}
+                {usedProviders.size > 0 && (
+                  <div className="space-y-3">
+                    <p className="text-[10px] text-muted-foreground border-b border-border pb-1">
+                      已引用的供应商配置（{usedProviders.size} 个）
+                    </p>
+                    {Array.from(usedProviders).map((pk) => {
+                      const p = providers.find((x) => x.key === pk)
+                      if (!p) return null
+                      const source = getConfigSource(pk)
+                      const tr = testResults[pk]
+                      return (
+                        <div key={pk} className="border border-border p-3 space-y-2">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs font-medium">{p.label}</span>
+                              <Badge variant="outline" className={cn("text-[10px]", source.color)}>
+                                {source.label}
+                              </Badge>
+                            </div>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-6 text-[10px]"
+                              onClick={() => testProvider(pk)}
+                            >
+                              {tr ? (tr.ok ? "✅ 连通" : "❌ 失败") : "测试连通"}
+                            </Button>
+                          </div>
+                          {tr && (
+                            <p className={cn("text-[10px]", tr.ok ? "text-emerald-400" : "text-red-400")}>
+                              {tr.msg}
+                            </p>
+                          )}
+                          <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                            <div className="space-y-1">
+                              <Label className="text-[10px]">API Key</Label>
+                              <Input
+                                type="password"
+                                value={p.api_key}
+                                onChange={(e) => updateProviderField(pk, "api_key", e.target.value)}
+                                className="h-7 text-xs"
+                                placeholder={p.api_key ? "••••••••" : envKeys[pk] ? "来自 .env" : "填入 Key"}
+                              />
+                            </div>
+                            <div className="space-y-1">
+                              <Label className="text-[10px]">Model</Label>
+                              <Input
+                                value={p.model}
+                                onChange={(e) => updateProviderField(pk, "model", e.target.value)}
+                                className="h-7 text-xs"
+                              />
+                            </div>
+                            <div className="space-y-1">
+                              <Label className="text-[10px]">Base URL</Label>
+                              <Input
+                                value={p.base_url}
+                                onChange={(e) => updateProviderField(pk, "base_url", e.target.value)}
+                                className="h-7 text-xs"
+                                placeholder="默认"
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+
+                {usedProviders.size === 0 && (
+                  <p className="text-xs text-muted-foreground text-center py-4 border border-dashed border-border">
+                    请在上方表格中为各功能选择供应商
+                  </p>
+                )}
+              </>
             )}
-            <div className="flex items-center gap-2">
+
+            <div className="flex items-center gap-2 pt-2 border-t border-border">
               <Button size="sm" onClick={saveAI} disabled={saving}>保存 AI 配置</Button>
               {msg && <span className="text-xs text-muted-foreground">{msg}</span>}
             </div>

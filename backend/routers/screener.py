@@ -229,6 +229,7 @@ async def ai_screen(body: AIScreenRequest):
     try:
         raw = await ai_chat(
             prompt,
+            function="screener",
             provider=provider,
             system_prompt="你是专业A股基金经理。严格按JSON输出，不输出markdown。",
         )

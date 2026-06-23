@@ -4,6 +4,66 @@
 
 ---
 
+## 2026-06-23 — AI 设置页重构 + Quant 交互优化 + 因子解读
+
+### AI 设置页重构：功能→供应商映射表
+
+**之前的问题：**
+- 6 个供应商卡片 × 3 字段 = 18 个输入框，但所有功能只用一个默认供应商
+- "小米"供应商 model/base_url 为空，选了必然失败
+- 配置来源不透明（.env / 数据库 / 默认值）
+- 6 个 AI 功能不能独立指定供应商
+
+**新设计：**
+- **功能→供应商映射表**：7 行（AI选股/复盘/对抗/对话/盯盘/日报/量化解读），每行独立选择供应商
+- **动态供应商配置区**：只展开被表格引用的供应商，减少视觉噪音
+- **配置来源标签**：每个供应商显示 `.env` / `已保存` / `默认` / `未配置`
+- **连通测试**：`POST /api/settings/ai-test` 端点，前端每行都有测试按钮
+- **删除"小米"**：合并到"自定义 OpenAI 兼容"
+
+**后端改动：**
+- `ai_service.py`：新增 `get_provider_for_function(function_key)` → 读取 `function_providers` 映射
+- `ai_chat()` 新增 `function` 参数：`function="screener"` → 自动查映射表找供应商
+- 12 个 AI 调用点全部传入 `function` 参数（screener/review/duel/chat/watchdog/kol/explain）
+- 不配置 `function_providers` 时回退到 `get_default_provider()`，向后兼容
+
+### Quant 页面交互优化
+
+- 添加统一「查询」按钮：根据当前 tab 自动分发（个股透视→K线 / 因子分析→因子面板 / 回测→回测 / MC→模拟）
+- 快速选择器（▼下拉）改为只填入代码，不自动查询
+- Enter 键改为调用 `handleQuery()`，统一分发
+- 因子分析空状态删除冗余的"查看因子"按钮，引导使用上方统一查询
+
+### AI 因子解读
+
+- 新增 `POST /api/quant/factor-explain` 端点
+- 因子面板加载后出现「AI 因子解读」按钮
+- AI 分析 10 类因子的优势维度（得分最高）和风险维度（得分最低）
+- 生成结构化报告：优势/风险/综合评估/操作建议
+
+### 根治 Turbopack "Object is disposed" 错误
+
+- `proxy.ts` → `middleware.ts`（Next.js 标准命名，消除模块歧义）
+- 函数 `proxy` → `middleware`
+- 新增 `predev` 脚本：每次 `npm run dev` 自动清除 `.next/dev` 缓存
+
+### Bug 修复
+
+- **设置保存后丢失**：前端发送数据与后端 `MultiAiConfigBody` 结构不匹配（缺 `configs` 包装），修复 `{ configs }` 包装
+- **掩码覆盖真实 Key**：GET 返回掩码 `sk-a****b3` → 保存时检查是否含 `****`，掩码不发送，保护真实 Key
+
+### 文件变更
+- 修改：`backend/services/ai_service.py` (+27行 get_provider_for_function + function参数)
+- 修改：`backend/routers/settings.py` (+63行 测试端点 + env_keys + function_providers)
+- 修改：`backend/routers/quant.py` (+106行 factor-explain端点)
+- 修改：`frontend/src/app/settings/page.tsx` (完全重构，18框→7行表格)
+- 修改：`frontend/src/app/quant/page.tsx` (+137行 查询按钮 + 因子解读)
+- 删除：`frontend/src/proxy.ts`
+- 新增：`frontend/src/middleware.ts`
+- 后端 9 个调用点：各 +1 行 `function=` 参数
+
+---
+
 ## 2026-06-22（续）— `/quant` 页面 10 问规划 + 全面改版
 
 ### Q1-Q10 量化页改版决策

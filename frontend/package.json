@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "predev": "node -e \"const{rmSync,existsSync}=require('fs');const p='.next/dev';if(existsSync(p)){rmSync(p,{recursive:true,force:true});console.log('Cleared Turbopack cache')}\"",
     "dev": "next dev -p 3001",
     "build": "next build",
     "start": "next start",

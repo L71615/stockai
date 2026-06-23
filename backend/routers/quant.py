@@ -428,7 +428,7 @@ async def stock_explain(code: str, body: StockExplainRequest = None):
 
     try:
         provider = body.provider or get_default_provider()
-        raw = await ai_chat(prompt, provider=provider)
+        raw = await ai_chat(prompt, function="explain", provider=provider)
     except Exception as e:
         return {"error": f"AI 服务暂时不可用：{e}"}
 
@@ -577,6 +577,7 @@ async def ai_duel_start(body: AIDuelStartRequest):
         try:
             raw = await ai_chat(
                 _build_duel_prompt(persona),
+                function="duel",
                 provider=provider,
                 system_prompt="你是专业A股分析师。严格按JSON格式输出，只选6位A股代码。",
             )
@@ -758,7 +759,7 @@ async def ai_duel_rebalance(round_id: int):
 action含义：hold=持有不动 add=加仓 reduce=减半仓 sell=全部卖出"""
 
         try:
-            raw = await ai_chat(prompt, provider=provider,
+            raw = await ai_chat(prompt, function="duel", provider=provider,
                 system_prompt="你是专业基金经理。严格按JSON输出操作建议。")
             import json as _json, re
             text = raw.strip()
@@ -942,6 +943,107 @@ def monte_carlo(req: MonteCarloRequest):
     if "error" in result:
         raise HTTPException(400, result["error"])
     return result
+
+
+# ═══════════════════════════════════════════════════════════════
+#  AI 因子解读 — 基于因子面板数据生成总结报告
+# ═══════════════════════════════════════════════════════════════
+
+class FactorExplainRequest(BaseModel):
+    code: str
+    overall_score: float | None = None
+    categories: list[dict] = []  # [{name, score_avg, done_count, ...}]
+
+
+@router.post("/factor-explain")
+async def factor_explain(body: FactorExplainRequest):
+    """AI 因子解读 — 基于因子面板评分生成结构化报告
+
+    输入因子评分摘要（前端已计算），AI 分析优势/风险维度并给出建议。
+    """
+    from services.ai_service import ai_chat
+
+    if not body.categories:
+        return {"error": "因子数据为空"}
+
+    # 构建因子摘要
+    cat_lines = []
+    for c in body.categories:
+        name = c.get("name", "")
+        score = c.get("score_avg")
+        done = c.get("done_count", 0)
+        total = c.get("factor_count", 0)
+        score_str = f"{score}/100" if score is not None else "无数据"
+        cat_lines.append(f"- {name}：{score_str}（{done}/{total}因子）")
+
+    cats_text = "\n".join(cat_lines)
+    overall = body.overall_score
+    overall_str = f"{overall}/100" if overall is not None else "未计算"
+
+    prompt = f"""你是专业A股量化分析师。请基于以下因子面板数据，生成一份简明的因子解读报告。
+
+股票代码：{body.code}
+综合评分：{overall_str}
+
+各维度评分：
+{cats_text}
+
+请严格按JSON格式输出（不要加markdown）：
+{{"strengths":[{{"dimension":"维度名","score":分数,"insight":"一句话解读"}}],"weaknesses":[{{"dimension":"维度名","score":分数,"insight":"一句话解读"}}],"overall":"综合评估（不超过80字）","suggestion":"操作建议（不超过60字）"}}
+
+要求：
+- strengths 列出得分最高的2-3个维度
+- weaknesses 列出得分最低的2-3个维度
+- insight 必须引用具体分数，不要空泛
+- overall 给出综合评价
+- suggestion 基于因子画像给1条可操作建议
+- 总字数不超过400字"""
+
+    try:
+        raw = await ai_chat(prompt, function="explain",
+            system_prompt="你是专业A股量化分析师。严格按JSON格式输出。")
+    except Exception as e:
+        return {"error": f"AI 服务暂时不可用：{e}"}
+
+    if not raw or not raw.strip():
+        return {"error": "AI 返回为空"}
+    text = raw.strip()
+    if text.startswith("（") and text.endswith("）"):
+        return {"error": text[1:-1]}
+
+    import re, json as _json
+    if text.startswith("```"):
+        lines = text.split("\n")
+        text = "\n".join(lines[1:]) if len(lines) > 1 else text
+        if text.rstrip().endswith("```"):
+            text = text[:text.rfind("```")].strip()
+
+    try:
+        result = _json.loads(text)
+        return {
+            "code": body.code,
+            "overall_score": overall,
+            "strengths": result.get("strengths", []),
+            "weaknesses": result.get("weaknesses", []),
+            "overall": result.get("overall", ""),
+            "suggestion": result.get("suggestion", ""),
+        }
+    except Exception:
+        m = re.search(r"\{.*\}", text, re.DOTALL)
+        if m:
+            try:
+                result = _json.loads(m.group(0))
+                return {
+                    "code": body.code,
+                    "overall_score": overall,
+                    "strengths": result.get("strengths", []),
+                    "weaknesses": result.get("weaknesses", []),
+                    "overall": result.get("overall", ""),
+                    "suggestion": result.get("suggestion", ""),
+                }
+            except Exception:
+                pass
+        return {"error": "AI 返回格式解析失败"}
 
 
 # ═══════════════════════════════════════════════════════════════

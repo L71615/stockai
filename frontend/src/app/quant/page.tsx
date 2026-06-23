@@ -144,6 +144,16 @@ function QuantPageInner() {
   const [factorData, setFactorData] = useState<FactorPanelData | null>(null)
   const [factorLoading, setFactorLoading] = useState(false)
 
+  // Factor AI explain
+  interface FactorExplainResult {
+    error?: string; code?: string; overall_score?: number | null
+    strengths?: { dimension: string; score: number; insight: string }[]
+    weaknesses?: { dimension: string; score: number; insight: string }[]
+    overall?: string; suggestion?: string
+  }
+  const [factorExplain, setFactorExplain] = useState<FactorExplainResult | null>(null)
+  const [factorExplainLoading, setFactorExplainLoading] = useState(false)
+
   // Load alerts + quick selector data on mount
   useEffect(() => {
     fetchAlerts()
@@ -252,13 +262,30 @@ function QuantPageInner() {
 
   const fetchFactors = async () => {
     if (!code.trim()) return
-    setFactorLoading(true); setFactorData(null)
+    setFactorLoading(true); setFactorData(null); setFactorExplain(null)
     try {
       const data = await apiGet<FactorPanelData>(`/api/quant/factor-panel/${code.trim()}?days=${days}`)
       setFactorData(data)
       setTab("factors")
     } catch (err) { setError(err instanceof Error ? err.message : "因子加载失败") }
     finally { setFactorLoading(false) }
+  }
+
+  const fetchFactorExplain = async () => {
+    if (!factorData) return
+    setFactorExplainLoading(true); setFactorExplain(null)
+    try {
+      const data = await apiPost<FactorExplainResult>("/api/quant/factor-explain", {
+        code: factorData.code,
+        overall_score: factorData.overall_score,
+        categories: factorData.categories.map((c) => ({
+          name: c.name, score_avg: c.score_avg,
+          done_count: c.done_count, factor_count: c.factor_count,
+        })),
+      })
+      setFactorExplain(data)
+    } catch (err) { setError(err instanceof Error ? err.message : "AI 因子解读失败") }
+    finally { setFactorExplainLoading(false) }
   }
 
   const runMC = async () => {
@@ -273,6 +300,18 @@ function QuantPageInner() {
     finally { setLoading(false) }
   }
 
+  // 统一查询入口：根据当前 tab 分发到对应操作
+  const handleQuery = async () => {
+    if (!code.trim()) return
+    switch (tab) {
+      case "insight": await fetchInsight(); break
+      case "factors": await fetchFactors(); break
+      case "backtest": await runBacktest(); break
+      case "mc": await runMC(); break
+      case "risk": await fetchRisk(); break
+    }
+  }
+
   return (
     <>
       <SiteHeader title="量化分析" />
@@ -282,7 +321,7 @@ function QuantPageInner() {
           <div className="relative space-y-1">
             <Label className="text-xs">股票代码</Label>
             <div className="flex gap-0">
-              <Input value={code} onChange={(e) => setCode(e.target.value)} onKeyDown={(e) => e.key === "Enter" && fetchInsight()} placeholder="000001" className="h-8 w-28 font-mono rounded-none" />
+              <Input value={code} onChange={(e) => setCode(e.target.value)} onKeyDown={(e) => e.key === "Enter" && handleQuery()} placeholder="000001" className="h-8 w-28 font-mono rounded-none" />
               <button
                 onClick={() => setSelectorOpen(!selectorOpen)}
                 className="h-8 px-2 border border-l-0 border-input bg-background text-muted-foreground hover:text-foreground text-xs"
@@ -302,7 +341,7 @@ function QuantPageInner() {
                         <button
                           key={h.code}
                           className="w-full text-left px-3 py-1 text-xs hover:bg-muted flex justify-between"
-                          onClick={() => { setCode(h.code); setSelectorOpen(false); setTimeout(() => fetchInsight(), 50) }}
+                          onClick={() => { setCode(h.code); setSelectorOpen(false) }}
                         >
                           <span className="font-mono">{h.code}</span>
                           <span className="text-muted-foreground truncate ml-2">{h.name}</span>
@@ -318,7 +357,7 @@ function QuantPageInner() {
                         <button
                           key={w.code}
                           className="w-full text-left px-3 py-1 text-xs hover:bg-muted flex justify-between"
-                          onClick={() => { setCode(w.code); setSelectorOpen(false); setTimeout(() => fetchInsight(), 50) }}
+                          onClick={() => { setCode(w.code); setSelectorOpen(false) }}
                         >
                           <span className="font-mono">{w.code}</span>
                           <span className="text-muted-foreground truncate ml-2">{w.name}</span>
@@ -347,7 +386,7 @@ function QuantPageInner() {
                       <button
                         key={t.code}
                         className="w-full text-left px-3 py-1 text-xs hover:bg-muted flex justify-between"
-                        onClick={() => { setCode(t.code); setSelectorOpen(false); setTimeout(() => fetchInsight(), 50) }}
+                        onClick={() => { setCode(t.code); setSelectorOpen(false) }}
                       >
                         <span className="font-mono">{t.code}</span>
                         <span className="text-muted-foreground truncate ml-2">{t.name}</span>
@@ -379,6 +418,9 @@ function QuantPageInner() {
               </SelectContent>
             </Select>
           </div>
+          <Button size="sm" onClick={handleQuery} disabled={loading || !code.trim()}>
+            查询
+          </Button>
         </div>
 
         {error && <p className="text-xs text-red-500">{error}</p>}
@@ -945,14 +987,93 @@ function QuantPageInner() {
                     </Card>
                   ))}
                 </div>
+
+                {/* AI 因子解读 */}
+                {!factorExplain && !factorExplainLoading && (
+                  <div className="flex items-center gap-2">
+                    <Button size="sm" variant="outline" onClick={fetchFactorExplain} disabled={factorExplainLoading}>
+                      <IconBrain className="size-3.5 mr-1" />AI 因子解读
+                    </Button>
+                    <span className="text-[10px] text-muted-foreground">基于因子评分生成总结报告</span>
+                  </div>
+                )}
+
+                {factorExplainLoading && (
+                  <Card>
+                    <CardContent className="py-6 text-center space-y-2">
+                      <IconBrain className="size-5 mx-auto text-muted-foreground animate-pulse" />
+                      <p className="text-sm text-muted-foreground">AI 正在分析因子数据...</p>
+                    </CardContent>
+                  </Card>
+                )}
+
+                {factorExplain && (
+                  factorExplain.error ? (
+                    <Card className="border-l-[3px] border-l-red-400">
+                      <CardContent className="py-3">
+                        <p className="text-xs text-red-400">{factorExplain.error}</p>
+                      </CardContent>
+                    </Card>
+                  ) : (
+                    <Card className="border-l-[3px] border-l-purple-400">
+                      <CardHeader className="pb-2">
+                        <CardTitle className="text-sm flex items-center gap-2">
+                          <IconBrain className="size-4 text-purple-400" />
+                          AI 因子解读
+                          <span className="text-[10px] text-muted-foreground font-normal">
+                            {factorExplain.code} · 综合 {factorExplain.overall_score}/100
+                          </span>
+                        </CardTitle>
+                      </CardHeader>
+                      <CardContent className="space-y-3">
+                        {/* Strengths */}
+                        {factorExplain.strengths && factorExplain.strengths.length > 0 && (
+                          <div className="space-y-1.5">
+                            <Badge variant="outline" className="text-[10px] border-emerald-400/30 text-emerald-400">优势维度</Badge>
+                            {factorExplain.strengths.map((s, i) => (
+                              <div key={i} className="flex gap-2 text-xs pl-2 border-l-2 border-emerald-400/20">
+                                <span className="text-muted-foreground shrink-0 w-16">{s.dimension}</span>
+                                <span className="font-mono shrink-0 text-emerald-400">{s.score}/100</span>
+                                <span className="text-muted-foreground">{s.insight}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+
+                        {/* Weaknesses */}
+                        {factorExplain.weaknesses && factorExplain.weaknesses.length > 0 && (
+                          <div className="space-y-1.5">
+                            <Badge variant="outline" className="text-[10px] border-orange-400/30 text-orange-400">风险维度</Badge>
+                            {factorExplain.weaknesses.map((w, i) => (
+                              <div key={i} className="flex gap-2 text-xs pl-2 border-l-2 border-orange-400/20">
+                                <span className="text-muted-foreground shrink-0 w-16">{w.dimension}</span>
+                                <span className="font-mono shrink-0 text-orange-400">{w.score}/100</span>
+                                <span className="text-muted-foreground">{w.insight}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+
+                        {/* Overall */}
+                        {factorExplain.overall && (
+                          <p className="text-xs text-muted-foreground border-t border-border pt-2">{factorExplain.overall}</p>
+                        )}
+
+                        {/* Suggestion */}
+                        {factorExplain.suggestion && (
+                          <p className="text-xs font-medium text-purple-400">{factorExplain.suggestion}</p>
+                        )}
+                      </CardContent>
+                    </Card>
+                  )
+                )}
               </>
             ) : (
               <Card>
                 <CardContent className="py-12 text-center space-y-2">
                   <IconRadar2 className="size-8 mx-auto text-muted-foreground" />
-                  <p className="text-sm text-muted-foreground">输入代码后点击"查看因子"</p>
-                  <p className="text-xs text-muted-foreground">展示 7 大类 59 因子的完整评分</p>
-                  <Button size="sm" onClick={fetchFactors} disabled={!code.trim()}>查看因子</Button>
+                  <p className="text-sm text-muted-foreground">输入代码后点击上方「查询」按钮</p>
+                  <p className="text-xs text-muted-foreground">展示 10 大类 57 因子的完整评分</p>
                 </CardContent>
               </Card>
             )}

@@ -209,6 +209,7 @@ async def _run_single_agent(
         raw = await asyncio.wait_for(
             ai_chat(
                 prompt,
+                function="screener",
                 provider=provider,
                 system_prompt=role["system_prompt"],
             ),

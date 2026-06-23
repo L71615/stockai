@@ -168,6 +168,7 @@ async def generate_memo(plan_id: int, body: MemoRequest):
 
     reply = await ai_chat(
         prompt,
+        function="chat",
         provider=body.provider,
         api_key=body.apiKey,
         model=body.model,

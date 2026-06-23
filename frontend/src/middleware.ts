@@ -13,7 +13,7 @@ const PUBLIC_PATHS = ["/login"]
  *
  * 效果: 14 个页面不再需要 useEffect + isAuthenticated() 检查
  */
-export function proxy(request: NextRequest) {
+export function middleware(request: NextRequest) {
   const token = request.cookies.get("stockai_token")?.value
   const { pathname } = request.nextUrl
 

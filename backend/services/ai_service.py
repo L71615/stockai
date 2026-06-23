@@ -100,7 +100,7 @@ def get_default_provider() -> str:
     """获取用户保存的默认 AI 供应商
 
     优先级：settings 表 ai_config.default_provider → 环境变量 AI_PROVIDER → "deepseek"
-    所有 AI 功能（精选/盯盘/复盘/对抗）共用此默认值，用户在设置页切换即可。
+    当 function_providers 未配置时，所有功能回退到此默认值。
     """
     try:
         from database import query_one
@@ -115,11 +115,33 @@ def get_default_provider() -> str:
     return AI_PROVIDER or "deepseek"
 
 
+def get_provider_for_function(function_key: str) -> str:
+    """按功能解析供应商 — 读取 settings 表 function_providers 映射
+
+    优先级：function_providers[function_key] → default_provider → 环境变量 → "deepseek"
+    用户在设置页可以为每个 AI 功能独立指定供应商。
+    """
+    try:
+        from database import query_one
+        import json as _json
+        row = query_one("SELECT value FROM settings WHERE key = 'ai_config'")
+        if row and row.get("value"):
+            cfg = _json.loads(row["value"])
+            if isinstance(cfg, dict):
+                fp = cfg.get("function_providers", {})
+                if isinstance(fp, dict) and function_key in fp and fp[function_key]:
+                    return fp[function_key]
+    except Exception:
+        logger.debug("get_provider_for_function: settings read failed")
+    return get_default_provider()
+
+
 async def ai_chat(
     message: str,
     conversation_history: list[dict] = None,
     *,
     provider: str = "",
+    function: str = "",
     api_key: str = "",
     model: str = "",
     base_url: str = "",
@@ -128,12 +150,15 @@ async def ai_chat(
     """统一的 AI 对话入口（多供应商调度）
 
     provider 为空时自动用 get_default_provider()（用户设置 > 环境变量）。
+    如果提供了 function 参数，优先从 function_providers 映射查找供应商。
     api_key/model 为空时，自动从 settings 表读取该供应商的保存配置。
     """
     messages = list(conversation_history or [])
     messages.append({"role": "user", "content": message})
 
     # 参数为空时，从设置页读取用户保存的配置
+    if not provider and function:
+        provider = get_provider_for_function(function)
     p = provider or get_default_provider()
     if not api_key or not model:
         stored = _load_stored_ai_config(p)

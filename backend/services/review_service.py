@@ -359,6 +359,7 @@ async def generate_review_report(
         raw = await asyncio.wait_for(
             ai_chat(
                 prompt,
+                function="review",
                 provider=effective_provider,
                 api_key=effective_key,
                 model=effective_model,

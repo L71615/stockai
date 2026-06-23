@@ -106,7 +106,7 @@ async def _ai_summary(xueqiu_items: list, rss_items: list, provider: str = "") -
     try:
         from services.ai_service import ai_chat, get_default_provider
         p = provider or get_default_provider()
-        result = await ai_chat(prompt, provider=p,
+        result = await ai_chat(prompt, function="kol", provider=p,
             system_prompt="你是资深A股投资分析师，观点客观、语言精炼。")
         return result.strip()
     except Exception as e:

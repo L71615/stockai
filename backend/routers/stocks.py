@@ -438,6 +438,7 @@ RSI(14): {result['RSI']}
 
     interpretation = await ai_chat(
         prompt,
+        function="watchdog",
         provider=body.provider,
         api_key=body.apiKey,
         model=body.model,
@@ -610,6 +611,7 @@ async def generate_review(body: ReviewRequest):
 
     review = await ai_chat(
         prompt,
+        function="review",
         provider=body.provider,
         api_key=body.apiKey,
         model=body.model,
