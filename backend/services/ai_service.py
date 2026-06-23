@@ -189,7 +189,7 @@ def _decrypt_dict(cfg: dict) -> dict:
     for k, v in cfg.items():
         if k == "api_key" and isinstance(v, str) and v:
             try:
-                result[k] = decrypt(v.encode())
+                result[k] = decrypt(v.encode("latin-1"))
             except Exception:
                 result[k] = v  # 无法解密则保留原值（兼容旧数据）
         elif isinstance(v, dict):
