@@ -1,0 +1,27 @@
+# 连跌反弹 — 超跌后放量止跌收阳
+id: gap_reversal
+name: 连跌反弹
+description: >
+  连续下跌后RSI极度超卖，今日放量止跌收阳。
+  超短线1-2天持有，抓情绪修复的快速反弹。
+  必须严格止损：跌破今日最低价或-5%无条件走。
+market_state: [bear, range]
+recommended_position: "30-40%"
+conditions:
+  - field: ret_5d
+    operator: "<="
+    value: -5
+  - field: rsi_14
+    operator: "<="
+    value: 35
+  - field: vol_ratio
+    operator: ">="
+    value: 1.2
+  - field: close
+    operator: ">"
+    compare_field: "open"
+  - field: avg_amount_20d
+    operator: ">="
+    value: 20000000
+sort_by: rsi_14
+sort_order: asc

@@ -1,0 +1,27 @@
+# 突破回踩 — 放量突破20日高点后缩量回踩不破
+id: breakout_pullback
+name: 突破回踩
+description: >
+  放量突破20日新高，RSI偏强但不极端，量能放大。
+  做趋势跟随的波段机会，2-3天持有。
+  牛市或震荡市可用。止损设在突破前一日收盘价下方2%。
+market_state: [bull, range]
+recommended_position: "40-60%"
+conditions:
+  - field: close
+    operator: ">="
+    compare_field: "high_20d"
+  - field: rsi_14
+    operator: "between"
+    value: [50, 75]
+  - field: vol_ratio
+    operator: ">="
+    value: 1.3
+  - field: ret_5d
+    operator: "between"
+    value: [2, 10]
+  - field: avg_amount_20d
+    operator: ">="
+    value: 30000000
+sort_by: strength_20d
+sort_order: desc

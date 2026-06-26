@@ -504,12 +504,18 @@ def run_screener(
     scored = []
     for nf in normalized:
         score = score_stock(nf["factors"], weights)
+        # Compute signal confidence
+        factors_dict = {k: v for k, v in nf["factors"].items() if v is not None}
+        confidence = _calc_confidence(factors_dict)
+
         scored.append({
             "code": nf["code"],
             "name": nf.get("name", "") or stock_name_map.get(nf["code"], {}).get("name", ""),
             "industry": nf.get("industry", "") or stock_name_map.get(nf["code"], {}).get("industry", ""),
             "score": score,
-            "factors": {k: v for k, v in nf["factors"].items() if v is not None},
+            "confidence": confidence,
+            "confidence_label": "高" if confidence >= 0.7 else ("中" if confidence >= 0.4 else "低"),
+            "factors": factors_dict,
             "hit_count": nf["hit_count"],
             "price": nf.get("price"),
         })
@@ -543,6 +549,43 @@ def _market_state_label(returns: list[float]) -> str:
     if ret_20 < -0.03 or ret_60 < -0.06:
         return "bear"
     return "range"
+
+
+def _calc_confidence(factors: dict[str, float]) -> float:
+    """信号置信度评分 (0.0-1.0)
+
+    四维度:
+    1. 因子一致性 (40%): 正向因子占比
+    2. 风险调整 (25%): 波动率越低越可信
+    3. 流动性 (20%): 成交额越大越可信
+    4. 因子覆盖率 (15%): 有效因子越多越可信
+    """
+    if not factors:
+        return 0.0
+    score = 0.0
+
+    # 1. Factor agreement (40%)
+    vals = [v for v in factors.values() if v is not None]
+    pos_count = sum(1 for v in vals if v > 0)
+    score += (pos_count / max(len(vals), 1)) * 0.4
+
+    # 2. Risk adjustment (25%) — lower vol = higher confidence
+    vol20 = factors.get("hist_vol_20d") or factors.get("HV_20")
+    if vol20 is not None and vol20 > 0:
+        vol_score = max(0, 1 - vol20 / 0.5)
+        score += vol_score * 0.25
+
+    # 3. Liquidity (20%)
+    avg_amt = factors.get("avg_amount")
+    if avg_amt is not None:
+        # log10(1e8)=8, log10(1e7)=7
+        score += min(1.0, max(0, (avg_amt - 6.0) / 3.0)) * 0.2
+
+    # 4. Factor coverage (15%)
+    coverage = len(vals) / 57  # total possible factors
+    score += min(1.0, coverage * 2) * 0.15
+
+    return round(min(score, 1.0), 4)
 
 
 def _explain_top_factors(factors: dict[str, float],

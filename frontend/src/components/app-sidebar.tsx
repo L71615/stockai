@@ -25,6 +25,7 @@ import {
   IconSearch,
   IconFilter,
   IconFileInvoice,
+  IconNotebook,
   IconRobot,
   IconSettings,
   IconChevronDown,
@@ -60,6 +61,7 @@ const navGroups = [
     defaultOpen: true,
     items: [
       { id: "transactions", label: "交易记录", icon: IconFileInvoice, url: "/transactions" },
+      { id: "journal", label: "交易日志", icon: IconNotebook, url: "/journal" },
       { id: "ai-chat", label: "AI 对话", icon: IconRobot, url: "/ai-assistant" },
       { id: "settings", label: "设置", icon: IconSettings, url: "/settings" },
     ],

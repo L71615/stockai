@@ -11,7 +11,8 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { cn } from "@/lib/utils"
 import { usePortfolio, usePortfolioHistory, useDiversification } from "@/hooks/use-portfolio"
 import { useLatestReview } from "@/hooks/use-review"
-import { apiPost } from "@/lib/auth"
+import { apiGet, apiPost } from "@/lib/auth"
+import useSWR from "swr"
 import type { PortfolioData, PortfolioHolding } from "@/lib/api-types"
 import {
   AlertDialog,
@@ -40,6 +41,7 @@ export default function Home() {
     ? (portfolio.holdings as unknown as HomeHolding[])
     : []
   const summary = portfolio?.summary ?? null
+  const { data: disciplineData } = useSWR("/api/discipline/dashboard", (url: string) => apiGet(url), { refreshInterval: 60000 })
   const aiHeadline = Array.isArray(reviewData) && reviewData[0]?.ai_headline ? reviewData[0].ai_headline : ""
   const history = historyData?.data ?? []
   const portfolioErrorMessage = portfolioError instanceof Error
@@ -229,6 +231,32 @@ export default function Home() {
                     <p className="text-sm italic text-muted-foreground">
                       &ldquo;{aiHeadline}&rdquo;
                     </p>
+                  </CardContent>
+                </Card>
+              </div>
+            )}
+
+            {/* Stop-Loss Monitoring Card */}
+            {disciplineData && disciplineData.holdings_with_stop_loss?.length > 0 && (
+              <div className="px-4 lg:px-6">
+                <Card className="border-l-[3px] border-l-red-400">
+                  <CardContent className="py-3">
+                    <p className="mb-2 flex items-center gap-1 text-xs font-medium text-red-400">
+                      🛡 止损监控 ({disciplineData.active_stop_loss_count} 只)
+                    </p>
+                    <div className="space-y-1.5">
+                      {disciplineData.holdings_with_stop_loss.map((h: Record<string, unknown>) => (
+                        <div key={String(h.holding_id)} className="flex items-center justify-between text-xs">
+                          <span className="font-mono">{h.stock_code as string}</span>
+                          <span className="text-muted-foreground">
+                            止损 ¥{h.stop_loss_price as number}
+                          </span>
+                          <span className={h.danger ? "text-red-400 font-medium" : "text-muted-foreground"}>
+                            {h.stop_loss_distance_pct != null ? `${h.stop_loss_distance_pct}%` : "--"}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
                   </CardContent>
                 </Card>
               </div>

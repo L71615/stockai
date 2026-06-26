@@ -4,6 +4,73 @@
 
 ---
 
+## 2026-06-27 — 交易纪律系统 v1
+
+### 背景
+
+用户画像：7000 元本金，1-2 只持仓，1-3 天超短线。当前 StockAI 能选股但缺三件事：
+1. 买了不知道什么时候割
+2. 策略偏中长线，没有超短专用策略
+3. 选股结果不敢信任
+
+### 止损绑定系统
+
+**数据库:** `transactions` 表 +4 列(stop_loss_price, stop_loss_triggered, planned_exit_price), `holdings` 表 +2 列(stop_loss_price, take_profit_price)
+
+**后端 `routers/discipline.py`（新文件，~300 行）:**
+- `POST /api/discipline/stop-loss/{holding_id}` — 为持仓设置止损/止盈价
+- `GET /api/discipline/stop-loss/check` — 批量检查持仓触发状态(触发/接近/安全)
+- `POST /api/discipline/stop-loss/{holding_id}/trigger` — 执行止损卖出(自动生成交易记录)
+- `GET /api/discipline/dashboard` — 仪表板聚合数据
+
+**`services/scheduler.py`:**
+- `start_stop_loss_thread()` — 每 5 分钟检查止损(仅交易时段 9:00-15:00)
+- 触发时推送通知到企业微信/Telegram/邮件
+
+**前端:**
+- 交易表单买入时新增止损价/止盈价输入框
+- 仪表板新增止损监控卡片(红色警告: 距止损<2%)
+
+### 连亏保护 + 交易日志
+
+**数据库:** 新建 `trade_journal` 表(盈亏/纪律评分/情绪状态/教训), `trading_plans` 表(盘前计划)
+
+**后端 `services/discipline_service.py`（新文件）:**
+- `get_consecutive_losses()` — 从日志倒序数连亏次数
+- `check_protection()` — 连亏>=3 次自动锁定
+- `auto_create_journal_entry()` — 卖出时自动生成日志
+
+**后端路由新增:**
+- `GET /api/discipline/loss-streak` — 连亏状态 + 保护模式
+- `POST /api/discipline/protection/toggle` — 开关保护
+- `GET/PUT /api/discipline/journal` — 交易日志 CRUD
+- `POST/GET /api/discipline/plan` — 盘前计划
+
+**前端新页面 `/journal`:**
+- 交易日志列表(盈亏、评分、情绪复盘、教训)
+- 汇总卡片(总笔数/盈利/亏损/累计盈亏)
+- 行内编辑: 纪律评分(1-10) + 情绪状态 + 教训
+
+**前端侧边栏:** 加"交易日志"入口
+
+### 超短线策略
+
+**2 个新策略 YAML:**
+- `gap_reversal.yaml` — 连跌反弹(RSI≤35 + 5日跌>5% + 放量止跌收阳, 1-2天持有)
+- `breakout_pullback.yaml` — 突破回踩(放量突破20日高点 + RSI 50-75 + 量能确认, 2-3天持有)
+
+### 信号置信度评分
+
+在 `screener_service.py` 的选股结果中加 `confidence` (0-1) + `confidence_label` (高/中/低):
+- 因子一致性 (40%) + 风险调整 (25%) + 流动性 (20%) + 因子覆盖率 (15%)
+
+### 文件变更
+- **新建**: `routers/discipline.py`, `services/discipline_service.py`, `journal/page.tsx`, `strategies/gap_reversal.yaml`, `strategies/breakout_pullback.yaml`
+- **修改**: `database.py` (+60行), `main.py` (+3行), `scheduler.py` (+50行), `screener_service.py` (+35行), `transactions/page.tsx` (+30行), `page.tsx` (+40行), `app-sidebar.tsx` (+3行)
+- **总计**: 5 新建 + 7 修改, ~550 行代码
+
+---
+
 ## 2026-06-26 #3 — 条件选股性能优化 + 候选池保护 + 数据源故障诊断
 
 ### 问题定位

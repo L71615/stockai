@@ -34,6 +34,7 @@ export default function TransactionsPage() {
   const [direction, setDirection] = useState("buy"); const [price, setPrice] = useState(""); const [qty, setQty] = useState("")
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10)); const [note, setNote] = useState("")
   const [fee, setFee] = useState(""); const [autoFee, setAutoFee] = useState(true)
+  const [stopLoss, setStopLoss] = useState(""); const [takeProfit, setTakeProfit] = useState("")
 
   const fetchTxns = useCallback(async () => {
     try {
@@ -81,6 +82,8 @@ export default function TransactionsPage() {
       note,
     }
     if (!autoFee && fee && !isCash) body.fee = Number(fee)
+    if (direction === "buy" && stopLoss) body.stop_loss_price = Number(stopLoss)
+    if (direction === "buy" && takeProfit) body.planned_exit_price = Number(takeProfit)
     if (editId) {
       await apiPost(`/api/stocks/transactions/${editId}`, body, "PUT")
     } else {
@@ -219,6 +222,18 @@ export default function TransactionsPage() {
                   </div>
                 </div>
                 <div className="space-y-1 flex-1 min-w-[120px]">
+                  {direction === "buy" && (
+                    <div className="space-y-2">
+                      <Label className="text-xs">止损价 (¥)</Label>
+                      <Input value={stopLoss} onChange={(e) => setStopLoss(e.target.value)} className="h-8" placeholder="跌破此价卖出" />
+                    </div>
+                  )}
+                  {direction === "buy" && (
+                    <div className="space-y-2">
+                      <Label className="text-xs">止盈价 (¥)</Label>
+                      <Input value={takeProfit} onChange={(e) => setTakeProfit(e.target.value)} className="h-8" placeholder="达到此价卖出" />
+                    </div>
+                  )}
                   <Label className="text-xs">备注</Label>
                   <Input value={note} onChange={(e) => setNote(e.target.value)} className="h-8" placeholder="可选" />
                 </div>

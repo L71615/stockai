@@ -58,3 +58,58 @@ def start_dca_reminder_thread(interval_seconds: int = 3600):
     t = threading.Thread(target=_loop, daemon=True, name="dca-reminder")
     t.start()
     return t
+
+
+def _check_stop_losses():
+    """检查持仓止损触发，推送通知"""
+    from services.notify_service import send_notification
+
+    uid = 1
+    holdings = query_all(
+        "SELECT * FROM holdings WHERE user_id = ? AND quantity > 0 AND stop_loss_price IS NOT NULL",
+        (uid,),
+    )
+    if not holdings:
+        return
+
+    from services.utils import get_market
+    from services.akshare_adapter import get_batch_quotes
+
+    codes = [h["stock_code"] for h in holdings]
+    try:
+        quotes = get_batch_quotes(codes)
+    except Exception:
+        return
+
+    triggered = []
+    for h in holdings:
+        q = quotes.get(h["stock_code"])
+        if not q or not q.get("price"):
+            continue
+        price = q["price"]
+        sl = h["stop_loss_price"]
+        tp = h.get("take_profit_price")
+        if sl and price <= sl:
+            triggered.append(f"🔴 {h['stock_code']} {h.get('stock_name','')} 触发止损! 当前{price} ≤ 止损{sl}")
+        elif tp and price >= tp:
+            triggered.append(f"🟢 {h['stock_code']} {h.get('stock_name','')} 触发止盈! 当前{price} ≥ 止盈{tp}")
+
+    if triggered:
+        send_notification("\n".join(triggered), title="⚠️ 止损/止盈预警")
+
+
+def start_stop_loss_thread(interval_seconds: int = 300):
+    """每5分钟检查止损（仅交易时段）"""
+    def _loop():
+        while True:
+            try:
+                now = datetime.now()
+                if now.weekday() < 5 and 9 <= now.hour <= 15:
+                    _check_stop_losses()
+            except Exception:
+                logger.warning("scheduler: 止损检查线程异常", exc_info=True)
+            time.sleep(interval_seconds)
+
+    t = threading.Thread(target=_loop, daemon=True, name="stop-loss-checker")
+    t.start()
+    return t

@@ -195,6 +195,14 @@ def init_db():
             except Exception:
                 pass
         for col, col_def in [
+            ("stop_loss_price", "REAL"),
+            ("take_profit_price", "REAL"),
+        ]:
+            try:
+                conn.execute(f"ALTER TABLE holdings ADD COLUMN {col} {col_def}")
+            except Exception:
+                pass
+        for col, col_def in [
             ("asset_type", "TEXT DEFAULT ''"),
         ]:
             try:
@@ -209,10 +217,55 @@ def init_db():
                 conn.execute(f"ALTER TABLE transactions ADD COLUMN {col} {col_def}")
             except Exception:
                 pass
+        for col, col_def in [
+            ("stop_loss_price", "REAL"),
+            ("stop_loss_triggered", "INTEGER DEFAULT 0"),
+            ("stop_loss_triggered_at", "TEXT"),
+            ("planned_exit_price", "REAL"),
+        ]:
+            try:
+                conn.execute(f"ALTER TABLE transactions ADD COLUMN {col} {col_def}")
+            except Exception:
+                pass
         try:
             conn.execute("ALTER TABLE dca_plans ADD COLUMN last_reminded TEXT DEFAULT ''")
         except Exception:
             pass
+        conn.execute("""CREATE TABLE IF NOT EXISTS trade_journal (
+            id                INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id           INTEGER NOT NULL DEFAULT 1,
+            stock_code        TEXT NOT NULL,
+            stock_name        TEXT DEFAULT '',
+            direction         TEXT NOT NULL,
+            entry_price       REAL,
+            exit_price        REAL,
+            quantity          INTEGER,
+            pnl               REAL,
+            pnl_pct           REAL,
+            stop_loss_hit     INTEGER DEFAULT 0,
+            planned           INTEGER DEFAULT 0,
+            discipline_score  INTEGER,
+            emotional_state   TEXT DEFAULT '',
+            lessons_learned   TEXT DEFAULT '',
+            entry_date        TEXT NOT NULL,
+            exit_date         TEXT,
+            created_at        TEXT DEFAULT (datetime('now','localtime'))
+        )""")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_journal_user ON trade_journal(user_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_journal_date ON trade_journal(entry_date)")
+        conn.execute("""CREATE TABLE IF NOT EXISTS trading_plans (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id         INTEGER NOT NULL DEFAULT 1,
+            plan_date       TEXT NOT NULL,
+            plan_type       TEXT NOT NULL DEFAULT 'pre_market',
+            status          TEXT NOT NULL DEFAULT 'draft',
+            market_state    TEXT DEFAULT '',
+            content         TEXT NOT NULL DEFAULT '{}',
+            summary         TEXT DEFAULT '',
+            created_at      TEXT DEFAULT (datetime('now','localtime')),
+            updated_at      TEXT DEFAULT (datetime('now','localtime')),
+            UNIQUE(user_id, plan_date, plan_type)
+        )""")
         conn.execute("""CREATE TABLE IF NOT EXISTS review_reports (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER NOT NULL DEFAULT 1,
