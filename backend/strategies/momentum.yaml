@@ -1,0 +1,26 @@
+# 动量领涨 — 追涨强势股
+id: momentum_leader
+name: 动量领涨
+description: >
+  选出近期涨幅最强且有成交量支撑的股票。动量因子在A股市场有效性显著，
+  强者恒强。适合市场整体向上时使用，需注意追高风险。
+market_state: [bull]
+recommended_position: "50-70%"
+conditions:
+  - field: ret_20d
+    operator: ">="
+    value: 5
+  - field: ret_5d
+    operator: ">="
+    value: 0
+  - field: rsi_14
+    operator: "between"
+    value: [55, 85]
+  - field: vol_ratio
+    operator: ">="
+    value: 1.2
+  - field: avg_amount_20d
+    operator: ">="
+    value: 50000000
+sort_by: ret_20d
+sort_order: desc

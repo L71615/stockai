@@ -1,0 +1,26 @@
+# 均线多头排列 — MA5 > MA20 > MA60 三线发散向上
+id: ma_bullish
+name: 均线多头排列
+description: >
+  短期均线在中期均线之上，中期均线在长期均线之上，且三条均线方向均向上。
+  这是趋势交易中最经典的做多信号。适合牛市中的顺势而为。
+market_state: [bull]
+recommended_position: "70-90%"
+conditions:
+  - field: ma5
+    operator: ">"
+    compare_field: "ma20"
+  - field: ma20
+    operator: ">"
+    compare_field: "ma60"
+  - field: close
+    operator: ">"
+    compare_field: "ma20"
+  - field: rsi_14
+    operator: "between"
+    value: [45, 80]
+  - field: avg_amount_20d
+    operator: ">="
+    value: 30000000
+sort_by: strength_20d
+sort_order: desc

@@ -6,6 +6,7 @@
 import json
 import threading
 from datetime import datetime
+from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -264,14 +265,16 @@ async def ai_screen(body: AIScreenRequest):
 
 @router.get("/strategies")
 def list_strategies():
-    """列出所有可用策略"""
+    """列出所有可用策略：回测策略 + YAML 策略模板"""
     from services.backtest_service import AVAILABLE_STRATEGIES
-    return {
-        "strategies": [
-            {"id": k, "name": v["name"], "default_params": v["params"]}
-            for k, v in AVAILABLE_STRATEGIES.items()
-        ]
-    }
+    backtest_strategies = [
+        {"id": k, "name": v["name"], "description": v.get("description", ""), "type": "backtest"}
+        for k, v in AVAILABLE_STRATEGIES.items()
+    ]
+    yaml_strategies = _list_strategies()
+    for s in yaml_strategies:
+        s["type"] = "condition"
+    return {"strategies": backtest_strategies + yaml_strategies}
 
 
 @router.post("/backtest/single")
@@ -594,7 +597,7 @@ def get_factor_registry(category: str = ""):
 
     可选查询参数:
       category: 按分类筛选 (价格因子/成交量因子/技术指标因子/动量因子/
-                波动率因子/量价因子/基本面因子/情绪因子/资金因子/社交因子)
+                波动率因子/量价因子/基本面因子/情绪因子/资金因子)
     """
     from services.factor_service import FACTOR_REGISTRY
 
@@ -756,3 +759,612 @@ def check_factor_retirement(body: dict):
 
     result = apply_factor_retirement(factors)
     return result
+
+
+# ══════════════════════════════════════════════════════════════════
+# 条件选股 & 策略系统
+# ══════════════════════════════════════════════════════════════════
+
+_STRATEGIES_DIR = Path(__file__).resolve().parent.parent / "strategies"
+
+
+def _load_strategy_yaml(strategy_id: str) -> dict | None:
+    """从 YAML 文件加载策略定义"""
+    try:
+        import yaml
+    except ImportError:
+        return None
+    fpath = _STRATEGIES_DIR / f"{strategy_id}.yaml"
+    if not fpath.exists():
+        return None
+    with open(fpath, "r", encoding="utf-8") as f:
+        return yaml.safe_load(f)
+
+
+def _list_strategies() -> list[dict]:
+    """列出所有可用策略模板"""
+    if not _STRATEGIES_DIR.exists():
+        return []
+    strategies = []
+    for fpath in sorted(_STRATEGIES_DIR.glob("*.yaml")):
+        try:
+            import yaml
+            with open(fpath, "r", encoding="utf-8") as f:
+                s = yaml.safe_load(f)
+                strategies.append({
+                    "id": s.get("id", fpath.stem),
+                    "name": s.get("name", fpath.stem),
+                    "description": s.get("description", ""),
+                    "market_state": s.get("market_state", []),
+                    "recommended_position": s.get("recommended_position", ""),
+                    "condition_count": len(s.get("conditions", [])),
+                })
+        except Exception:
+            pass
+    return strategies
+
+
+@router.get("/strategies/{strategy_id}")
+def get_strategy_detail(strategy_id: str):
+    """获取单个策略的完整定义（含条件列表）"""
+    data = _load_strategy_yaml(strategy_id)
+    if data:
+        return {"found": True, "strategy": data}
+    # 旧格式回退
+    return {"found": False, "error": f"策略 {strategy_id} 不存在"}
+
+
+# ── 条件 Schema ──
+
+CONDITION_SCHEMA = [
+    # L1: 股票列表（零成本）
+    {"key": "industry", "label": "行业", "type": "select", "category": "layer1_stocklist",
+     "operators": ["in_list", "not_in_list"]},
+    # L2: 实时行情（批量HTTP，极低成本）
+    {"key": "price", "label": "股价", "type": "range", "category": "layer2_quote",
+     "operators": ["between"], "unit": "元"},
+    # L3: 基本面（逐个HTTP + Baostock兜底）
+    {"key": "pe", "label": "PE (TTM)", "type": "range", "category": "layer3_fundamental",
+     "operators": ["between", "<", ">"]},
+    {"key": "pb", "label": "PB", "type": "range", "category": "layer3_fundamental",
+     "operators": ["between", "<", ">"]},
+    {"key": "roe", "label": "ROE (%)", "type": "number", "category": "layer3_fundamental",
+     "operators": [">=", "<="]},
+    {"key": "dividend_yield", "label": "股息率 (%)", "type": "number", "category": "layer3_fundamental",
+     "operators": [">=", "<="]},
+    {"key": "debt_ratio", "label": "资产负债率 (%)", "type": "number", "category": "layer3_fundamental",
+     "operators": ["<=", ">="]},
+    {"key": "market_cap", "label": "市值", "type": "range", "category": "layer3_fundamental",
+     "operators": ["between"], "unit": "亿"},
+    # L4: K线+技术指标（逐个HTTP+本地计算）
+    {"key": "ma5_vs_ma10", "label": "MA5 vs MA10", "type": "cross", "category": "layer4_kline",
+     "operators": ["cross_above", "cross_below", ">", "<"],
+     "compare_field": "ma10"},
+    {"key": "close_vs_ma20", "label": "收盘价 vs MA20", "type": "compare", "category": "layer4_kline",
+     "operators": [">", "<"],
+     "compare_field": "ma20"},
+    {"key": "close_vs_ma60", "label": "收盘价 vs MA60", "type": "compare", "category": "layer4_kline",
+     "operators": [">", "<"],
+     "compare_field": "ma60"},
+    {"key": "close_vs_high_20d", "label": "收盘价 vs 20日高点", "type": "cross", "category": "layer4_kline",
+     "operators": ["cross_above"],
+     "compare_field": "high_20d"},
+    {"key": "close_vs_high_55d", "label": "收盘价 vs 55日高点", "type": "cross", "category": "layer4_kline",
+     "operators": ["cross_above"],
+     "compare_field": "high_55d"},
+    {"key": "close_vs_low_5d", "label": "收盘价 vs 5日低点", "type": "compare", "category": "layer4_kline",
+     "operators": [">="],
+     "compare_field": "low_5d"},
+    {"key": "rsi_14", "label": "RSI (14)", "type": "range", "category": "layer4_kline",
+     "operators": ["between"]},
+    {"key": "macd_dif_dea", "label": "MACD DIF vs DEA", "type": "cross", "category": "layer4_kline",
+     "operators": ["cross_above", "cross_below"],
+     "compare_field": "dea"},
+    {"key": "vol_ratio", "label": "量比", "type": "number", "category": "layer4_kline",
+     "operators": [">=", "<="]},
+    {"key": "boll_position", "label": "布林带位置", "type": "range", "category": "layer4_kline",
+     "operators": ["between"], "unit": "0=下轨 1=上轨"},
+    {"key": "ret_5d", "label": "5日涨幅 (%)", "type": "range", "category": "layer4_kline",
+     "operators": ["between", ">=", "<="]},
+    {"key": "ret_20d", "label": "20日涨幅 (%)", "type": "range", "category": "layer4_kline",
+     "operators": ["between", ">=", "<="]},
+    {"key": "atr_pct", "label": "ATR/收盘价 (%)", "type": "range", "category": "layer4_kline",
+     "operators": ["between"], "unit": "%"},
+    {"key": "strength_20d", "label": "20日相对强度", "type": "number", "category": "layer4_kline",
+     "operators": [">=", "<="]},
+    {"key": "avg_amount_20d", "label": "日均成交额", "type": "number", "category": "layer4_kline",
+     "operators": [">=", "<="], "unit": "元"},
+]
+
+
+@router.get("/conditions/schema")
+def get_condition_schema():
+    """获取可用条件字段清单 + 操作符"""
+    return {"fields": CONDITION_SCHEMA}
+
+
+# ── 市场状态 ──
+
+def _calc_market_state() -> dict:
+    """计算当前 A 股市场状态"""
+    try:
+        from services.technical import fetch_kline
+        from services.akshare_adapter import get_quote
+
+        kline = fetch_kline("000001", "1", days=120)
+        if "error" in kline:
+            return {"state": "unknown", "label": "数据获取失败", "position": "--"}
+        closes = kline.get("closes", [])
+        if len(closes) < 60:
+            return {"state": "unknown", "label": "数据不足", "position": "--"}
+
+        # MA60
+        ma60 = sum(closes[-60:]) / 60
+        price = closes[-1]
+        ma60_distance_pct = round((price / ma60 - 1) * 100, 2)
+
+        # 涨跌比 — 取主要指数实时行情
+        up_count, down_count = 0, 0
+        for idx_code in ["000001", "399001", "399006"]:
+            try:
+                q = get_quote(idx_code)
+                if not q or "error" in q:
+                    continue
+                chg = q.get("change_pct", 0) or 0
+                if chg > 0:
+                    up_count += 1
+                elif chg < 0:
+                    down_count += 1
+            except Exception:
+                pass
+
+        # 成交量判断
+        from services.akshare_adapter import get_kline
+        vol_data = get_kline("000001", days=20)
+        volumes = vol_data.get("volumes", []) if "error" not in vol_data else []
+        vol_ratio = 1.0
+        if len(volumes) >= 20:
+            vol_ma = sum(volumes[-21:-1]) / 20
+            vol_ratio = round(volumes[-1] / vol_ma, 2) if vol_ma > 0 else 1.0
+
+        # 状态判定
+        bull_ratio = up_count / max(up_count + down_count, 1)
+        if price > ma60 and bull_ratio > 0.55 and vol_ratio > 0.8:
+            state, label, pos = "bull", "牛市", "60-90%"
+        elif price > ma60 and bull_ratio >= 0.4:
+            state, label, pos = "bull", "偏强", "50-70%"
+        elif abs(ma60_distance_pct) <= 3:
+            state, label, pos = "range", "震荡", "30-50%"
+        elif price < ma60 and bull_ratio < 0.4:
+            state, label, pos = "bear", "熊市", "10-30%"
+        else:
+            state, label, pos = "range", "震荡偏弱", "20-40%"
+
+        # 推荐策略
+        rec_strategies = {
+            "bull": ["turtle_s1", "ma_bullish", "momentum_leader"],
+            "range": ["boll_mean", "high_div", "turtle_s1"],
+            "bear": ["high_div", "oversold_bounce", "deep_value"],
+        }
+
+        return {
+            "state": state,
+            "label": label,
+            "position": pos,
+            "ma60_distance_pct": ma60_distance_pct,
+            "vol_ratio": vol_ratio,
+            "recommended_strategies": rec_strategies.get(state, []),
+            "price": price,
+            "ma60": round(ma60, 2),
+        }
+    except Exception:
+        return {"state": "unknown", "label": "计算失败", "position": "--"}
+
+
+@router.get("/market-state")
+def get_market_state():
+    """获取当前市场状态 + 推荐策略"""
+    return _calc_market_state()
+
+
+# ── 条件扫描 ──
+
+class ConditionScanRequest(BaseModel):
+    conditions: dict       # 条件树 {"logic": "AND", "conditions": [...]}
+    sort_by: str = ""      # 排序字段
+    sort_order: str = "desc"
+    stock_pool: str = "all"  # "all" | "hs300" | "zz500" | "custom"
+    stock_codes: list[str] = []
+    max_results: int = 50
+
+
+@router.post("/conditions/scan")
+def condition_scan(body: ConditionScanRequest):
+    """两阶段条件扫描：Phase1 行情快筛(全市场) - Phase2 K线精筛(候选集)"""
+    from services.condition_engine import evaluate
+    from services.screener_service import get_all_stock_list
+    from services.technical import calc_ma, calc_rsi, calc_macd
+    from services.factor_service import factor_ret_5d, factor_ret_20d, factor_atr
+    from services.akshare_adapter import get_stock_factors_http, get_batch_quotes
+    from services.technical import fetch_kline as fetch_kline_fast
+    from services.utils import detect_asset_type
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    conditions = body.conditions
+
+    # ── 四层字段分类（按数据获取成本从低到高）──
+    LAYER1_FIELDS = {"industry"}                           # 股票列表缓存（零成本）
+    LAYER2_FIELDS = {"price"}                              # 实时行情（批量HTTP，极低）
+    LAYER3_FIELDS = {"pe", "pb", "roe", "dividend_yield",  # 基本面（逐个HTTP，中等）
+                     "debt_ratio", "market_cap"}
+    LAYER4_FIELDS = {                                      # K线+技术指标（逐个HTTP+计算，最重）
+        "close", "open", "high", "low",
+        "ma5", "ma10", "ma20", "ma60",
+        "ma5_vs_ma10", "close_vs_ma20", "close_vs_ma60",
+        "close_vs_high_20d", "close_vs_high_55d", "close_vs_low_5d",
+        "rsi_14", "macd_dif_dea", "vol_ratio", "boll_position",
+        "ret_5d", "ret_20d", "atr_pct", "strength_20d",
+        "avg_amount_20d",
+        "high_20d", "high_55d", "low_5d", "dea", "dif",
+    }
+
+    def _layer_of(field: str) -> int:
+        """返回字段所属层 (1-4)，未知字段默认 L4（安全）"""
+        if field in LAYER1_FIELDS: return 1
+        if field in LAYER2_FIELDS: return 2
+        if field in LAYER3_FIELDS: return 3
+        if field in LAYER4_FIELDS: return 4
+        return 4  # 未知字段默认L4
+
+    def classify_conditions(tree: dict) -> dict:
+        """将条件树按层级拆分为四棵子树，同时检查 field 和 compare_field"""
+        layers: dict[int, list] = {1: [], 2: [], 3: [], 4: []}
+
+        def _walk(subtree: dict):
+            for cond in subtree.get("conditions", []):
+                if "conditions" in cond:
+                    _walk(cond)
+                else:
+                    field = cond.get("field", "")
+                    cf = cond.get("compare_field", "")
+                    max_l = max(_layer_of(field), _layer_of(cf) if cf else 0)
+                    layers[max_l].append(cond)
+
+        _walk(tree)
+        return {lid: {"logic": "AND", "conditions": layers[lid]} for lid in (1, 2, 3, 4)}
+
+    layer_trees = classify_conditions(conditions)
+
+    # 构建流水线：跳过空层
+    pipeline = [(lid, layer_trees[lid]) for lid in (1, 2, 3, 4)
+                if layer_trees[lid]["conditions"]]
+    if not pipeline:
+        return {"total_scanned": 0, "matched_count": 0,
+                "conditions": conditions, "results": []}
+
+    from services.condition_engine import evaluate
+    from services.screener_service import get_all_stock_list
+    from services.technical import calc_ma, calc_rsi, calc_macd
+    from services.factor_service import factor_ret_5d, factor_ret_20d, factor_atr
+    from services.akshare_adapter import get_stock_factors_http, get_batch_quotes
+    from services.technical import fetch_kline as fetch_kline_fast
+    from services.utils import detect_asset_type
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    # ═══════════════════════════════════════════════════════════
+    # L1: 股票列表过滤（内存缓存，零成本）
+    # ═══════════════════════════════════════════════════════════
+    stock_list = get_all_stock_list(force_refresh=False)
+    if body.stock_codes:
+        code_set = set(body.stock_codes)
+        stock_list = [s for s in stock_list if s["code"] in code_set]
+
+    total_full = len(stock_list)
+    MAX_SCAN = 1000
+    if len(stock_list) > MAX_SCAN:
+        stock_list = stock_list[:MAX_SCAN]
+
+    survivors = []
+    for s in stock_list:
+        at = detect_asset_type(s["code"])
+        if at not in ("stock", "etf"):
+            continue
+        sd = {"industry": s.get("industry", "")}
+        if layer_trees[1]["conditions"] and not evaluate(sd, layer_trees[1]):
+            continue
+        survivors.append((s, sd))
+
+    l1_passed = len(survivors)
+    if not survivors:
+        return {"total_scanned": total_full, "l1_passed": l1_passed,
+                "matched_count": 0, "conditions": conditions, "results": []}
+
+    # ═══════════════════════════════════════════════════════════
+    # L2: 实时行情过滤（腾讯批量HTTP，极低成本）
+    # ═══════════════════════════════════════════════════════════
+    codes = [s[0]["code"] for s in survivors]
+    quotes = get_batch_quotes(codes)
+    filtered = []
+    for s, sd in survivors:
+        code = s["code"]
+        quote = quotes.get(code)
+        if not quote or not quote.get("price"):
+            continue
+        price = quote.get("price", 0)
+        sd["price"] = price
+        sd["close"] = price  # alias，兼容 L4 条件
+        if layer_trees[2]["conditions"] and not evaluate(sd, layer_trees[2]):
+            continue
+        filtered.append((s, quote, sd))
+    survivors = filtered
+
+    l2_passed = len(survivors)
+    if not survivors:
+        return {"total_scanned": total_full, "l1_passed": l1_passed,
+                "l2_passed": l2_passed, "matched_count": 0,
+                "conditions": conditions, "results": []}
+
+    # ═══════════════════════════════════════════════════════════
+    # L3: 基本面过滤（两阶段：AKShare 快筛 → Baostock 精筛）
+    # ═══════════════════════════════════════════════════════════
+    if layer_trees[3]["conditions"]:
+        # ── 拆分为 L3a (AKShare) 和 L3b (Baostock) ──
+        _BS_FIELDS = {"dividend_yield", "debt_ratio", "market_cap"}
+        l3a_conds = [c for c in layer_trees[3]["conditions"]
+                     if c.get("field") not in _BS_FIELDS and c.get("compare_field", "") not in _BS_FIELDS]
+        l3b_conds = [c for c in layer_trees[3]["conditions"]
+                     if c.get("field") in _BS_FIELDS or c.get("compare_field", "") in _BS_FIELDS]
+
+        l3_tree = layer_trees[3]
+        l3a_tree = {"logic": l3_tree["logic"], "conditions": l3a_conds}
+
+        # ── L3a: AKShare HTTP（PE/PB/ROE），快速缩池 ──
+        if l3a_conds:
+            filtered = []
+            for s, quote, sd in survivors:
+                code = s["code"]
+                price = sd["price"]
+                try:
+                    fin = get_stock_factors_http(code)
+                    if fin:
+                        eps = fin.get("eps")
+                        bvps = fin.get("bvps")
+                        sd["eps"] = eps
+                        sd["roe"] = fin.get("roe")
+                        if price and eps and eps > 0:
+                            sd["pe"] = round(price / eps, 2)
+                        if price and bvps and bvps > 0:
+                            sd["pb"] = round(price / bvps, 4)
+                except Exception:
+                    pass
+                if not evaluate(sd, l3a_tree):
+                    continue
+                filtered.append((s, quote, sd))
+            survivors = filtered
+
+        l3a_passed = len(survivors)
+
+        # ── L3b: Baostock（dividend_yield / debt_ratio / market_cap），仅缩池后启用 ──
+        if l3b_conds and survivors:
+            _BS_MAX = 200
+            if len(survivors) < _BS_MAX:
+                from services.baostock_adapter import get_stock_factors as _bs
+                filtered = []
+                for s, quote, sd in survivors:
+                    code = s["code"]
+                    price = sd["price"]
+                    try:
+                        bs = _bs(code)
+                        if bs and "error" not in bs:
+                            if "dividend" in bs and price and price > 0:
+                                sd["dividend_yield"] = round(bs["dividend"] / price * 100, 4)
+                            if "debt_ratio" in bs:
+                                sd["debt_ratio"] = bs["debt_ratio"]
+                            if "market_cap" in bs:
+                                sd["market_cap"] = round(bs.get("market_cap", 0) / 1e8, 2)
+                    except Exception:
+                        pass
+                    if not evaluate(sd, {"logic": "AND", "conditions": l3b_conds}):
+                        continue
+                    filtered.append((s, quote, sd))
+                survivors = filtered
+            else:
+                logger.warning(
+                    "L3b Baostock skipped: %d candidates > %d. "
+                    "Add PE/price conditions first to use dividend_yield/debt_ratio/market_cap.",
+                    len(survivors), _BS_MAX
+                )
+                # Baostock 字段留为 None → evaluate 中全部淘汰
+                filtered = []
+                for s, quote, sd in survivors:
+                    if not evaluate(sd, {"logic": "AND", "conditions": l3b_conds}):
+                        continue
+                    filtered.append((s, quote, sd))
+                survivors = filtered
+
+    l3_passed = len(survivors)
+    if not survivors and layer_trees[3]["conditions"]:
+        return {"total_scanned": total_full, "l1_passed": l1_passed,
+                "l2_passed": l2_passed, "l3_passed": l3_passed,
+                "matched_count": 0, "conditions": conditions, "results": []}
+
+    # ═══════════════════════════════════════════════════════════
+    # L4: K线+技术指标（逐个HTTP+并行计算，最重）
+    # ═══════════════════════════════════════════════════════════
+    def _process_l4(item):
+        s, quote, sd = item
+        code = s["code"]
+        price = sd.get("price", 0)
+        try:
+            kline = fetch_kline_fast(code, days=120)
+            if "error" in kline:
+                return None
+        except Exception:
+            return None
+
+        closes = kline.get("closes", [])
+        highs = kline.get("highs", [])
+        lows = kline.get("lows", [])
+        volumes = kline.get("volumes", [])
+        opens_list = kline.get("opens", [])
+        if len(closes) < 60:
+            return None
+
+        # MA 均线
+        ma = calc_ma(closes, [5, 10, 20, 60])
+        for k in ["MA5", "MA10", "MA20", "MA60"]:
+            seq = ma.get(k, [])
+            key = k.lower()
+            sd[key + "_seq"] = seq
+            sd[key] = ([v for v in seq if v is not None] or [None])[-1]
+
+        # Open price
+        if opens_list:
+            sd["open"] = opens_list[-1]
+
+        # 高/低点参考
+        if len(highs) >= 21:
+            sd["high_20d"] = max(highs[-21:-1])
+        if len(highs) >= 56:
+            sd["high_55d"] = max(highs[-56:-1])
+        if len(lows) >= 6:
+            sd["low_5d"] = min(lows[-6:-1])
+
+        # RSI
+        sd["rsi_14_seq"] = calc_rsi(closes, 14)
+        sd["rsi_14"] = ([v for v in sd["rsi_14_seq"] if v is not None] or [None])[-1]
+
+        # MACD
+        macd_data = calc_macd(closes)
+        sd["dif_seq"] = macd_data.get("DIF", [])
+        sd["dea_seq"] = macd_data.get("DEA", [])
+
+        # 量比 + 日均成交额
+        if volumes and len(volumes) >= 20:
+            vm = sum(volumes[-21:-1]) / 20
+            sd["vol_ratio"] = round(volumes[-1] / vm, 2) if vm > 0 else 1.0
+            amounts = [volumes[i] * closes[i] for i in range(min(len(volumes), len(closes)))]
+            sd["avg_amount_20d"] = sum(amounts[-20:]) / min(len(amounts), 20)
+        else:
+            sd["vol_ratio"] = 1.0
+            sd["avg_amount_20d"] = 0
+
+        # 布林带
+        if len(closes) >= 20:
+            bb_ma = sum(closes[-20:]) / 20
+            bb_std = (sum((c - bb_ma) ** 2 for c in closes[-20:]) / 20) ** 0.5
+            bb_upper, bb_lower = bb_ma + 2 * bb_std, bb_ma - 2 * bb_std
+            sd["boll_position"] = round((price - bb_lower) / (bb_upper - bb_lower), 3) if bb_upper != bb_lower else 0.5
+        else:
+            sd["boll_position"] = 0.5
+
+        # 动量因子（转为百分比，匹配YAML策略）
+        r5 = factor_ret_5d(closes)
+        r20 = factor_ret_20d(closes)
+        sd["ret_5d"] = round(r5 * 100, 2) if r5 is not None else None
+        sd["ret_20d"] = round(r20 * 100, 2) if r20 is not None else None
+
+        # ATR / 相对强度
+        atr_val = factor_atr(highs, lows, closes, 20)
+        sd["atr_pct"] = round(atr_val / price * 100, 2) if atr_val and price > 0 else None
+        sd["strength_20d"] = round((price / closes[-20] - 1) * 100, 2) if len(closes) >= 20 and closes[-20] > 0 else None
+
+        if evaluate(sd, layer_trees[4]):
+            return {
+                "code": code, "name": s.get("name", quote.get("name", "")),
+                "industry": s.get("industry", ""),
+                "price": round(price, 2), "change_pct": round(quote.get("change_pct", 0) or 0, 2),
+                "pe": sd.get("pe"), "pb": sd.get("pb"), "roe": sd.get("roe"),
+                "rsi_14": sd.get("rsi_14"), "vol_ratio": sd.get("vol_ratio"),
+                "avg_amount": sd.get("avg_amount_20d"),
+                "boll_position": sd.get("boll_position"),
+                "ret_5d": sd.get("ret_5d"), "ret_20d": sd.get("ret_20d"),
+                "atr_pct": sd.get("atr_pct"),
+            }
+        return None
+
+    if layer_trees[4]["conditions"] and survivors:
+        results = []
+        with ThreadPoolExecutor(max_workers=6) as pool:
+            futures = {pool.submit(_process_l4, item): item for item in survivors}
+            for fut in as_completed(futures):
+                res = fut.result()
+                if res:
+                    results.append(res)
+    else:
+        # 无 L4 条件：直接返回 survivor 数据
+        results = [{
+            "code": s["code"], "name": s.get("name", quote.get("name", "")),
+            "industry": s.get("industry", ""),
+            "price": round(sd["price"], 2),
+            "change_pct": round(quote.get("change_pct", 0) or 0, 2),
+            "pe": sd.get("pe"), "pb": sd.get("pb"), "roe": sd.get("roe"),
+        } for s, quote, sd in survivors]
+
+    sort_key = body.sort_by or "price"
+    reverse = body.sort_order != "asc"
+    try:
+        results.sort(key=lambda r: r.get(sort_key) or 0, reverse=reverse)
+    except Exception:
+        pass
+
+    return {
+        "total_scanned": total_full,
+        "l1_passed": l1_passed,
+        "l2_passed": l2_passed,
+        "l3_passed": locals().get("l3_passed", len(survivors) if not layer_trees[3]["conditions"] else len(survivors)),
+        "matched_count": len(results),
+        "conditions": conditions,
+        "results": results[:body.max_results],
+    }
+
+
+# ── 用户保存的策略 ──
+
+class SaveScreenRequest(BaseModel):
+    name: str
+    description: str = ""
+    conditions: dict
+    sort_by: str = ""
+    sort_order: str = "desc"
+
+
+@router.get("/screens")
+def list_screens():
+    """列出用户保存的条件选股策略"""
+    rows = query_all(
+        "SELECT id, name, description, sort_by, sort_order, created_at, updated_at FROM condition_screens WHERE user_id = 1 ORDER BY updated_at DESC"
+    )
+    return [dict(r) for r in rows]
+
+
+@router.post("/screens")
+def save_screen(body: SaveScreenRequest):
+    """保存新的条件选股策略"""
+    import json as _json
+    result = execute(
+        "INSERT INTO condition_screens (user_id, name, description, conditions_json, sort_by, sort_order) VALUES (1, ?, ?, ?, ?, ?)",
+        (body.name, body.description, _json.dumps(body.conditions, ensure_ascii=False), body.sort_by, body.sort_order),
+    )
+    return {"id": result["lastrowid"], "message": "保存成功"}
+
+
+@router.put("/screens/{screen_id}")
+def update_screen(screen_id: int, body: SaveScreenRequest):
+    """更新保存的策略"""
+    import json as _json
+    row = query_one("SELECT id FROM condition_screens WHERE id = ? AND user_id = 1", (screen_id,))
+    if not row:
+        raise HTTPException(404, "策略不存在")
+    execute(
+        "UPDATE condition_screens SET name=?, description=?, conditions_json=?, sort_by=?, sort_order=?, updated_at=datetime('now','localtime') WHERE id=?",
+        (body.name, body.description, _json.dumps(body.conditions, ensure_ascii=False), body.sort_by, body.sort_order, screen_id),
+    )
+    return {"message": "更新成功"}
+
+
+@router.delete("/screens/{screen_id}")
+def delete_screen(screen_id: int):
+    """删除保存的策略"""
+    execute("DELETE FROM condition_screens WHERE id = ? AND user_id = 1", (screen_id,))
+    return {"message": "已删除"}

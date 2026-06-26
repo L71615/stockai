@@ -137,26 +137,6 @@ def init_db():
             tokens_used     INTEGER,
             created_at      TEXT DEFAULT (datetime('now','localtime'))
         )""")
-        conn.execute("""CREATE TABLE IF NOT EXISTS agents (
-            id              INTEGER PRIMARY KEY AUTOINCREMENT,
-            name            TEXT NOT NULL,
-            description     TEXT DEFAULT '',
-            system_prompt   TEXT DEFAULT '',
-            tools           TEXT DEFAULT '[]',
-            created_at      TEXT DEFAULT (datetime('now','localtime')),
-            updated_at      TEXT DEFAULT (datetime('now','localtime'))
-        )""")
-        conn.execute("""CREATE TABLE IF NOT EXISTS installed_skills (
-            id          INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-            skill_id    TEXT NOT NULL,
-            skill_name  TEXT,
-            version     TEXT,
-            enabled     INTEGER DEFAULT 1,
-            config      TEXT DEFAULT '{}',
-            installed_at TEXT DEFAULT (datetime('now','localtime')),
-            UNIQUE(user_id, skill_id)
-        )""")
         conn.execute("""CREATE TABLE IF NOT EXISTS price_alerts (
             id          INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -246,28 +226,6 @@ def init_db():
             score_data TEXT DEFAULT '{}',
             created_at TEXT DEFAULT (datetime('now','localtime'))
         )""")
-        # AI 策略对抗 — 对战回合 + 选股记录
-        conn.execute("""CREATE TABLE IF NOT EXISTS ai_duel_rounds (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            period_days INTEGER NOT NULL DEFAULT 7,
-            initial_capital REAL NOT NULL DEFAULT 100000,
-            started_at TEXT DEFAULT (datetime('now','localtime')),
-            ended_at TEXT,
-            status TEXT DEFAULT 'active'
-        )""")
-        conn.execute("""CREATE TABLE IF NOT EXISTS ai_duel_picks (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            round_id INTEGER NOT NULL REFERENCES ai_duel_rounds(id) ON DELETE CASCADE,
-            provider TEXT NOT NULL,
-            stock_code TEXT NOT NULL,
-            stock_name TEXT DEFAULT '',
-            buy_price REAL NOT NULL,
-            quantity INTEGER NOT NULL,
-            invested REAL NOT NULL,
-            reason TEXT DEFAULT '',
-            style TEXT DEFAULT '',
-            created_at TEXT DEFAULT (datetime('now','localtime'))
-        )""")
 
         # ── 选股系统表 ──
         conn.execute("""CREATE TABLE IF NOT EXISTS screener_results (
@@ -307,6 +265,18 @@ def init_db():
             checked_at TEXT DEFAULT (datetime('now','localtime')),
             created_at TEXT DEFAULT (datetime('now','localtime'))
         )""")
+        # ── 条件选股保存 ──
+        conn.execute("""CREATE TABLE IF NOT EXISTS condition_screens (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL DEFAULT 1,
+            name TEXT NOT NULL,
+            description TEXT DEFAULT '',
+            conditions_json TEXT NOT NULL DEFAULT '{"logic":"AND","conditions":[]}',
+            sort_by TEXT DEFAULT '',
+            sort_order TEXT DEFAULT 'desc',
+            created_at TEXT DEFAULT (datetime('now','localtime')),
+            updated_at TEXT DEFAULT (datetime('now','localtime'))
+        )""")
         conn.execute("""CREATE TABLE IF NOT EXISTS backtest_results (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER NOT NULL DEFAULT 1,
@@ -323,46 +293,6 @@ def init_db():
             final_value REAL,
             params_json TEXT DEFAULT '{}',
             created_at TEXT DEFAULT (datetime('now','localtime'))
-        )""")
-
-        # ── KOL 大佬观点追踪表 ──
-        conn.execute("""CREATE TABLE IF NOT EXISTS kol_accounts (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER NOT NULL DEFAULT 1,
-            username TEXT NOT NULL,
-            display_name TEXT DEFAULT '',
-            category TEXT DEFAULT '',
-            market TEXT DEFAULT '',
-            active INTEGER DEFAULT 1,
-            notes TEXT DEFAULT '',
-            last_error TEXT DEFAULT '',
-            created_at TEXT DEFAULT (datetime('now','localtime')),
-            UNIQUE(user_id, username)
-        )""")
-        conn.execute("""CREATE TABLE IF NOT EXISTS kol_posts (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            username TEXT NOT NULL,
-            post_id TEXT NOT NULL,
-            content TEXT NOT NULL,
-            posted_at TEXT,
-            likes INTEGER DEFAULT 0,
-            retweets INTEGER DEFAULT 0,
-            replies INTEGER DEFAULT 0,
-            fetched_at TEXT DEFAULT (datetime('now','localtime')),
-            UNIQUE(post_id)
-        )""")
-        conn.execute("""CREATE TABLE IF NOT EXISTS kol_daily_briefs (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER NOT NULL DEFAULT 1,
-            brief_date TEXT NOT NULL,
-            posts_count INTEGER DEFAULT 0,
-            accounts_count INTEGER DEFAULT 0,
-            ai_summary TEXT,
-            key_topics TEXT DEFAULT '[]',
-            sentiment_overview TEXT DEFAULT '{}',
-            mentioned_stocks TEXT DEFAULT '[]',
-            created_at TEXT DEFAULT (datetime('now','localtime')),
-            UNIQUE(user_id, brief_date)
         )""")
 
         # ── 数据库索引（性能关键）──
@@ -385,6 +315,8 @@ def init_db():
             "CREATE INDEX IF NOT EXISTS idx_review_reports_user ON review_reports(user_id)",
             # 选股系统
             "CREATE INDEX IF NOT EXISTS idx_screener_results_user ON screener_results(user_id)",
+            # 条件选股
+            "CREATE INDEX IF NOT EXISTS idx_condition_screens_user ON condition_screens(user_id)",
             "CREATE INDEX IF NOT EXISTS idx_screener_watchlist_user ON screener_watchlist(user_id)",
             "CREATE INDEX IF NOT EXISTS idx_screener_alerts_user ON screener_alerts(user_id)",
             # 回测结果
@@ -395,13 +327,6 @@ def init_db():
             "CREATE INDEX IF NOT EXISTS idx_dca_plans_holding ON dca_plans(holding_id)",
             # 分红
             "CREATE INDEX IF NOT EXISTS idx_dividends_user ON dividends(user_id, stock_code)",
-            # AI 对战
-            "CREATE INDEX IF NOT EXISTS idx_duel_rounds_status ON ai_duel_rounds(status)",
-            "CREATE INDEX IF NOT EXISTS idx_duel_picks_round ON ai_duel_picks(round_id)",
-            # KOL
-            "CREATE INDEX IF NOT EXISTS idx_kol_posts_username ON kol_posts(username)",
-            "CREATE INDEX IF NOT EXISTS idx_kol_posts_fetched ON kol_posts(fetched_at)",
-            "CREATE INDEX IF NOT EXISTS idx_kol_daily_briefs_user_dt ON kol_daily_briefs(user_id, brief_date)",
         ]
         for sql in indexes:
             conn.execute(sql)

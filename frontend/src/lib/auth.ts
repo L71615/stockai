@@ -44,8 +44,13 @@ function redirectToLoginOnce() {
   window.location.replace("/login")
 }
 
-async function apiRequest<T = unknown>(path: string, options: RequestInit = {}): Promise<T> {
+interface ApiOptions extends RequestInit {
+  signal?: AbortSignal
+}
+
+async function apiRequest<T = unknown>(path: string, options: ApiOptions = {}): Promise<T> {
   const token = getToken()
+  const { signal, ...rest } = options
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     ...(options.headers as Record<string, string> || {}),
@@ -54,7 +59,7 @@ async function apiRequest<T = unknown>(path: string, options: RequestInit = {}):
     headers["Authorization"] = `Bearer ${token}`
   }
 
-  const res = await fetch(path, { ...options, headers })
+  const res = await fetch(path, { ...rest, signal, headers })
   if (shouldHandleUnauthorized(res.status)) {
     clearAuth()
     redirectToLoginOnce()
@@ -67,13 +72,14 @@ async function apiRequest<T = unknown>(path: string, options: RequestInit = {}):
   return res.json()
 }
 
-export function apiGet<T = unknown>(path: string): Promise<T> {
-  return apiRequest<T>(path)
+export function apiGet<T = unknown>(path: string, signal?: AbortSignal): Promise<T> {
+  return apiRequest<T>(path, { signal })
 }
 
-export function apiPost<T = unknown>(path: string, body?: unknown, method = "POST"): Promise<T> {
+export function apiPost<T = unknown>(path: string, body?: unknown, method = "POST", signal?: AbortSignal): Promise<T> {
   return apiRequest<T>(path, {
     method,
     body: body ? JSON.stringify(body) : undefined,
+    signal,
   })
 }

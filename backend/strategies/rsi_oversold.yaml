@@ -1,0 +1,24 @@
+# RSI 超卖反弹 — RSI 跌入超卖区后反弹
+id: rsi_oversold
+name: RSI 超卖反弹
+description: >
+  当 RSI 进入超卖区域（< 30）且出现止跌企稳迹象时买入。
+  捕捉短期超跌后的技术性反弹。关键是要等 RSI 拐头确认，不接飞刀。
+  适合震荡市和熊市中的短线操作。
+market_state: [range, bear]
+recommended_position: "20-40%"
+conditions:
+  - field: rsi_14
+    operator: "between"
+    value: [20, 35]
+  - field: ret_5d
+    operator: "<="
+    value: 0
+  - field: close
+    operator: ">="
+    compare_field: "low_5d"     # 高于5日最低点（止跌确认）
+  - field: avg_amount_20d
+    operator: ">="
+    value: 20000000
+sort_by: rsi_14
+sort_order: asc

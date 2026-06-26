@@ -5,21 +5,13 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Skeleton } from "@/components/ui/skeleton"
 import { apiGet } from "@/lib/auth"
 import type { KlineResponse } from "@/lib/api-types"
-import { KlineChart, type IndicatorPane } from "./KlineChart"
+import { KlineChart } from "./KlineChart"
 
 const PERIODS = [
   { key: "5d", label: "5日" },
   { key: "1m", label: "日K" },
   { key: "3m", label: "周K" },
   { key: "6m", label: "月K" },
-]
-
-const INDICATOR_TOGGLES: { key: IndicatorPane; label: string }[] = [
-  { key: "volume", label: "VOL" },
-  { key: "bollinger", label: "BOLL" },
-  { key: "macd", label: "MACD" },
-  { key: "rsi", label: "RSI" },
-  { key: "kdj", label: "KDJ" },
 ]
 
 export function StockChartDrawer({
@@ -31,22 +23,20 @@ export function StockChartDrawer({
   const [data, setData] = useState<KlineResponse | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [activeIndicators, setActiveIndicators] = useState<IndicatorPane[]>(["volume"])
 
   useEffect(() => {
     if (!open || !code) return
+    const controller = new AbortController()
     setLoading(true); setError(null)
-    apiGet<KlineResponse>(`/api/stocks/kline/${code}?period=${period}`)
+    apiGet<KlineResponse>(`/api/stocks/kline/${code}?period=${period}`, controller.signal)
       .then(setData)
-      .catch((e) => setError(e instanceof Error ? e.message : "加载失败"))
+      .catch((e) => {
+        if (e instanceof DOMException && e.name === "AbortError") return
+        setError(e instanceof Error ? e.message : "加载失败")
+      })
       .finally(() => setLoading(false))
+    return () => controller.abort()
   }, [code, period, open])
-
-  const toggleIndicator = (key: IndicatorPane) => {
-    setActiveIndicators((prev) =>
-      prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]
-    )
-  }
 
   if (!open) return null
 
@@ -72,26 +62,6 @@ export function StockChartDrawer({
           </TabsList>
         </Tabs>
 
-        {/* Indicator toggles */}
-        <div className="flex items-center gap-1 px-4 py-1.5 border-b border-border shrink-0 flex-wrap">
-          {INDICATOR_TOGGLES.map((ind) => {
-            const active = activeIndicators.includes(ind.key)
-            return (
-              <button
-                key={ind.key}
-                onClick={() => toggleIndicator(ind.key)}
-                className={`text-[10px] px-2 py-0.5 rounded border transition-colors
-                  ${active
-                    ? "bg-primary/10 border-primary text-primary"
-                    : "border-transparent text-muted-foreground hover:text-foreground hover:border-border"
-                  }`}
-              >
-                {ind.label}
-              </button>
-            )
-          })}
-        </div>
-
         {/* Chart body */}
         <div className="flex-1 px-2 py-2">
           {loading ? (
@@ -106,7 +76,6 @@ export function StockChartDrawer({
             <KlineChart
               rawData={data}
               height={500}
-              indicators={activeIndicators}
             />
           )}
         </div>

@@ -1,0 +1,27 @@
+# 高股息防御 — 低估值+高分红+低波动
+id: high_div
+name: 高股息防御
+description: >
+  精选股息率高、估值低、波动小的防守型标的。在下跌或震荡市中提供
+  稳定的股息收益和下行保护。重点关注银行、电力、煤炭、高速、
+  消费等现金流稳定的行业。
+market_state: [range, bear]
+recommended_position: "30-60%"
+conditions:
+  - field: dividend_yield
+    operator: ">="
+    value: 3
+  - field: pe
+    operator: "between"
+    value: [0, 20]
+  - field: pb
+    operator: "between"
+    value: [0.1, 2.5]
+  - field: roe
+    operator: ">="
+    value: 5
+  - field: avg_amount_20d
+    operator: ">="
+    value: 20000000
+sort_by: dividend_yield
+sort_order: desc

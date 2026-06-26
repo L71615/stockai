@@ -9,7 +9,6 @@
   基本面(11): pe, pb, roe, eps_growth, market_cap, dividend_yield, ps_ttm, debt_ratio, gross_margin, revenue_growth, net_profit_growth
   情绪(2): strength_20d, momentum_composite
   资金(2): north_flow, inst_change
-  社交(2): social_rank, social_buzz
   技术指标(3): rsi, macd, boll_upper/lower/position 归入对应类别
 
 所有函数自己消化异常 —— NaN/inf → None，调用方收到 None 时跳过该因子。
@@ -1025,12 +1024,6 @@ def compute_all_factors(
     factors["north_flow"] = factor_north_flow(north_flow_data)
     factors["inst_change"] = factor_inst_change(inst_data)
 
-    # ── 社交情绪（雪球） ──
-    social = fundamentals.get("_social") or {}
-    follow = social.get("follow_count", 0)
-    factors["social_rank"] = factor_social_rank(follow)
-    factors["social_buzz"] = factor_social_buzz(follow)
-
     # 统计有效因子数
     hit_count = sum(1 for v in factors.values() if v is not None)
 
@@ -1176,9 +1169,6 @@ FACTOR_REGISTRY: dict[str, dict] = {
     "NORTH_FLOW":    {"status": "done", "fn": "factor_north_flow",      "category": "资金因子", "direction": "正向"},
     "INST_CHANGE":   {"status": "done", "fn": "factor_inst_change",     "category": "资金因子", "direction": "正向"},
 
-    # ── 社交因子 (2) ──
-    "SOCIAL_RANK":   {"status": "done",  "fn": "factor_social_rank",     "category": "社交因子", "direction": "正向"},
-    "SOCIAL_BUZZ":   {"status": "done",  "fn": "factor_social_buzz",     "category": "社交因子", "direction": "正向"},
 }
 
 # ── Alpha158 扩展因子 (规划中, 待 Pine Script 翻译后接入) ──

@@ -52,12 +52,35 @@ export default function TransactionsPage() {
   const totalFee = txns.reduce((s, t) => s + (t.fee || 0), 0)
   const buyCount = txns.filter((t) => t.direction === "buy").length
   const sellCount = txns.filter((t) => t.direction === "sell").length
+  const totalDeposit = txns.filter((t) => t.direction === "deposit").reduce((s, t) => s + (t.amount || t.price), 0)
+  const totalWithdraw = txns.filter((t) => t.direction === "withdraw").reduce((s, t) => s + (t.amount || t.price), 0)
+
+  const dirLabel = (d: string) => ({ buy: "买入", sell: "卖出", deposit: "转入", withdraw: "转出" }[d] || d)
+  const dirBadge = (d: string) => {
+    const map: Record<string, string> = {
+      buy: "bg-red-500/10 text-red-500 border-red-500/20",
+      sell: "bg-emerald-500/10 text-emerald-500 border-emerald-500/20",
+      deposit: "bg-blue-500/10 text-blue-500 border-blue-500/20",
+      withdraw: "bg-orange-500/10 text-orange-500 border-orange-500/20",
+    }
+    return map[d] || "bg-muted"
+  }
 
   const resetForm = () => { setCode(""); setName(""); setPrice(""); setQty(""); setNote(""); setFee(""); setAutoFee(true); setEditId(null); setShowForm(false) }
 
   const submit = async () => {
-    const body: Record<string, unknown> = { stock_code: code, stock_name: name, asset_type: aType, direction, price: Number(price), quantity: Number(qty), traded_at: date, note }
-    if (!autoFee && fee) body.fee = Number(fee)
+    const isCash = direction === "deposit" || direction === "withdraw"
+    const body: Record<string, unknown> = {
+      stock_code: isCash ? "CASH" : code,
+      stock_name: isCash ? "CASH" : name,
+      asset_type: isCash ? "cash" : aType,
+      direction,
+      price: Number(price),
+      quantity: isCash ? 1 : Number(qty),
+      traded_at: date,
+      note,
+    }
+    if (!autoFee && fee && !isCash) body.fee = Number(fee)
     if (editId) {
       await apiPost(`/api/stocks/transactions/${editId}`, body, "PUT")
     } else {
@@ -97,10 +120,10 @@ export default function TransactionsPage() {
       <div className="flex flex-1 flex-col overflow-auto p-4 lg:p-6 space-y-4">
         {/* KPI row */}
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
-          <StatCard label="总交易" value={`${txns.length}`} sub={`${buyCount} 买 · ${sellCount} 卖`} />
+          <StatCard label="总交易" value={`${txns.length}`} sub={`${buyCount}买 ${sellCount}卖`} />
           <StatCard label="总买入" value={`¥ ${totalBuy.toLocaleString()}`} className="text-red-500" />
           <StatCard label="总卖出" value={`¥ ${totalSell.toLocaleString()}`} className="text-emerald-500" />
-          <StatCard label="净额" value={`¥ ${(totalSell - totalBuy).toLocaleString()}`} className={totalSell - totalBuy >= 0 ? "text-red-500" : "text-emerald-500"} />
+          <StatCard label="净转入" value={`¥ ${(totalDeposit - totalWithdraw).toLocaleString()}`} sub={`转入${totalDeposit.toLocaleString()} 转出${totalWithdraw.toLocaleString()}`} className="text-blue-500" />
           <StatCard label="总佣金" value={`¥ ${totalFee.toLocaleString()}`} sub={`${txns.filter(t => t.fee > 0).length} 笔含佣金`} className="text-orange-400" />
         </div>
 
@@ -149,6 +172,8 @@ export default function TransactionsPage() {
                     <SelectContent className="max-h-48">
                       <SelectItem value="buy">买入</SelectItem>
                       <SelectItem value="sell">卖出</SelectItem>
+                      <SelectItem value="deposit">转入</SelectItem>
+                      <SelectItem value="withdraw">转出</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -244,13 +269,13 @@ export default function TransactionsPage() {
                           <span className="ml-1.5">{t.stock_name}</span>
                         </td>
                         <td className="p-2 text-center">
-                          <Badge className={cn("text-[10px]", t.direction === "buy" ? "bg-red-500/10 text-red-500 border-red-500/20" : "bg-emerald-500/10 text-emerald-500 border-emerald-500/20")} variant="outline">
-                            {t.direction === "buy" ? "买入" : "卖出"}
+                          <Badge className={cn("text-[10px]", dirBadge(t.direction))} variant="outline">
+                            {dirLabel(t.direction)}
                           </Badge>
                         </td>
-                        <td className="p-2 text-right font-mono">¥ {t.price?.toFixed(2)}</td>
-                        <td className="p-2 text-right font-mono">{t.quantity}</td>
-                        <td className="p-2 text-right font-mono">¥ {(t.amount || t.price * t.quantity).toLocaleString()}</td>
+                        <td className="p-2 text-right font-mono">{t.direction === "deposit" || t.direction === "withdraw" ? "—" : `¥ ${t.price?.toFixed(2)}`}</td>
+                        <td className="p-2 text-right font-mono">{t.direction === "deposit" || t.direction === "withdraw" ? "—" : t.quantity}</td>
+                        <td className="p-2 text-right font-mono">¥ {(t.amount || t.price * (t.quantity || 1)).toLocaleString()}</td>
                         <td className="p-2 text-right font-mono text-muted-foreground">{t.fee > 0 ? `¥ ${t.fee.toFixed(2)}` : "—"}</td>
                         <td className="p-2 text-muted-foreground max-w-32 truncate">{t.note || ""}</td>
                         <td className="p-2 text-right">

@@ -28,17 +28,31 @@ _KLINE_CACHE: dict[str, tuple[float, dict]] = {}
 _KLINE_TTL = 300.0  # 历史K线缓存 5 分钟
 
 _logged_in = False
+_login_cooldown_until: float = 0.0  # 登录失败后冷却截止时间戳
 
 
 def _ensure_login():
-    """幂等登录，首次调用自动 login，后续复用连接。需在 _bs_lock 持有下调用。"""
-    global _logged_in
+    """幂等登录，首次调用自动 login，后续复用连接。需在 _bs_lock 持有下调用。
+
+    登录失败后 60 秒内不再重试，避免 bs.login() 挂起阻塞整个应用。
+    """
+    global _logged_in, _login_cooldown_until
     if not _logged_in:
-        lg = bs.login()
-        if lg.error_code != "0":
-            logger.warning(f"Baostock login failed: {lg.error_msg}")
+        now = time.time()
+        if now < _login_cooldown_until:
+            return False  # 冷却期内，跳过
+        try:
+            lg = bs.login()
+            if lg.error_code != "0":
+                logger.warning(f"Baostock login failed: {lg.error_msg}")
+                _login_cooldown_until = now + 60  # 冷却 60 秒
+                return False
+            _logged_in = True
+            _login_cooldown_until = 0.0
+        except Exception as e:
+            logger.warning(f"Baostock login exception: {e}")
+            _login_cooldown_until = now + 60
             return False
-        _logged_in = True
     return True
 
 

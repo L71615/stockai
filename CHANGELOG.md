@@ -1,6 +1,123 @@
 # StockAI 项目日志
 
-> StockAI 从 0 到 v3.4 的完整演进记录。按时间倒序。
+> StockAI 从 0 到 v3.5 的完整演进记录。按时间倒序。
+
+---
+
+## 2026-06-26 #2 — 因子清理 + K线修复 + 条件选股L3两阶段重构
+
+### K线图表三合一修复 (KlineChart.tsx)
+
+**Bug: RSI/KDJ 线与K线时间轴不对齐**
+
+根因：`toLine()` 函数先 `filter` 掉 null 再 `map`，index 重排导致所有指标线向左平移预热期长度（RSI -14天，KDJ -9天，MACD -35天）。改为先 `map` 保留原始 index 再 `filter`。
+
+**新增：图表下方指标讲解栏**
+
+显示每个可见指标的最新值 + 自动解读（金叉/死叉/超买/超卖/放量/缩量/多头/空头），颜色信号区分多空。
+
+**优化：默认指标 + 坐标轴**
+- 默认从 VOL+BOLL+MACD+RSI(4个) → VOL+MACD(2个)
+- RSI/KDJ 子面板 scaleMargins 收紧，参考线始终可见
+
+### 因子体系清理 (57→55)
+
+**修复 5 个阈值单位不匹配 (quant.py):**
+
+| 因子 | 根因 | 修复 |
+|---|---|---|
+| PE | 阈值写的是原始PE(10~100)，因子返回盈利率 1/PE | 阈值改为盈利率 |
+| PB | 同上 | 阈值改为 1/PB |
+| ROE | 阈值写百分比(2~35)，因子返回小数 | 阈值改为小数 |
+| DIVIDEND_YIELD | 同上 | 阈值改为小数 |
+| AVG_AMOUNT | 阈值写原始金额(1e6~1e9)，因子返回 log10 | 阈值改为 log10 |
+
+**删除 2 个死因子:**
+- SOCIAL_RANK / SOCIAL_BUZZ — 雪球 API 不可用，永远返回 0.0→5分
+- 同步清理：FACTOR_REGISTRY / compute_all_factors / IC 权重 / 注释
+
+### 条件选股 L3 两阶段重构 (screener.py)
+
+**根因：** 高股息防御等含 `dividend_yield`/`debt_ratio`/`market_cap` 的策略永远 0 结果。L3 中 Baostock 字段只在候选<100时填充，但无 L1/L2 过滤时 800 只全进 L3 → Baostock 被跳过 → 字段永不填充 → 全部淘汰。
+
+**修复：** L3 拆为 L3a + L3b
+- L3a: AKShare HTTP 处理 PE/PB/ROE，先缩池
+- L3b: Baostock 处理 dividend_yield/debt_ratio/market_cap，阈值 100→200
+
+### Baostock 超时保护
+
+- `_ensure_login()`: 登录失败后 60s 冷却，避免 bs.login() 反复阻塞
+- `get_all_stock_list()`: Baostock 部分用 ThreadPoolExecutor 包裹 8s 超时
+
+### 文件变更
+- `frontend/src/components/KlineChart.tsx` (613→803行)
+- `backend/routers/quant.py` (5行阈值 + 删社交因子)
+- `backend/services/factor_service.py` (删 SOCIAL_RANK/SOCIAL_BUZZ)
+- `backend/services/screener_service.py` (删社交 IC 权重 + Baostock 线程超时)
+- `backend/routers/screener.py` (L3 拆 L3a+L3b, ~40行)
+- `backend/services/baostock_adapter.py` (登录冷却机制)
+- `backend/routers/screener.py` (注释更新)
+
+---
+
+## 2026-06-26 #1 — 条件选股两层→四层过滤架构重构
+
+### 问题诊断
+
+条件选股页 (`/screener/condition`) 存在 7 个严重 Bug，导致大多数条件字段不可用：
+
+| # | Bug | 影响 |
+|---|-----|------|
+| 1 | `pe`/`pb`/`dividend_yield`/`debt_ratio`/`market_cap` 始终为 `None` | 所有基本面条件（除 ROE）完全失效 |
+| 2 | `avg_amount_20d` 不在 `KLINE_FIELDS` 中 | 9 个策略 YAML 都依赖此字段，但单独使用时永不触发 K 线 |
+| 3 | `_has_kline()` 和 `_strip_kline()` 不检查 `compare_field` | `close > ma20` 被误判为非 K 线条件 → 静默筛掉 |
+| 4 | `market_cap` 死字段 | 市值条件从未被填充 |
+| 5 | `_strip_kline()` 每只股票调用一次 | 不必要重复 |
+| 6 | 条件引擎缺失字段静默返回 `False` | 无日志，调试困难 |
+| 7 | `ret_5d`/`ret_20d` 返回小数 (0.05)，策略 YAML 用百分比 (5) | 条件判断不匹配 |
+
+### 四层过滤架构
+
+按数据获取成本从低到高分为四层：
+
+| 层 | 数据来源 | 成本 | 字段 |
+|---|---|---|---|
+| L1 股票列表 | `get_all_stock_list()` 内存缓存 | 零 | `industry` |
+| L2 实时行情 | 腾讯 `qt.gtimg.cn` 批量 HTTP | 极低 | `price` |
+| L3 基本面 | AKShare `stock_financial_abstract_ths` + Baostock 兜底 | 中等 | `pe`, `pb`, `roe`, `dividend_yield`, `debt_ratio`, `market_cap` |
+| L4 K线+指标 | 腾讯 K线 → 东方财富 → Baostock + 本地计算 | 最重 | 所有均线/RSI/MACD/BOLL/交叉/动量/ATR/量比 |
+
+核心流程：`classify_conditions() → L1过滤 → L2获取+过滤 → L3获取+过滤 → L4并行计算+过滤 → 排序返回`
+
+### 关键修复
+
+- **PE/PB 计算**：从 AKShare 返回的 `eps`/`bvps` + 行情 `price` 现场计算（`pe = price/eps`, `pb = price/bvps`）
+- **Baostock 兜底优化**：只在候选 < 100 时启用，避免全局锁串行化（大规模扫描时跳过 `dividend_yield`/`debt_ratio`/`market_cap`）
+- **`ret_5d`/`ret_20d` 百分比化**：`factor_ret_5d() * 100` 转为百分比，与策略 YAML 值匹配
+- **`avg_amount_20d` 加入 L4**：可独立触发 K 线获取
+- **`compare_field` 检查**：`classify_conditions()` 同时检查 `field` 和 `compare_field`，归类到最高层
+- **条件引擎日志**：`condition_engine.py` 新增 `logger.debug` 输出 None 字段和异常
+
+### 前端改动
+
+- 条件分类从 `{基础, 基本面, 技术指标, 因子}` → `{L1 股票列表, L2 实时行情, L3 基本面, L4 K线指标}`
+- 条件行前加彩色层标签（L1 灰 / L2 蓝 / L3 绿 / L4 紫）
+
+### 验证结果
+
+| 测试 | 结果 |
+|---|---|
+| PE<30 (纯 L3) | ✅ 800→427, PE=3.23 真实值, 38s |
+| 动量策略 (纯 L4) | ✅ 800→27, ret_20d=58.91%, 5s |
+| avg_amount_20d 单独使用 | ✅ 800→109, 修复 Bug #2 |
+| 价格区间 (L1+L2) | ✅ 800→356, 4s |
+
+### 文件变更
+- **重写**: `backend/routers/screener.py` (~200行: 四层字段集 + `classify_conditions()` + 四层 `condition_scan` + PE/PB 计算 + CONDITION_SCHEMA 更新)
+- **修改**: `backend/services/condition_engine.py` (+10行: None 字段调试日志)
+- **修改**: `frontend/src/app/screener/condition/page.tsx` (+15行: 四层标签 + L1-L4 彩色徽标)
+- **新增**: `backend/.env` (开发环境变量)
+- **修改**: `backend/config.py` (+3行: `load_dotenv()` 自动加载 .env)
 
 ---
 

@@ -12,7 +12,7 @@ from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 from config import PORT, ENV, VERSION
-from routers import auth, stocks, skills, ai, agents, memory, dca, settings as settings_router, quant, holdings, transactions, screener, kol
+from routers import auth, stocks, ai, dca, settings as settings_router, quant, holdings, transactions, screener
 
 app = FastAPI(title="StockAI", version=VERSION, docs_url="/api/docs")
 
@@ -51,15 +51,11 @@ app.include_router(auth.router, prefix="/api/auth", tags=["Auth"])
 app.include_router(stocks.router, prefix="/api/stocks", tags=["Stocks"])
 app.include_router(holdings.router, prefix="/api/stocks", tags=["Holdings"])
 app.include_router(transactions.router, prefix="/api/stocks", tags=["Transactions"])
-app.include_router(skills.router, prefix="/api/skills", tags=["Skills"])
-app.include_router(agents.router, prefix="/api/agents", tags=["Agents"])
-app.include_router(memory.router, prefix="/api", tags=["Memory"])
 app.include_router(dca.router, prefix="/api/stocks", tags=["DCA"])
 app.include_router(ai.router, prefix="/api/ai", tags=["AI"])
 app.include_router(settings_router.router, tags=["Settings"])
 app.include_router(quant.router)
 app.include_router(screener.router)
-app.include_router(kol.router)
 
 # 健康检查
 @app.get("/api/health")
@@ -87,9 +83,8 @@ def startup():
     from database import init_db, ensure_admin_user
     init_db()
     ensure_admin_user()
-    from services.scheduler import start_dca_reminder_thread, start_kol_daily_thread
+    from services.scheduler import start_dca_reminder_thread
     start_dca_reminder_thread()
-    start_kol_daily_thread()
 
 
 # ── 认证中间件：保护所有 /api/ 路由（登录接口除外）──

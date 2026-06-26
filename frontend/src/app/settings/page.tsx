@@ -28,10 +28,8 @@ const PROVIDERS: AIProvider[] = [
 const AI_FUNCTIONS = [
   { key: "screener", label: "AI 选股", desc: "二次筛选 + Agent 交叉验证" },
   { key: "review", label: "AI 复盘", desc: "结构化投资复盘报告" },
-  { key: "duel", label: "AI 对抗", desc: "6 人格选股对战" },
   { key: "chat", label: "AI 对话", desc: "投资助手聊天" },
   { key: "watchdog", label: "AI 盯盘简报", desc: "异动推送摘要" },
-  { key: "kol", label: "大佬观点日报", desc: "社区+新闻情绪分析" },
   { key: "explain", label: "AI 量化解读", desc: "个股技术面+基本面分析" },
 ]
 

@@ -8,12 +8,10 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Skeleton } from "@/components/ui/skeleton"
 import { cn } from "@/lib/utils"
-import { apiGet, apiPost, getUsername } from "@/lib/auth"
+import { apiGet, getUsername } from "@/lib/auth"
 import { IconSend, IconRobot, IconUser } from "@tabler/icons-react"
 
-interface Agent { id: number; name: string; description?: string; tools?: string }
 interface Message { role: string; content: string; id?: number }
 
 const QUICK_COMMANDS = [
@@ -26,25 +24,12 @@ const QUICK_COMMANDS = [
 
 export default function AiAssistantPage() {
   const router = useRouter()
-  const [agents, setAgents] = useState<Agent[]>([])
-  const [agentId, setAgentId] = useState("")
-  const [tools, setTools] = useState("")
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState("")
   const [loading, setLoading] = useState(false)
   const [convId, setConvId] = useState("")
   const scrollRef = useRef<HTMLDivElement>(null)
   const username = getUsername()
-
-  useEffect(() => {
-    apiGet<Agent[]>("/api/agents/agents").then((d) => {
-      if (Array.isArray(d) && d.length > 0) {
-        setAgents(d)
-        setAgentId(String(d[0].id))
-        setTools(d[0].tools || "")
-      }
-    }).catch(() => {})
-  }, [router])
 
   useEffect(() => { scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" }) }, [messages])
 
@@ -55,15 +40,82 @@ export default function AiAssistantPage() {
     setMessages((prev) => [...prev, { role: "user", content: text }])
     setLoading(true)
 
+    // Add empty assistant placeholder that will fill in real-time
+    setMessages((prev) => [...prev, { role: "assistant", content: "" }])
+
     try {
-      const data = await apiPost<{ reply: string; conversationId: string }>("/api/ai/chat", {
-        message: text, agentId: agentId ? Number(agentId) : null, conversationId: convId,
+      const token = localStorage.getItem("stockai_token")
+      const response = await fetch("/api/ai/chat/stream", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          message: text,
+          conversationId: convId,
+        }),
       })
-      setMessages((prev) => [...prev, { role: "assistant", content: data.reply }])
-      if (data.conversationId) setConvId(data.conversationId)
+
+      if (!response.ok) {
+        const errData = await response.json().catch(() => ({}))
+        throw new Error((errData as { error?: string }).error || `HTTP ${response.status}`)
+      }
+
+      const reader = response.body!.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ""
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true })
+
+        // Parse SSE lines from buffer
+        const lines = buffer.split("\n")
+        buffer = lines.pop() || ""  // keep incomplete line in buffer
+
+        for (const line of lines) {
+          if (!line.startsWith("data: ")) continue
+          const payload = line.slice(6)
+          try {
+            const data = JSON.parse(payload)
+            if (data.error) {
+              setMessages((prev) => {
+                const updated = [...prev]
+                updated[updated.length - 1] = { role: "error", content: data.error }
+                return updated
+              })
+              return
+            }
+            if (data.done) {
+              if (data.conversationId) setConvId(data.conversationId)
+              return
+            }
+            if (data.content) {
+              setMessages((prev) => {
+                const updated = [...prev]
+                const last = updated[updated.length - 1]
+                updated[updated.length - 1] = { ...last, content: last.content + data.content }
+                return updated
+              })
+            }
+          } catch { /* skip malformed SSE lines */ }
+        }
+      }
     } catch (err) {
-      setMessages((prev) => [...prev, { role: "error", content: err instanceof Error ? err.message : "发送失败" }])
-    } finally { setLoading(false) }
+      if (err instanceof DOMException && err.name === "AbortError") return
+      setMessages((prev) => {
+        const updated = [...prev]
+        const last = updated[updated.length - 1]
+        if (last.role === "assistant" && !last.content) {
+          updated[updated.length - 1] = { role: "error", content: err instanceof Error ? err.message : "连接中断" }
+        }
+        return updated
+      })
+    } finally {
+      setLoading(false)
+    }
   }
 
   return (
@@ -71,30 +123,6 @@ export default function AiAssistantPage() {
       <SiteHeader title="AI 对话" />
       <div className="flex flex-1 flex-col overflow-hidden">
         <div className="flex flex-1 flex-col max-w-3xl mx-auto w-full p-4 lg:p-6">
-          {/* Toolbar */}
-          <div className="flex items-center gap-2 mb-3 shrink-0">
-            <Select value={agentId} onValueChange={(v) => {
-                setAgentId(v)
-                const a = agents.find((a) => String(a.id) === v)
-                setTools(a?.tools || "")
-              }}>
-              <SelectTrigger className="h-8 text-xs w-auto min-w-[120px]">
-                <SelectValue placeholder="选择 Agent" />
-              </SelectTrigger>
-              <SelectContent className="max-h-48">
-                {agents.map((a) => <SelectItem key={a.id} value={String(a.id)}>{a.name}</SelectItem>)}
-                {agents.length === 0 && <SelectItem value="default">默认助手</SelectItem>}
-              </SelectContent>
-            </Select>
-            {tools && (
-              <div className="flex gap-1 flex-wrap">
-                {tools.split(",").map((t) => (
-                  <Badge key={t} variant="secondary" className="text-[10px]">{t.trim()}</Badge>
-                ))}
-              </div>
-            )}
-          </div>
-
           {/* Chat area */}
           <div ref={scrollRef} className="flex-1 overflow-auto space-y-3 mb-3">
             {messages.length === 0 && (
@@ -128,14 +156,13 @@ export default function AiAssistantPage() {
               </div>
             ))}
 
-            {loading && (
+            {loading && messages[messages.length - 1]?.content === "" && (
               <div className="flex gap-2">
                 <div className="shrink-0 size-6 rounded-none bg-purple-400/20 flex items-center justify-center">
                   <IconRobot className="size-3.5 text-purple-400 animate-pulse" />
                 </div>
-                <div className="bg-muted rounded-none px-3 py-2 space-y-1.5">
-                  <Skeleton className="h-3 w-48" />
-                  <Skeleton className="h-3 w-32" />
+                <div className="bg-muted rounded-none px-3 py-2">
+                  <span className="inline-block w-1.5 h-4 bg-purple-400/60 animate-pulse" />
                 </div>
               </div>
             )}

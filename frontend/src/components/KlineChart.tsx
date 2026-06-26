@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useRef } from "react"
+import { useEffect, useMemo, useRef, useState, useCallback } from "react"
 import {
   createChart,
   CandlestickSeries,
@@ -35,6 +35,16 @@ export type IndicatorPane =
   | "rsi"        // RSI 线 + 70/30 参考线
   | "kdj"        // KDJ 三线
 
+/** 指标讲解条 */
+export interface IndicatorExplanation {
+  key: IndicatorPane
+  label: string
+  color: string
+  value: string
+  interpretation: string
+  signal: "bullish" | "bearish" | "neutral"
+}
+
 export interface TurtleOverlay {
   sys1_entry: number | null
   sys2_entry: number | null
@@ -47,8 +57,12 @@ export interface TurtleOverlay {
 export interface KlineChartProps {
   rawData: KlineResponse
   height?: number
-  /** 要显示的指标面板 (默认: volume) */
+  /** 要显示的指标面板 (受控模式；不传则内部管理，默认从localStorage读取) */
   indicators?: IndicatorPane[]
+  /** 指标变更回调 (受控模式) */
+  onIndicatorsChange?: (val: IndicatorPane[]) => void
+  /** 是否显示内嵌指标选择器 (默认 true) */
+  showIndicatorSelector?: boolean
   /** 海龟通道线叠加 */
   turtleOverlay?: TurtleOverlay
 }
@@ -192,6 +206,148 @@ function calcKDJ(
 }
 
 // ═══════════════════════════════════════════════════════════════
+//  Indicator explanation builder
+// ═══════════════════════════════════════════════════════════════
+
+function buildExplanations(bars: KlineBar[], indicators: IndicatorPane[]): IndicatorExplanation[] {
+  if (!bars.length || !indicators.length) return []
+
+  const n = bars.length - 1  // latest bar index
+  const closes = bars.map(b => b.close)
+  const highs = bars.map(b => b.high)
+  const lows = bars.map(b => b.low)
+  const volumes = bars.map(b => b.volume)
+
+  const results: IndicatorExplanation[] = []
+
+  for (const ind of indicators) {
+    switch (ind) {
+      case "volume": {
+        const volMA5 = calcSMA(volumes, 5)
+        const vol = volumes[n]
+        const ma5 = volMA5[n]
+        const ratio = ma5 && ma5 > 0 ? vol / ma5 : 1
+        const volStr = vol >= 1e8 ? `${(vol / 1e8).toFixed(2)}亿`
+          : vol >= 1e4 ? `${(vol / 1e4).toFixed(0)}万` : `${vol}`
+        results.push({
+          key: "volume", label: "VOL", color: "#6b7280",
+          value: volStr,
+          interpretation: ratio > 1.5 ? "📈 放量" : ratio < 0.5 ? "📉 缩量" : "正常",
+          signal: ratio > 1.5 ? "bullish" : ratio < 0.5 ? "bearish" : "neutral",
+        })
+        break
+      }
+      case "bollinger": {
+        const bb = calcBollinger(closes)
+        const price = closes[n]
+        const upper = bb.upper[n]
+        const mid = bb.mid[n]
+        const lower = bb.lower[n]
+        let pos = "中轨附近"
+        let signal: IndicatorExplanation["signal"] = "neutral"
+        if (upper != null && price > upper) { pos = "突破上轨 ↑"; signal = "bullish" }
+        else if (lower != null && price < lower) { pos = "跌破下轨 ↓"; signal = "bearish" }
+        else if (upper != null && lower != null) {
+          const bandwidth = ((upper - lower) / (mid ?? price)) * 100
+          if (bandwidth < 5) pos = "收窄待变"
+        }
+        results.push({
+          key: "bollinger", label: "BOLL", color: "#06b6d4",
+          value: mid != null ? `${mid.toFixed(2)}` : "-",
+          interpretation: pos,
+          signal,
+        })
+        break
+      }
+      case "macd": {
+        const macd = calcMACD(closes)
+        const dif = macd.dif[n]
+        const dea = macd.dea[n]
+        const hist = macd.histogram[n]
+        let interp = ""
+        let signal: IndicatorExplanation["signal"] = "neutral"
+        if (dif != null && dea != null) {
+          if (dif > dea) { interp = "多头排列 ↑"; signal = "bullish" }
+          else { interp = "空头排列 ↓"; signal = "bearish" }
+
+          // Check for golden/death cross (compare with previous)
+          const difPrev = n > 0 ? macd.dif[n-1] : null
+          const deaPrev = n > 0 ? macd.dea[n-1] : null
+          if (difPrev != null && deaPrev != null) {
+            if (difPrev <= deaPrev && dif > dea) interp = "🔴 金叉 ↑"
+            else if (difPrev >= deaPrev && dif < dea) interp = "🟢 死叉 ↓"
+          }
+        }
+        const difStr = dif != null ? dif.toFixed(3) : "-"
+        const deaStr = dea != null ? dea.toFixed(3) : "-"
+        const histStr = hist != null ? (hist > 0 ? `+${hist.toFixed(3)}` : hist.toFixed(3)) : ""
+        results.push({
+          key: "macd", label: "MACD", color: "#f59e0b",
+          value: `DIF ${difStr} DEA ${deaStr}${histStr ? ` | ${histStr}` : ""}`,
+          interpretation: interp,
+          signal,
+        })
+        break
+      }
+      case "rsi": {
+        const rsi = calcRSI(closes, 14)
+        const v = rsi[n]
+        let interp = ""
+        let signal: IndicatorExplanation["signal"] = "neutral"
+        if (v != null) {
+          if (v > 80) { interp = "严重超买 ⚠️"; signal = "bearish" }
+          else if (v > 70) { interp = "超买区"; signal = "bearish" }
+          else if (v < 20) { interp = "严重超卖 💡"; signal = "bullish" }
+          else if (v < 30) { interp = "超卖区"; signal = "bullish" }
+          else if (v > 50) { interp = "偏强"; signal = "bullish" }
+          else { interp = "偏弱"; signal = "bearish" }
+        }
+        results.push({
+          key: "rsi", label: "RSI", color: "#06b6d4",
+          value: v != null ? v.toFixed(1) : "-",
+          interpretation: interp,
+          signal,
+        })
+        break
+      }
+      case "kdj": {
+        const kdj = calcKDJ(highs, lows, closes, 9)
+        const k = kdj.k[n]
+        const d = kdj.d[n]
+        const j = kdj.j[n]
+        let interp = ""
+        let signal: IndicatorExplanation["signal"] = "neutral"
+        if (k != null && d != null && j != null) {
+          if (k > 80 && d > 80) { interp = "高位钝化 ⚠️"; signal = "bearish" }
+          else if (k < 20 && d < 20) { interp = "低位区 💡"; signal = "bullish" }
+          else if (j > 100) { interp = "J值超百 ⚠️"; signal = "bearish" }
+          else if (j < 0) { interp = "J值负值 💡"; signal = "bullish" }
+
+          // Golden/death cross
+          const kPrev = n > 0 ? kdj.k[n-1] : null
+          const dPrev = n > 0 ? kdj.d[n-1] : null
+          if (kPrev != null && dPrev != null) {
+            if (kPrev <= dPrev && k > d) interp = "🔴 金叉 ↑"
+            else if (kPrev >= dPrev && k < d) interp = "🟢 死叉 ↓"
+          }
+        }
+        const kStr = k != null ? k.toFixed(1) : "-"
+        const dStr = d != null ? d.toFixed(1) : "-"
+        const jStr = j != null ? j.toFixed(1) : "-"
+        results.push({
+          key: "kdj", label: "KDJ", color: "#8b5cf6",
+          value: `K ${kStr} D ${dStr} J ${jStr}`,
+          interpretation: interp,
+          signal,
+        })
+        break
+      }
+    }
+  }
+  return results
+}
+
+// ═══════════════════════════════════════════════════════════════
 //  Pane height ratios (from stock-analyst-ui)
 // ═══════════════════════════════════════════════════════════════
 
@@ -219,26 +375,109 @@ function getPaneHeights(indicators: IndicatorPane[], totalHeight: number): Recor
 //  Main component
 // ═══════════════════════════════════════════════════════════════
 
-const DEFAULT_INDICATORS: IndicatorPane[] = ["volume"]
+const DEFAULT_INDICATORS: IndicatorPane[] = ["volume", "macd"]
+const INDICATOR_STORAGE_KEY = "klinechart-indicators-v1"
+const ALL_INDICATORS: { key: IndicatorPane; label: string }[] = [
+  { key: "volume", label: "VOL" },
+  { key: "bollinger", label: "BOLL" },
+  { key: "macd", label: "MACD" },
+  { key: "rsi", label: "RSI" },
+  { key: "kdj", label: "KDJ" },
+]
 
-export function KlineChart({ rawData, height = 500, indicators = DEFAULT_INDICATORS, turtleOverlay }: KlineChartProps) {
+function loadStoredIndicators(): IndicatorPane[] | null {
+  try {
+    const raw = localStorage.getItem(INDICATOR_STORAGE_KEY)
+    if (raw) {
+      const parsed = JSON.parse(raw)
+      if (Array.isArray(parsed) && parsed.every((v: any) => typeof v === "string")) return parsed as IndicatorPane[]
+    }
+  } catch { /* corrupted */ }
+  return null
+}
+
+function saveStoredIndicators(val: IndicatorPane[]) {
+  try { localStorage.setItem(INDICATOR_STORAGE_KEY, JSON.stringify(val)) } catch { /* quota */ }
+}
+
+export function KlineChart({ rawData, height = 500, indicators: controlledIndicators, onIndicatorsChange, showIndicatorSelector = true, turtleOverlay }: KlineChartProps) {
   const containerRef = useRef<HTMLDivElement>(null)
+  const [popoverOpen, setPopoverOpen] = useState(false)
+
+  // Internal indicator state (uncontrolled mode) with localStorage
+  const [internalIndicators, setInternalIndicators] = useState<IndicatorPane[]>(() => {
+    if (controlledIndicators) return controlledIndicators
+    return loadStoredIndicators() ?? [...DEFAULT_INDICATORS]
+  })
+
+  const indicators = controlledIndicators ?? internalIndicators
+
+  const toggleIndicator = useCallback((key: IndicatorPane) => {
+    if (controlledIndicators && onIndicatorsChange) {
+      const next = controlledIndicators.includes(key)
+        ? controlledIndicators.filter((k) => k !== key)
+        : [...controlledIndicators, key]
+      onIndicatorsChange(next)
+      return
+    }
+    setInternalIndicators((prev) => {
+      const next = prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]
+      saveStoredIndicators(next)
+      return next
+    })
+  }, [controlledIndicators, onIndicatorsChange])
+
+  // ── Mobile: responsive detection + single-indicator cycling ──
+  const [isMobile, setIsMobile] = useState(false)
+  useEffect(() => {
+    const check = () => setIsMobile(window.innerWidth < 768)
+    check()
+    window.addEventListener("resize", check)
+    return () => window.removeEventListener("resize", check)
+  }, [])
+
+  const MOBILE_CYCLE: IndicatorPane[] = ["volume", "macd", "rsi", "kdj"]
+  const [mobileCycleIdx, setMobileCycleIdx] = useState(0)
+
+  // mobile: cycle one indicator at a time; desktop: all selected
+  const effectiveIndicators = isMobile
+    ? (mobileCycleIdx === 0 ? [] : [MOBILE_CYCLE[mobileCycleIdx - 1]])
+    : indicators
+
+  const cycleMobile = useCallback(() => {
+    setMobileCycleIdx((prev) => (prev + 1) % (MOBILE_CYCLE.length + 1))
+  }, [MOBILE_CYCLE.length])
+
+  // Indicator explanations (memoized from rawData + effectiveIndicators)
+  const explanations = useMemo(() => {
+    if (!rawData) return []
+    const bars = toChartBars(rawData)
+    return buildExplanations(bars, effectiveIndicators)
+  }, [rawData, effectiveIndicators])
+
   const chartRef = useRef<IChartApi | null>(null)
   const allSeries = useRef<ISeriesApi<any>[]>([])
   const turtleLines = useRef<IPriceLine[]>([])
   const candleSeries = useRef<ISeriesApi<"Candlestick"> | null>(null)
+  const abortRef = useRef<AbortController | null>(null)
 
-  const showVolume = indicators.includes("volume")
-  const showBollinger = indicators.includes("bollinger")
-  const showMACD = indicators.includes("macd")
-  const showRSI = indicators.includes("rsi")
-  const showKDJ = indicators.includes("kdj")
+  const showVolume = effectiveIndicators.includes("volume")
+  const showBollinger = effectiveIndicators.includes("bollinger")
+  const showMACD = effectiveIndicators.includes("macd")
+  const showRSI = effectiveIndicators.includes("rsi")
+  const showKDJ = effectiveIndicators.includes("kdj")
 
-  const paneHeights = getPaneHeights(indicators, height)
+  const paneHeights = getPaneHeights(effectiveIndicators, height)
 
   // 1. Create chart + series
   useEffect(() => {
     if (!containerRef.current) return
+
+    // Abort any previous render in flight
+    abortRef.current?.abort()
+    const controller = new AbortController()
+    abortRef.current = controller
+
     const container = containerRef.current
 
     const chart = createChart(container, {
@@ -302,6 +541,9 @@ export function KlineChart({ rawData, height = 500, indicators = DEFAULT_INDICAT
       const rsi70 = chart.addSeries(LineSeries, { color: "rgba(239,68,68,0.4)", lineWidth: 1, priceLineVisible: false, priceScaleId: "rsi", lastValueVisible: false })
       const rsi30 = chart.addSeries(LineSeries, { color: "rgba(16,185,129,0.4)", lineWidth: 1, priceLineVisible: false, priceScaleId: "rsi", lastValueVisible: false })
       series.push(rsiLine, rsi70, rsi30)
+      chart.priceScale("rsi").applyOptions({
+        scaleMargins: { top: 0.05, bottom: 0.05 },
+      })
     }
 
     // ── KDJ pane ──
@@ -310,6 +552,9 @@ export function KlineChart({ rawData, height = 500, indicators = DEFAULT_INDICAT
       const kdjD = chart.addSeries(LineSeries, { color: "#8b5cf6", lineWidth: 1, priceLineVisible: false, priceScaleId: "kdj" })
       const kdjJ = chart.addSeries(LineSeries, { color: "#06b6d4", lineWidth: 1, priceLineVisible: false, priceScaleId: "kdj" })
       series.push(kdjK, kdjD, kdjJ)
+      chart.priceScale("kdj").applyOptions({
+        scaleMargins: { top: 0.05, bottom: 0.05 },
+      })
     }
 
     allSeries.current = series
@@ -318,7 +563,11 @@ export function KlineChart({ rawData, height = 500, indicators = DEFAULT_INDICAT
     turtleLines.current.forEach((pl) => { try { candleSeries.current?.removePriceLine(pl) } catch { /* */ } })
     turtleLines.current = []
 
-    return () => { chart.remove(); chartRef.current = null }
+    return () => {
+      controller.abort()
+      chart.remove()
+      chartRef.current = null
+    }
   }, [height, showVolume, showBollinger, showMACD, showRSI, showKDJ])
 
   // 1.5 Turtle price lines — managed separately
@@ -370,6 +619,8 @@ export function KlineChart({ rawData, height = 500, indicators = DEFAULT_INDICAT
   // 2. Push data
   useEffect(() => {
     if (allSeries.current.length === 0 || !rawData) return
+    // Bail if a newer render has been scheduled
+    if (abortRef.current?.signal.aborted) return
     const bars = toChartBars(rawData)
     if (!bars.length) return
     const closes = bars.map(b => b.close)
@@ -387,8 +638,8 @@ export function KlineChart({ rawData, height = 500, indicators = DEFAULT_INDICAT
 
     // Price: MA5,10,20
     const toLine = (vals: (number | null)[]) => vals
-      .filter((v): v is number => v != null)
-      .map((v, i) => ({ time: dates[i], value: v }))
+      .map((v, i) => v != null ? { time: dates[i], value: v } : null)
+      .filter((v): v is {time: Time, value: number} => v != null)
     for (const key of ["ma5", "ma10", "ma20"] as const) {
       const vals: (number | null)[] = bars.map(b => b[key])
       allSeries.current[si++].setData(toLine(vals))
@@ -445,7 +696,10 @@ export function KlineChart({ rawData, height = 500, indicators = DEFAULT_INDICAT
       allSeries.current[si++].setData(toLine(kdj.j))
     }
 
-    chartRef.current?.timeScale().fitContent()
+    // Skip if chart was recreated mid-push (AbortController)
+    if (!abortRef.current?.signal.aborted) {
+      chartRef.current?.timeScale().fitContent()
+    }
   }, [rawData, showVolume, showBollinger, showMACD, showRSI, showKDJ])
 
   // 3. ResizeObserver
@@ -460,5 +714,90 @@ export function KlineChart({ rawData, height = 500, indicators = DEFAULT_INDICAT
     return () => observer.disconnect()
   }, [height])
 
-  return <div ref={containerRef} style={{ width: "100%", height }} />
+  return (
+    <div style={{ position: "relative", width: "100%" }}>
+      <div ref={containerRef} style={{ width: "100%", height }} />
+
+      {/* Indicator explanation bar */}
+      {explanations.length > 0 && (
+        <div className="mt-1.5 px-2 py-1.5 rounded border border-border/40 bg-muted/20 text-[11px] leading-relaxed">
+          <div className="flex flex-wrap gap-x-4 gap-y-1">
+            {explanations.map((exp) => (
+              <span key={exp.key} className="inline-flex items-center gap-1">
+                <span
+                  className="inline-block w-2 h-2 rounded-full shrink-0"
+                  style={{ backgroundColor: exp.color }}
+                />
+                <span className="font-semibold text-foreground/80">{exp.label}</span>
+                <span className="text-muted-foreground font-mono">{exp.value}</span>
+                <span className={
+                  exp.signal === "bullish" ? "text-red-400" :
+                  exp.signal === "bearish" ? "text-green-400" :
+                  "text-muted-foreground"
+                }>
+                  {exp.interpretation}
+                </span>
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Desktop: indicator selector popover */}
+      {showIndicatorSelector && !isMobile && (
+        <>
+          <button
+            onClick={(e) => { e.stopPropagation(); setPopoverOpen((v) => !v) }}
+            className="absolute top-2 right-2 z-10 text-[10px] px-2 py-1 rounded border
+              bg-card/90 backdrop-blur border-border text-muted-foreground
+              hover:text-foreground hover:border-primary/50 transition-colors"
+          >
+            ⚙ 指标
+          </button>
+
+          {popoverOpen && (
+            <>
+              <div className="fixed inset-0 z-20" onClick={() => setPopoverOpen(false)} />
+              <div className="absolute top-9 right-2 z-30 bg-card border border-border rounded-md
+                shadow-lg p-2 min-w-[120px]">
+                <p className="text-[10px] text-muted-foreground mb-1.5 px-1">切换指标</p>
+                {ALL_INDICATORS.map((ind) => {
+                  const active = indicators.includes(ind.key)
+                  return (
+                    <button
+                      key={ind.key}
+                      onClick={(e) => { e.stopPropagation(); toggleIndicator(ind.key) }}
+                      className={`flex items-center justify-between w-full text-[11px] px-2 py-1.5
+                        rounded transition-colors text-left
+                        ${active ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}
+                    >
+                      <span>{ind.label}</span>
+                      <span className={`w-3.5 h-3.5 rounded border flex items-center justify-center
+                        ${active ? "bg-primary border-primary text-primary-foreground" : "border-border"}`}>
+                        {active ? "✓" : ""}
+                      </span>
+                    </button>
+                  )
+                })}
+              </div>
+            </>
+          )}
+        </>
+      )}
+
+      {/* Mobile: floating cycle button */}
+      {isMobile && showIndicatorSelector && (
+        <button
+          onClick={(e) => { e.stopPropagation(); cycleMobile() }}
+          className="absolute bottom-3 right-3 z-10 text-xs px-3 py-1.5 rounded-full
+            bg-primary text-primary-foreground shadow-lg
+            active:scale-95 transition-transform"
+        >
+          {mobileCycleIdx === 0
+            ? "📊"
+            : MOBILE_CYCLE[mobileCycleIdx - 1].toUpperCase()}
+        </button>
+      )}
+    </div>
+  )
 }

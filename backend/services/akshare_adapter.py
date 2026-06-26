@@ -110,6 +110,60 @@ def get_quote(code: str) -> Optional[dict]:
     return None
 
 
+def get_batch_quotes(codes: list[str]) -> dict[str, dict]:
+    """批量获取实时行情 — 一次 HTTP 请求查多只股票"""
+    now = time.time()
+    result_map: dict[str, dict] = {}
+    uncached: list[str] = []
+
+    for code in codes:
+        if code in _QUOTE_CACHE:
+            ts, data = _QUOTE_CACHE[code]
+            if now - ts < _QUOTE_TTL:
+                result_map[code] = data
+                continue
+        uncached.append(code)
+
+    if not uncached:
+        return result_map
+
+    # 分批（腾讯 API 限制约 50 个/次）
+    BATCH = 50
+    for i in range(0, len(uncached), BATCH):
+        chunk = uncached[i:i + BATCH]
+        symbols = ",".join(_symbol(c) for c in chunk)
+        try:
+            raw = _http_get(f"https://qt.gtimg.cn/q={symbols}")
+            # 返回多行，每行格式: v_symbol="...~...~..."
+            for line in raw.strip().split("\n"):
+                if '="' not in line:
+                    continue
+                # 提取 symbol: v_s_sh600519="..."
+                match = re.search(r'v_(\w+)="([^"]*)"', line)
+                if match:
+                    sym = match.group(1)
+                    # 重建完整行格式让 _parse_tencent_quote 解析
+                    full_line = f'v_{sym}="{match.group(2)}"'
+                    # 反向查找 code
+                    for c in chunk:
+                        if _symbol(c) == sym:
+                            result = _parse_tencent_quote(full_line)
+                            if result:
+                                result["code"] = c  # 确保 code 正确
+                                _QUOTE_CACHE[c] = (now, result)
+                                result_map[c] = result
+                            break
+        except Exception as e:
+            logger.warning(f"get_batch_quotes chunk {i}: {e}")
+            # 回退到单个查询
+            for c in chunk:
+                q = get_quote(c)
+                if q:
+                    result_map[c] = q
+
+    return result_map
+
+
 def get_stock_name(code: str) -> str:
     """获取股票名称"""
     q = get_quote(code)

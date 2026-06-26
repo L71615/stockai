@@ -712,8 +712,8 @@ function StockDetailDrawer({ item }: { item: z.infer<typeof schema> }) {
             <p className="text-xs text-muted-foreground text-center py-12">暂无数据</p>
           ) : (
             <>
-              <KlineChart rawData={chartData} height={260} />
-              <KlineChart rawData={chartData} height={70} />
+              <KlineChart rawData={chartData} height={260} showIndicatorSelector={false} />
+              <KlineChart rawData={chartData} height={70} showIndicatorSelector={false} />
             </>
           )}
         </div>

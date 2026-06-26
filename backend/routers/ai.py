@@ -1,11 +1,13 @@
 """AI 对话路由"""
 
+import json as _json
+
 from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from database import query_all, query_one, execute
-from services.ai_service import ai_chat
-from routers.memory import load_memory
+from services.ai_service import ai_chat, ai_chat_stream
 from services.rate_limit import limiter_ai
 from dependencies import get_current_user_id
 
@@ -50,17 +52,8 @@ async def chat(req: ChatRequest, request: Request):
         (conv_id, "user", req.message),
     )
 
-    # 加载 Agent 记忆
-    memory_text = ""
-    if req.agentId:
-        agent_row = query_one("SELECT name FROM agents WHERE id = ?", (req.agentId,))
-        if agent_row:
-            memory_text = load_memory(req.agentId, agent_row["name"])
-
-    # 拼接系统提示词（Agent 提示词 + 记忆）
+    # 拼接系统提示词
     full_system = req.systemPrompt
-    if memory_text:
-        full_system += f"\n\n## 你的历史记忆\n{memory_text}"
 
     # 调用 AI
     reply = await ai_chat(
@@ -81,6 +74,72 @@ async def chat(req: ChatRequest, request: Request):
     )
 
     return {"conversationId": conv_id, "reply": reply}
+
+
+@router.post("/chat/stream")
+@limiter_ai.limit("20/minute")
+async def chat_stream(req: ChatRequest, request: Request):
+    """AI 对话（SSE 流式）— 逐 token 推送到前端"""
+    conv_id = req.conversationId
+    if not conv_id:
+        result = execute(
+            "INSERT INTO ai_conversations (user_id, title) VALUES (?, ?)",
+            (get_current_user_id(), req.message[:50]),
+        )
+        conv_id = result["lastrowid"]
+
+    # 加载历史 + 插入用户消息
+    history_rows = query_all(
+        """SELECT role, content FROM ai_messages
+           WHERE conversation_id = ?
+           ORDER BY created_at ASC
+           LIMIT 40""",
+        (conv_id,),
+    )
+    history = [{"role": r["role"], "content": r["content"]} for r in history_rows]
+
+    execute(
+        "INSERT INTO ai_messages (conversation_id, role, content) VALUES (?, ?, ?)",
+        (conv_id, "user", req.message),
+    )
+
+    full_system = req.systemPrompt
+
+    async def generate():
+        full_reply = ""
+        try:
+            async for chunk in ai_chat_stream(
+                req.message,
+                history,
+                function="chat",
+                provider=req.provider,
+                api_key=req.apiKey,
+                model=req.model,
+                base_url=req.baseUrl,
+                system_prompt=full_system,
+            ):
+                full_reply += chunk
+                yield f"data: {_json.dumps({'content': chunk}, ensure_ascii=False)}\n\n"
+        except Exception as e:
+            yield f"data: {_json.dumps({'error': str(e)}, ensure_ascii=False)}\n\n"
+        finally:
+            # 存完整回复
+            if full_reply:
+                execute(
+                    "INSERT INTO ai_messages (conversation_id, role, content, model) VALUES (?, ?, ?, ?)",
+                    (conv_id, "assistant", full_reply, req.model or None),
+                )
+        yield f"data: {_json.dumps({'done': True, 'conversationId': conv_id}, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",  # 禁用 nginx 缓冲
+        },
+    )
 
 
 @router.get("/conversations")

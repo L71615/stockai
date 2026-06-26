@@ -3,7 +3,9 @@
 支持的供应商：MiniMax / Claude / OpenAI / OpenAI 兼容
 """
 
+import json as _json
 import logging
+from typing import AsyncGenerator
 
 from anthropic import AsyncAnthropic
 from openai import AsyncOpenAI
@@ -52,6 +54,23 @@ async def _chat_openai_compatible(
     return response.choices[0].message.content
 
 
+async def _chat_openai_compatible_stream(
+    messages: list[dict], *, api_key: str, base_url: str, model: str,
+    system_prompt: str = "",
+) -> AsyncGenerator[str, None]:
+    """OpenAI 兼容流式输出 — 逐 token yield 文本"""
+    client = _get_openai_client(api_key, base_url)
+    full_messages = []
+    if system_prompt:
+        full_messages.append({"role": "system", "content": system_prompt})
+    full_messages.extend(messages)
+    stream = await client.chat.completions.create(model=model, messages=full_messages, stream=True)
+    async for chunk in stream:
+        delta = chunk.choices[0].delta.content if chunk.choices else None
+        if delta:
+            yield delta
+
+
 PROVIDER_DEFAULTS = {
     "minimax":  (MINIMAX_API_KEY, MINIMAX_MODEL, MINIMAX_BASE_URL, "MiniMax"),
     "deepseek": (DEEPSEEK_API_KEY, DEEPSEEK_MODEL, DEEPSEEK_BASE_URL, "DeepSeek"),
@@ -76,6 +95,24 @@ async def _chat_openai_provider(
         return f"（{name} API 调用失败: {e}）"
 
 
+async def _chat_openai_provider_stream(
+    messages: list[dict], provider_key: str,
+    *, api_key: str = "", model: str = "", system_prompt: str = "",
+) -> AsyncGenerator[str, None]:
+    """通用 OpenAI 兼容供应商 — 流式"""
+    env_key, default_model, base_url, name = PROVIDER_DEFAULTS[provider_key]
+    key = api_key or env_key
+    if not key:
+        yield f"（未配置 {name} API Key，请在设置页配置）"
+        return
+    m = model or default_model
+    try:
+        async for chunk in _chat_openai_compatible_stream(messages, api_key=key, base_url=base_url, model=m, system_prompt=system_prompt):
+            yield chunk
+    except Exception as e:
+        yield f"\n（{name} API 流式调用失败: {e}）"
+
+
 async def chat_with_claude(messages: list[dict], *, system_prompt: str = "", api_key: str = "", model: str = "") -> str:
     key = api_key or CLAUDE_API_KEY
     if not key:
@@ -94,6 +131,29 @@ async def chat_with_claude(messages: list[dict], *, system_prompt: str = "", api
         return "（请先安装 anthropic SDK: pip install anthropic）"
     except Exception as e:
         return f"（Claude API 调用失败: {e}）"
+
+
+async def chat_with_claude_stream(
+    messages: list[dict], *, system_prompt: str = "", api_key: str = "", model: str = ""
+) -> AsyncGenerator[str, None]:
+    """Claude 流式输出 — 逐 token yield 文本"""
+    key = api_key or CLAUDE_API_KEY
+    if not key:
+        yield "（未配置 Claude API Key，请在设置页配置）"
+        return
+    m = model or CLAUDE_MODEL
+    try:
+        client = _get_anthropic_client(key)
+        async with client.messages.stream(
+            model=m, max_tokens=4096,
+            system=system_prompt, messages=messages,
+        ) as stream:
+            async for text in stream.text_stream:
+                yield text
+    except ImportError:
+        yield "（请先安装 anthropic SDK: pip install anthropic）"
+    except Exception as e:
+        yield f"\n（Claude API 流式调用失败: {e}）"
 
 
 def get_default_provider() -> str:
@@ -180,6 +240,54 @@ async def ai_chat(
             return f"（自定义 API 调用失败: {e}）"
     else:
         return f"（不支持的 AI 供应商: {p}）"
+
+
+async def ai_chat_stream(
+    message: str,
+    conversation_history: list[dict] = None,
+    *,
+    provider: str = "",
+    function: str = "",
+    api_key: str = "",
+    model: str = "",
+    base_url: str = "",
+    system_prompt: str = "",
+) -> AsyncGenerator[str, None]:
+    """统一的 AI 流式对话入口（多供应商调度）
+
+    参数同 ai_chat()，但返回 AsyncGenerator，逐 token yield 文本。
+    """
+    messages = list(conversation_history or [])
+    messages.append({"role": "user", "content": message})
+
+    # 参数为空时，从设置页读取用户保存的配置
+    if not provider and function:
+        provider = get_provider_for_function(function)
+    p = provider or get_default_provider()
+    if not api_key or not model:
+        stored = _load_stored_ai_config(p)
+        api_key = api_key or stored.get("api_key", "")
+        model = model or stored.get("model", "")
+        base_url = base_url or stored.get("base_url", "")
+
+    if p in PROVIDER_DEFAULTS:
+        async for chunk in _chat_openai_provider_stream(messages, p, api_key=api_key, model=model, system_prompt=system_prompt):
+            yield chunk
+    elif p == "claude":
+        async for chunk in chat_with_claude_stream(messages, api_key=api_key, model=model, system_prompt=system_prompt):
+            yield chunk
+    elif p == "custom":
+        if not base_url:
+            yield "（使用自定义供应商请填写 Base URL）"
+            return
+        m = model or "gpt-4o"
+        try:
+            async for chunk in _chat_openai_compatible_stream(messages, api_key=api_key, base_url=base_url, model=m, system_prompt=system_prompt):
+                yield chunk
+        except Exception as e:
+            yield f"\n（自定义 API 流式调用失败: {e}）"
+    else:
+        yield f"（不支持的 AI 供应商: {p}）"
 
 
 def _decrypt_dict(cfg: dict) -> dict:

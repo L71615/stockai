@@ -2,6 +2,10 @@
 
 import os
 from pathlib import Path
+from dotenv import load_dotenv
+
+# 加载 .env 文件
+load_dotenv(Path(__file__).resolve().parent / ".env")
 
 # 版本号：重大功能 +0.1，小修复 +0.01
 VERSION = "3.5"

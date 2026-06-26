@@ -1,0 +1,27 @@
+# 左侧价值 — 深度价值投资，任何市场环境可用
+id: deep_value
+name: 左侧价值
+description: >
+  低PE、低PB、高ROE的经典价值选股。不择时、不追涨，
+  只买便宜的好公司。适合任何市场环境，但需要有长期持有的耐心。
+  可以作为底仓策略，配合其他策略使用。
+market_state: [bull, range, bear]
+recommended_position: "40-60%"
+conditions:
+  - field: pe
+    operator: "between"
+    value: [0, 25]
+  - field: pb
+    operator: "between"
+    value: [0.1, 3]
+  - field: roe
+    operator: ">="
+    value: 10
+  - field: debt_ratio
+    operator: "<="
+    value: 60
+  - field: avg_amount_20d
+    operator: ">="
+    value: 20000000
+sort_by: pe
+sort_order: asc

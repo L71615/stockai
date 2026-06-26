@@ -45,6 +45,8 @@ def add_transaction(body: TransactionBody):
 
     if body.direction == "buy":
         amount = round(body.price * body.quantity + fee, 2)
+    elif body.direction in ("deposit", "withdraw"):
+        amount = round(body.price * body.quantity, 2)  # price=金额, quantity=1
     else:
         amount = round(body.price * body.quantity - fee, 2)
 

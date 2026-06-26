@@ -1,0 +1,27 @@
+# 布林带回归 — 碰下轨缩量买入，回中轨卖出
+id: boll_mean
+name: 布林带回归
+description: >
+  当股价触及布林带下轨且成交量萎缩时买入，等待回归中轨。
+  震荡市中极为有效，利用价格在布林带内的均值回归特性。
+  注意区分"震荡"和"单边下跌"——必须确认不是趋势性破位。
+market_state: [range]
+recommended_position: "30-50%"
+conditions:
+  - field: boll_position
+    operator: "<="
+    value: 0.15
+  - field: vol_ratio
+    operator: "<="
+    value: 0.85
+  - field: rsi_14
+    operator: "<="
+    value: 40
+  - field: ret_20d
+    operator: ">="
+    value: -15
+  - field: avg_amount_20d
+    operator: ">="
+    value: 20000000
+sort_by: boll_position
+sort_order: asc

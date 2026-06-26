@@ -100,36 +100,50 @@ def get_all_stock_list(force_refresh: bool = False) -> list[dict]:
         logger.warning(f"Akshare 不可用: {e}")
 
     # 2. Baostock 全A股补充（去重，不含已纳入的指数成分股）
+    # 用线程超时包装，避免 Baostock 挂起阻塞整个扫描
     try:
         from services.baostock_adapter import _ensure_login, _bs_lock
+        from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 
-        with _bs_lock:
-            if _ensure_login():
+        def _fetch_baostock():
+            """Baostock 全 A 股 + 行业分类（在线程中执行，可被超时中断）"""
+            new_stocks = []
+            ind_map: dict[str, dict] = {}
+            with _bs_lock:
+                if not _ensure_login():
+                    return new_stocks, ind_map
                 rs = bs.query_stock_basic()
                 if rs.error_code == "0":
                     while rs.next():
                         row = rs.get_row_data()
                         code = row[0].replace("sh.", "").replace("sz.", "")
-                        if row[3] == "1" and row[4] == "1":  # type=股票, status=上市
+                        if row[3] == "1" and row[4] == "1":
                             if code not in index_codes:
-                                stocks.append({
+                                new_stocks.append({
                                     "code": code,
                                     "name": row[1],
                                     "ipo_date": row[2],
                                 })
-                # 获取行业分类（对所有股票）
+                # 行业分类
                 rs_ind = bs.query_stock_industry()
                 if rs_ind.error_code == "0":
-                    ind_map: dict[str, dict] = {}
                     while rs_ind.next():
                         row = rs_ind.get_row_data()
                         c = row[1].replace("sh.", "").replace("sz.", "")
                         ind_map[c] = {"industry": row[2] if len(row) > 2 else "",
                                       "industry_type": row[3] if len(row) > 3 else ""}
-                    for s in stocks:
-                        if s["code"] in ind_map and "industry" not in s:
-                            s.update(ind_map[s["code"]])
-                # 注意：不调用 bs.logout() —— 连接由 baostock_adapter 统一管理
+            return new_stocks, ind_map
+
+        with ThreadPoolExecutor(max_workers=1) as _executor:
+            _future = _executor.submit(_fetch_baostock)
+            try:
+                _baostock_stocks, _ind_map = _future.result(timeout=8)
+                stocks.extend(_baostock_stocks)
+                for s in stocks:
+                    if s["code"] in _ind_map and "industry" not in s:
+                        s.update(_ind_map[s["code"]])
+            except FutureTimeoutError:
+                logger.warning("Baostock 股票列表获取超时(8s)，跳过，仅用指数成分股")
     except Exception as e:
         logger.warning(f"Baostock 股票列表获取失败: {e}")
 
@@ -168,8 +182,6 @@ DEFAULT_FACTOR_WEIGHTS = {
     "strength_20d": 0.06, "momentum_composite": 0.04,
     # 资金类（总权重 9%，北向/机构）
     "north_flow": 0.05, "inst_change": 0.04,
-    # 社交情绪（雪球，总权重 6%）
-    "social_rank": 0.03, "social_buzz": 0.03,
 }
 
 

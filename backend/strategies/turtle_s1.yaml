@@ -1,0 +1,20 @@
+# 海龟 S1 入场 — Donchian 20日高点突破
+id: turtle_s1
+name: 海龟 S1 入场
+description: >
+  当收盘价突破过去 20 日最高价时买入。这是经典的趋势跟踪入场信号，
+  适合牛市和震荡市。需要配合成交量确认和 ATR 波动率过滤。
+market_state: [bull, range]
+recommended_position: "60-80%"
+conditions:
+  - field: close_vs_high_20d
+    operator: "cross_above"
+    value: 0
+  - field: avg_amount_20d
+    operator: ">="
+    value: 50000000
+  - field: atr_pct
+    operator: "between"
+    value: [1.5, 5]
+sort_by: distance_to_breakout
+sort_order: asc

@@ -358,7 +358,7 @@ def calc_fee(price: float, quantity: float, direction: str, asset_type: str) -> 
     """
     at = (asset_type or "").strip().lower()
 
-    if at in ("fund", "hk"):
+    if at in ("fund", "hk", "cash"):
         return None
 
     amount = abs(price * quantity)

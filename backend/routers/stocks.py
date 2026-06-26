@@ -446,41 +446,8 @@ RSI(14): {result['RSI']}
     return {"interpretation": interpretation.strip()}
 
 
+
 # ==================== 新闻 ====================
-
-# 全球区域 → 新闻搜索关键词映射
-_REGION_KEYWORDS = {
-    "us":       "美股 美联储 纳斯达克",
-    "ca":       "加拿大 央行 多伦多",
-    "br":       "巴西 股市 Bovespa",
-    "mx":       "墨西哥 经济",
-    "uk":       "英国 央行 富时100",
-    "de":       "德国 DAX 欧洲央行",
-    "fr":       "法国 CAC40 欧洲",
-    "jp":       "日本 日经225 央行",
-    "kr":       "韩国 KOSPI",
-    "in":       "印度 股市 Sensex",
-    "au":       "澳大利亚 澳洲联储",
-    "hk":       "港股 恒生指数",
-    "cn":       "A股 上证指数",
-    "ae":       "中东 沙特 阿联酋",
-    "za":       "南非 非洲经济",
-    "sg":       "东南亚 东盟 新加坡",
-    "ru":       "俄罗斯 MOEX 卢布",
-    "sa":       "沙特 石油 OPEC",
-    "it":       "意大利 欧洲经济",
-    "es":       "西班牙 IBEX 欧洲",
-}
-
-
-@router.get("/news/global/{region}")
-def get_global_news(region: str):
-    """获取全球区域财经新闻"""
-    keyword = _REGION_KEYWORDS.get(region)
-    if not keyword:
-        raise HTTPException(404, f"未知区域: {region}")
-    articles = fetch_news_jsonp(keyword, page=1, page_size=15)
-    return {"region": region, "keyword": keyword, "news": articles}
 
 
 @router.get("/news/holdings")

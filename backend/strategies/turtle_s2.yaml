@@ -1,0 +1,20 @@
+# 海龟 S2 入场 — Donchian 55日高点突破
+id: turtle_s2
+name: 海龟 S2 入场
+description: >
+  当收盘价突破过去 55 日最高价时买入。比 S1 更保守，信号更少但质量更高。
+  适合确认中长期趋势反转或加速。
+market_state: [bull, range]
+recommended_position: "50-70%"
+conditions:
+  - field: close_vs_high_55d
+    operator: "cross_above"
+    value: 0
+  - field: avg_amount_20d
+    operator: ">="
+    value: 50000000
+  - field: atr_pct
+    operator: "between"
+    value: [1.0, 6]
+sort_by: distance_to_breakout
+sort_order: asc

@@ -21,15 +21,11 @@ import {
   IconLayoutDashboard,
   IconStar,
   IconChartBar,
-  IconGlobe,
-  IconMessageCircle,
   IconChartScatter,
   IconSearch,
-  IconUsers,
-  IconSwords,
+  IconFilter,
   IconFileInvoice,
   IconRobot,
-  IconTools,
   IconSettings,
   IconChevronDown,
 } from "@tabler/icons-react"
@@ -44,7 +40,6 @@ const navGroups = [
       { id: "holdings", label: "持仓概览", icon: IconLayoutDashboard, url: "/" },
       { id: "watchlist", label: "自选股", icon: IconStar, url: "/watchlist" },
       { id: "market", label: "大盘指数", icon: IconChartBar, url: "/market" },
-      { id: "global", label: "全球资讯", icon: IconGlobe, url: "/global-news" },
     ],
   },
   {
@@ -53,22 +48,19 @@ const navGroups = [
     icon: IconChartScatter,
     defaultOpen: true,
     items: [
-      { id: "review", label: "AI 复盘", icon: IconMessageCircle, url: "/review" },
       { id: "quant", label: "量化分析", icon: IconChartScatter, url: "/quant" },
+      { id: "condition", label: "条件选股", icon: IconFilter, url: "/screener/condition" },
       { id: "screener", label: "AI 选股", icon: IconSearch, url: "/screener" },
-      { id: "duel", label: "AI 对抗", icon: IconSwords, url: "/duel" },
-      { id: "kol", label: "大V观点", icon: IconUsers, url: "/kol" },
     ],
   },
   {
     id: "tools",
     label: "工具",
-    icon: IconTools,
+    icon: IconRobot,
     defaultOpen: true,
     items: [
       { id: "transactions", label: "交易记录", icon: IconFileInvoice, url: "/transactions" },
       { id: "ai-chat", label: "AI 对话", icon: IconRobot, url: "/ai-assistant" },
-      { id: "skills", label: "Agent 工坊", icon: IconTools, url: "/skills" },
       { id: "settings", label: "设置", icon: IconSettings, url: "/settings" },
     ],
   },
@@ -146,7 +138,7 @@ export function AppSidebar() {
       <SidebarFooter>
         <div className="px-3 py-2 space-y-1">
           <p className="text-[10px] text-muted-foreground font-mono group-data-[collapsible=icon]:hidden">
-            StockAI v3.4
+            StockAI v3.5
           </p>
           <p className="text-[10px] text-muted-foreground group-data-[collapsible=icon]:hidden">
             <kbd className="rounded-none border border-border bg-muted px-1 py-0.5 font-mono text-[10px]">Ctrl+B</kbd>{" "}

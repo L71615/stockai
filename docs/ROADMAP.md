@@ -1,6 +1,6 @@
 # StockAI 路线图
 
-> 更新: 2026-06-22 | 版本: v3.4 | 测试: 132/133
+> 更新: 2026-06-24 | 版本: v3.5 | 测试: 132/133
 
 ---
 
@@ -9,9 +9,9 @@
 | 维度 | 状态 |
 |------|------|
 | P0 安全红线 | ✅ 全部完成 (7/7) |
-| P1 工程质量 | ✅ 全部完成 (10/10) |
-| P2 用户体验 | ⬜ 未开始 (8 项) |
-| 开源融合 | ⬜ 11 个项目已下载，待缝合 |
+| P1 工程质量 | 🟡 80% (8/10 — P01/P03/P04/P05 未完成) |
+| P2 用户体验 | 🟡 50% (4/8 — U01/U05/U07/U08 done) |
+| 开源融合 | 🟡 23% (3/13 — F08 IC/ICIR + F13 月度回测 + 因子体系移植) |
 
 ---
 
@@ -27,6 +27,8 @@
 | 06-18 | lightweight-charts v5.2 蜡烛图 + MA5/10/20 |
 | 06-21 | P1 工程 10/10: 22索引+7安全头+httpx+bcrypt+Random+依赖锁定+Proxy认证+71except+16any+O(n²) |
 | 06-22 | 海龟选股引擎 + 量化页因子面板 + 自选股+海龟提醒 |
+| 06-23 | AI设置页重构(功能→供应商映射表) + Quant交互优化 + 因子AI解读 + disposed错误根治 |
+| 06-24 | AI SSE流式响应 + 前端认证中间件 + K线BOLL/MACD/RSI/KDJ + Quant页KlineChart + 条件选股页 |
 
 ---
 
@@ -39,14 +41,14 @@
 
 ### 第二优先级 — 因子研究升级
 - [ ] **F04**: IC 分析面板 (→ screener 页面新增 IC tab)
-- [ ] **F05**: Alpha158 因子体系 (29 → 50+ 因子)
+- [x] **F05**: Alpha158 因子体系 ✅ 57/111 因子 (10大类, 54个规划中) — `factor_service.py`
 
 ### 第三优先级 — 策略回测升级
 - [ ] **F06**: 风险平价策略 (→ compare_strategies 第5策略)
 - [ ] **F07**: 策略 YAML 配置 (用户自定义策略参数)
 
 ### 第四优先级 — 因子淘汰 & 检验
-- [ ] **F08**: IC/ICIR 因子淘汰 (自动淘汰低效因子)
+- [x] **F08**: IC/ICIR 因子淘汰 (自动淘汰低效因子) ✅ `factor_service.py:1215 retire_factors_by_icir()`
 - [ ] **F09**: Fama-MacBeth 回归 (因子有效性检验)
 
 ### 第五优先级 — 图表高级特性
@@ -57,47 +59,47 @@
 - [ ] **F12**: Pine Script → Python 指标翻译 (QuanTAlib 算法参考)
 
 ### 第七优先级 — 架构参考
-- [ ] **F13**: 回测架构参考 (moonshot + vnpy + nautilus)
+- [x] **F13**: 回测架构参考 (moonshot + vnpy + nautilus) ✅ `monthly_backtest.py` + `/api/quant/monthly-backtest`
 
 ---
 
 ## 四、剩余待办（非融合）
 
 ### P2 用户体验
-- [ ] **U01**: AI 对话 SSE 流式响应 (30s 等待 → 实时字符流)
-- [ ] **U02**: 拆分 data-table.tsx (745 行 → 3 文件)
-- [ ] **U03**: 全局错误处理中间件
-- [ ] **U04**: 数据源健康检查 + Fallback 监控面板
-- [ ] **U05**: ✅ 已完成 (curl → httpx)
+- [x] **U01**: AI 对话 SSE 流式响应 ✅ `ai.py:/chat/stream` + 前端 `getReader()` 逐 token 渲染
+- [ ] **U02**: 拆分 data-table.tsx (729 行 → 3 文件)
+- [ ] **U03**: 全局错误处理中间件 (仅 RateLimitExceeded handler，无通用 Exception handler)
+- [ ] **U04**: 数据源健康检查 + Fallback 监控面板 (仅基础 `/api/health`)
+- [x] **U05**: ✅ 已完成 (curl → httpx)
 - [ ] **U06**: get_db() 连接池 + PRAGMA busy_timeout
-- [ ] **U07**: ✅ 已完成 (passlib → bcrypt)
-- [ ] **U08**: ✅ 已完成 (安全响应头)
+- [x] **U07**: ✅ 已完成 (passlib → bcrypt)
+- [x] **U08**: ✅ 已完成 (安全响应头 7/7)
 
 ### P1 工程规范
-- [ ] **P01**: 认证系统完善 (user_id 硬编码 → JWT 解析, 3-5d)
-- [ ] **P02**: ✅ 已完成 (数据库索引)
+- [ ] **P01**: 认证系统完善 (前端 middleware ✅ 后端 `CURRENT_USER_ID=1` 仍硬编码在 14+ 处, 3-5d)
+- [x] **P02**: ✅ 已完成 (数据库索引)
 - [ ] **P03**: 数据备份机制 (1-2d)
 - [ ] **P04**: CI/CD GitHub Actions (2-3d)
 - [ ] **P05**: AI 异常处理重构 → AIServiceError (1d)
-- [ ] **P06**: ✅ 已完成 (O(n²) 性能)
-- [ ] **P07**: ✅ 已完成 (random.seed)
-- [ ] **P08**: ✅ 已完成 (裸 except pass)
-- [ ] **P09**: Baostock 全局锁 → 细粒度锁 (1-2d)
-- [ ] **P10**: ✅ 已完成 (依赖版本锁定)
+- [x] **P06**: ✅ 已完成 (O(n²) 性能)
+- [x] **P07**: ✅ 已完成 (random.seed)
+- [x] **P08**: ✅ 已完成 (裸 except pass)
+- [x] **P09**: ✅ 已完成 (Baostock 全局锁→查询级细粒度锁, `_bs_locked()` 每次独立加解锁)
+- [x] **P10**: ✅ 已完成 (依赖版本锁定)
 
 ### 技术债
-- [ ] **T01**: ✅ 已完成 (Proxy 认证守卫)
-- [ ] **T02**: 前端全迁 SWR (3-5d)
-- [ ] **T03**: ✅ 已完成 (前端 any 类型)
+- [x] **T01**: ✅ 已完成 (Proxy 认证守卫)
+- [ ] **T02**: 前端全迁 SWR (3/14 页面, 21% — 其余 9 页仍用 fetch/useEffect, 3-5d)
+- [ ] **T03**: ✅ 基本完成 (仅剩 1 处 `: any` 在 KlineChart.tsx:241)
 - [ ] **T04**: Alembic 数据库迁移 (1d)
 - [ ] **T05**: Playwright E2E 测试 (2-3d)
 
 ### K 线图表增强
-- [ ] **K01**: Bollinger Bands 叠加 (2h)
-- [ ] **K02**: MACD 柱状图子面板 (1h)
-- [ ] **K03**: RSI 子面板 (1h)
-- [ ] **K04**: KDJ 子面板 (1h)
-- [ ] **K05**: Quant 页改用 KlineChart (1h)
+- [x] **K01**: Bollinger Bands 叠加 ✅ `KlineChart.tsx:112 calcBollinger()`
+- [x] **K02**: MACD 柱状图子面板 ✅ `KlineChart.tsx:132 calcMACD()`
+- [x] **K03**: RSI 子面板 ✅ `KlineChart.tsx:153 calcRSI()`
+- [x] **K04**: KDJ 子面板 ✅ `KlineChart.tsx:175 calcKDJ()`
+- [x] **K05**: Quant 页改用 KlineChart ✅ `quant/page.tsx:452`
 - [ ] **K06**: OHLCV crosshair 数字标签 (1h)
 - [ ] **K07**: 成交量柱数字 (0.5h)
 - [ ] **K08**: Volume Profile (1d)
@@ -110,15 +112,15 @@
 - [ ] **Q01**: 行业轮动热力图 (2h)
 - [ ] **Q02**: 资金流向仪表盘 (2h)
 - [ ] **Q03**: 择时信号聚合 (1h)
-- [ ] **Q04**: 条件选股 (1d)
-- [ ] **Q05**: 回测参数优化器 (1d)
-- [ ] **Q06**: 因子 IC 时序图 (2h)
+- [x] **Q04**: AI 量化解读 ✅ `/api/quant/stock/{code}/explain` + `/api/quant/factor-explain`
+- [x] **Q05**: 条件选股 ✅ `screener.py` 多因子扫描 + AI二次筛选 + 盯盘管理
+- [ ] **Q06**: 回测参数优化器 (1d)
 
 ### 已识别 Bug
-- [ ] AI 异常被吞 → 字符串污染 (`ai_service.py`)
-- [ ] Baostock 全局锁串行化 (`baostock_adapter.py`)
-- [ ] K 线 crosshair label 数字未显示
-- [ ] 分钟级 K 线数据源未接入 (东财 klt=1/5/15/30/60)
+- [ ] AI 异常被吞 → 字符串污染 (`ai_service.py`) — P05
+- [x] Baostock 全局锁串行化 ✅ 已改为查询级细粒度锁 (`baostock_adapter.py`)
+- [ ] K 线 crosshair label 数字未显示 — K06
+- [ ] 分钟级 K 线数据源未接入 (东财 klt=1/5/15/30/60) — K11
 
 ---
 
@@ -126,12 +128,21 @@
 
 ```
 P0 安全:    ██████████ 100% (7/7)
-P1 工程:    ██████████ 100% (10/10)
-P2 体验:    █░░░░░░░░░  10% (1/8, U05/U07/U08 并入 P1)
-融合 F01-F13: ░░░░░░░░░░   0% (准备就绪)
-K 线 P1:    ░░░░░░░░░░   0%
-量化 Q:     ░░░░░░░░░░   0%
+P1 工程:    ████████░░  80% (8/10 — P01/P03/P04/P05 未完成)
+P2 体验:    █████░░░░░  50% (4/8 — U02/U03/U04/U06 未完成)
+融合 F01-F13: ███░░░░░░░  23% (F05/F08/F13 done, F01-F04/F06-F07/F09-F12 待开始)
+K 线:       ████░░░░░░  42% (K01-K05 done, K06-K12 pending)
+量化 Q:     ███░░░░░░░  33% (Q04-Q05 done, Q01-Q03/Q06 pending)
+技术债:    █████░░░░░  50% (T01 完成, T02 21%, T03 基本完成, T04/T05 未开始)
 ```
+
+### 新增功能 (v3.4→v3.5，ROADMAP 外)
+- AI 功能→供应商映射表 (settings页 435行, 7功能×5供应商独立配置)
+- 前端 Next.js 认证中间件 (14页统一守卫, 无需各自 useEffect 检查)
+- 海龟选股引擎 (`turtle_screener.py` + `run_analysis.py`, 4955→400→Top10)
+- 月度因子分层回测 (`monthly_backtest.py`, moonshot 融合)
+- 个股 AI 解读 (`/api/quant/stock/{code}/explain` 技术面+基本面+风险)
+- 因子 AI 解读 (`/api/quant/factor-explain` 优势/风险/建议)
 
 ---
 
