@@ -1118,10 +1118,21 @@ def condition_scan(body: ConditionScanRequest):
         l3_tree = layer_trees[3]
         l3a_tree = {"logic": l3_tree["logic"], "conditions": l3a_conds}
 
-        # ── L3a: AKShare HTTP（PE/PB/ROE），快速缩池 ──
+        # 候选上限保护，避免扫描超时（5并发≈60s/300只）
+        _L3_MAX_CANDIDATES = 500
+        if l3a_conds and len(survivors) > _L3_MAX_CANDIDATES:
+            raise HTTPException(
+                400,
+                f"L3候选 {len(survivors)} 只 > {_L3_MAX_CANDIDATES}，AKShare调用太慢。"
+                f"请先添加 L1(行业) 或 L2(价格区间) 条件缩小候选池。"
+            )
+
+        # ── L3a: AKShare HTTP（PE/PB/ROE），并发快速缩池 ──
         if l3a_conds:
-            filtered = []
-            for s, quote, sd in survivors:
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+
+            def _process_l3a(item):
+                s, quote, sd = item
                 code = s["code"]
                 price = sd["price"]
                 try:
@@ -1138,8 +1149,19 @@ def condition_scan(body: ConditionScanRequest):
                 except Exception:
                     pass
                 if not evaluate(sd, l3a_tree):
-                    continue
-                filtered.append((s, quote, sd))
+                    return None
+                return (s, quote, sd)
+
+            filtered = []
+            with ThreadPoolExecutor(max_workers=5) as _l3a_pool:
+                _futures = {_l3a_pool.submit(_process_l3a, item): item for item in survivors}
+                for _f in as_completed(_futures):
+                    try:
+                        result = _f.result()
+                        if result is not None:
+                            filtered.append(result)
+                    except Exception:
+                        pass
             survivors = filtered
 
         l3a_passed = len(survivors)
@@ -1196,7 +1218,7 @@ def condition_scan(body: ConditionScanRequest):
         code = s["code"]
         price = sd.get("price", 0)
         try:
-            kline = fetch_kline_fast(code, days=120)
+            kline = fetch_kline_fast(code, days=60)
             if "error" in kline:
                 return None
         except Exception:
@@ -1284,6 +1306,13 @@ def condition_scan(body: ConditionScanRequest):
         return None
 
     if layer_trees[4]["conditions"] and survivors:
+        _L4_MAX = 300
+        if len(survivors) > _L4_MAX:
+            raise HTTPException(
+                400,
+                f"L4候选 {len(survivors)} 只 > {_L4_MAX}，K线获取太慢。"
+                f"请先添加 L1(行业) 或 L2(价格区间) 条件缩小候选池至 {_L4_MAX} 以下。"
+            )
         results = []
         with ThreadPoolExecutor(max_workers=6) as pool:
             futures = {pool.submit(_process_l4, item): item for item in survivors}

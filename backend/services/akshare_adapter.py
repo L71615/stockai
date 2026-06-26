@@ -30,7 +30,7 @@ _SEARCH_TTL = 300.0
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
 
 
-def _http_get(url: str, timeout: int = 10, encoding: str = "gbk") -> str:
+def _http_get(url: str, timeout: int = 3, encoding: str = "gbk") -> str:
     """发起 HTTP GET 请求，返回解码后的文本"""
     req = urllib.request.Request(url, headers={"User-Agent": UA})
     with urllib.request.urlopen(req, timeout=timeout) as resp:

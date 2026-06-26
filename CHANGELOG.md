@@ -4,6 +4,61 @@
 
 ---
 
+## 2026-06-26 #3 — 条件选股性能优化 + 候选池保护 + 数据源故障诊断
+
+### 问题定位
+
+用户反馈条件选股页面"扫描失败: HTTP 500"，逐步排查发现三层问题：
+
+**1. 首次扫描串行太慢 → 加并发**
+
+`get_stock_factors_http` (AKShare) 串行调用 800 次 × 0.5s = 400s。L3a 改为 `ThreadPoolExecutor(max_workers=5)` 并发处理，300 只降至 ~3s。
+
+**2. 无 L1/L2 过滤时全量进 L3/L4 → 加候选池上限**
+
+超跌反弹、高股息防御等策略模板没有 L1(行业)/L2(价格) 条件，800 只直接进 L3/L4 → 挂死。
+
+修复:
+- L3a 候选上限 500 (AKShare并发, 超出返回400+提示)
+- L3b 候选上限 200 (Baostock慢, 超出跳过并警告)
+- L4 候选上限 300 (K线获取慢, 超出返回400+提示)
+- K线获取天数从 120→60 减少传输量
+
+**3. K线数据源大面积故障（根本原因）**
+
+| 数据源 | 状态 |
+|---|---|
+| 腾讯 `web.ifzq.gtimg.cn` | HTTP 501 Not Implemented |
+| 东方财富 `push2his` | 不可用 |
+| Baostock | 可用但慢 (单次3-5s, RLock串行) |
+
+`fetch_kline` 依次尝试腾讯(3s超时)→东财(失败)→Baostock(5s)，每只股票 ~8s。
+`_http_get` 默认超时从 10s → 3s，减少等待。
+
+**L2/L3 条件选股（PE/PB/ROE/价格/行业）完全可用，秒级返回。L4 需等腾讯/东财恢复。**
+
+### Baostock 稳定性增强
+
+- `_ensure_login()`: 登录失败后 60s 冷却，避免 bs.login() 反复阻塞
+- `get_all_stock_list()`: Baostock 部分 ThreadPoolExecutor 包裹 8s 超时
+- 股票池回退: Baostock 全 A 股查询失败 → 仅用沪深300+中证500 (800只)
+- 行业字段已知问题: Baostock 行业查询也失败 → industry 显示为股票名
+
+### 文件变更
+- `backend/routers/screener.py`: L3a 并发化(ThreadPoolExecutor 5workers) + L3/L4 候选上限 + K线 60天 + L4 并发 6workers
+- `backend/services/akshare_adapter.py`: `_http_get` 超时 10s→3s
+- `backend/services/baostock_adapter.py`: 登录冷却机制
+- `backend/services/screener_service.py`: Baostock 线程超时 + 股票池回退
+- `CHANGELOG.md`: 补充本次排查记录
+
+### 已知待解决
+- [ ] K线数据源恢复监控 (腾讯/东方财富)
+- [ ] 股票池扩至全 A 股 (需 Baostock query_stock_basic 恢复)
+- [ ] L3/L4 上限可通过前端 `force` 参数绕过
+- [ ] 前端策略模板加载 `close>open` (compare_field) 条件丢失
+
+---
+
 ## 2026-06-26 #2 — 因子清理 + K线修复 + 条件选股L3两阶段重构
 
 ### K线图表三合一修复 (KlineChart.tsx)
