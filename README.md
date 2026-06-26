@@ -1,6 +1,6 @@
-# StockAI v3.4 — AI 量化选股 + 投资决策平台
+# StockAI v3.5 — AI 量化选股 + 投资决策平台
 
-> 57 因子多因子选股 · 海龟交易法 · 因子全景面板 · 6 AI 人格对抗 · TradingView K 线
+> 55 因子多因子选股 · 海龟交易法 · 因子全景面板 · 条件选股四层过滤 · TradingView K 线
 >
 > A 股投资者的量化工具箱。数据驱动，AI 增强。
 
@@ -8,17 +8,16 @@
 
 | 模块 | 功能 |
 |------|------|
-| 🔍 **AI 选股** | 全市场多因子扫描（57 因子）→ IC 加权打分 → AI 二次精选 → 策略回测 → 盯盘 |
+| 🔍 **AI 选股** | 全市场多因子扫描（55 因子）→ IC 加权打分 → AI 二次精选 → 策略回测 → 盯盘 |
+| 🎯 **条件选股** | 四层过滤架构(L1-L4)，14 个预设策略模板，YAML 策略引擎，支持 AND/OR 组合 |
 | 🐢 **海龟选股** | 唐奇安通道突破选股，S1(20日)+S2(55日)双系统，ATR止损仓位计算，综合评分 0-100 |
-| ⚔️ **AI 对抗** | 6 个 AI 人格各拿 ¥10 万，独立选股对战，实时排名 |
-| 📊 **量化分析** | 个股 K 线+技术指标+57 因子全景透视 / 因子分析面板(10类+雷达图) / 策略回测 / 蒙特卡洛 |
-| 🧠 **AI 复盘** | 结构化投资复盘报告，7 功能独立供应商 + 因子解读 + 连通测试 |
-| 📈 **社交情绪** | 雪球关注数 + 财经 RSS，AI 生成每日观点日报 |
+| 📊 **量化分析** | 个股 K 线(5 指标+讲解栏) + 55 因子全景透视(9 类+雷达图) / 策略回测 / 蒙特卡洛 |
+| 🧠 **AI 对话** | SSE 流式响应，7 功能 × 5 供应商独立配置映射表，因子 AI 解读 |
 | 🔔 **通知推送** | 企业微信 / Telegram / 邮件，盯盘异动自动推送 |
 | 💼 **持仓管理** | 实时盈亏 + 分散度饼图 + 行业自动分类（20+ 板块） |
-| 📉 **K 线图表** | TradingView lightweight-charts 专业蜡烛图，海龟通道线叠加，支持日/周/月 K |
+| 📉 **K 线图表** | TradingView lightweight-charts 蜡烛图，MA/BOLL/MACD/RSI/KDJ 五指标 + 海龟通道线 + 指标讲解栏 |
 
-## 因子体系（57 个）
+## 因子体系（55 个）
 
 | 类别 | 数量 | 因子 |
 |------|------|------|
@@ -31,10 +30,10 @@
 | 基本面 | 11 | PE, PB, ROE, EPS_GROWTH, MARKET_CAP, DIVIDEND_YIELD, PS_TTM, DEBT_RATIO, GROSS_MARGIN, REVENUE_GROWTH, NET_PROFIT_GROWTH |
 | 情绪 | 2 | STRENGTH_20D, MOMENTUM_COMPOSITE_2 |
 | 资金 | 2 | NORTH_FLOW(北向), INST_CHANGE(机构持仓变动) |
-| 社交 | 2 | SOCIAL_RANK, SOCIAL_BUZZ(雪球关注) |
 
-- 全部因子 done=57, pending=0
+- 全部因子 done=55, pending=0（社交类 2 因子因雪球 API 不可用已移除）
 - 每个因子基于 A 股合理阈值 0-100 打分，含正向/负向反转
+- PE/PB 由 AKShare `eps`/`bvps` + 行情 `price` 现场计算
 - PB 来源：Baostock 真实 pbMRQ（非 PE×ROE 反推）
 - 季报自动年化：Q4→Q1 逐季回退
 - 基本面：gpMargin(毛利率)、debt_ratio(资产负债率)、prev_revenue/net_profit(同比增速)
@@ -45,11 +44,10 @@
 实时行情:  A股(腾讯) + 港股(新浪) + 基金(天天基金)
 历史K线:   Baostock(15年前复权) → 腾讯 → 东方财富
 全球指数:  腾讯(7) + 新浪(4) = 11/15 覆盖
-基本面:    Baostock(PE/PB/ROE/EPS/市值/行业/毛利率/资产负债率/分红)
+基本面:    AKShare(同花顺 stock_financial_abstract_ths) + Baostock 兜底(PE/PB/ROE/EPS/市值/行业/分红)
 资金流向:  AKShare(北向资金 stock_hsgt_individual_em + 机构持仓 stock_institute_hold_detail)
-社交情绪:  雪球关注数
-AI:        MiniMax / DeepSeek / Claude / OpenAI / 小米(统一配置)
-图表:      lightweight-charts (TradingView 开源)
+AI:        MiniMax / DeepSeek / Claude / OpenAI / 小米(7功能×5供应商独立配置)
+图表:      lightweight-charts v5.2 (TradingView 开源)
 ```
 
 ## 项目结构
@@ -57,12 +55,12 @@ AI:        MiniMax / DeepSeek / Claude / OpenAI / 小米(统一配置)
 ```
 stocks/
 ├── frontend/                    # Next.js 16 + React 19 + shadcn/ui + Tailwind CSS 4
-│   └── src/app/                 # 12 个页面
+│   └── src/app/                 # 8 个页面
 ├── backend/                     # Python FastAPI
-│   ├── routers/                 # API 路由 (14 个)
-│   └── services/                # 业务服务 (24 个)
+│   ├── routers/                 # API 路由 (10 个)
+│   ├── services/                # 业务服务 (20 个)
+│   └── strategies/              # 条件选股策略 YAML (9 个)
 ├── database/                    # SQLite (WAL 模式, 20+ 表)
-├── docker/                      # Docker Compose 部署
 ├── tests/                       # pytest (132 测试)
 └── scripts/                     # 工具脚本
 ```
@@ -90,14 +88,12 @@ npm run dev
 | 投资 | 持仓概览 | `/` | KPI 卡片 + 走势图 + 行业饼图 + 持仓表 |
 | 投资 | 自选股 | `/watchlist` | 实时行情 + 批量报价 |
 | 投资 | 大盘指数 | `/market` | 全球 15 指数 |
-| 分析 | AI 复盘 | `/review` | 结构化复盘报告 |
-| 分析 | 量化分析 | `/quant` | 个股透视 / 因子面板(10类57因子) / 策略回测 / 蒙特卡洛 |
+| 分析 | 量化分析 | `/quant` | 个股透视 / 因子面板(9类55因子+雷达图) / 策略回测 / 蒙特卡洛 |
+| 分析 | 条件选股 | `/screener/condition` | 四层过滤(L1-L4) + 14 预设策略 + YAML 引擎 |
 | 分析 | AI 选股 | `/screener` | 多因子扫描 + AI 精选 + 策略回测 + 盯盘 |
-| 分析 | AI 对抗 | `/duel` | 6 AI 人格选股对战 |
-| 分析 | 大佬观点 | `/kol` | 雪球热门 + RSS + AI 日报 |
 | 工具 | 交易记录 | `/transactions` | 交易 CRUD |
-| 工具 | AI 对话 | `/ai-assistant` | 多模型对话 |
-| 工具 | 设置 | `/settings` | AI Key + 通知配置 |
+| 工具 | AI 对话 | `/ai-assistant` | 多模型 SSE 流式对话 |
+| 工具 | 设置 | `/settings` | AI Key(功能→供应商映射表) + 通知配置 |
 
 ## 环境变量
 
@@ -124,6 +120,7 @@ NOTIFY_ENABLED=true
 
 ## 版本历史
 
+- **v3.5** (2026-06-26): 条件选股四层过滤(L1-L4) + 因子清理(57→55, 删社交死因子, 修5阈值) + K线三合一修复(对齐+讲解栏+默认精简) + L3两阶段重构(AKShare快筛→Baostock精筛) + Baostock超时保护 + 废弃页面清理(duel/kol/review/skills)
 - **v3.5** (2026-06-23): AI 设置页重构(功能→供应商映射表+连通测试), Quant 页交互优化(统一查询按钮+因子AI解读), 根治 Turbopack disposed 错误(proxy→middleware+predev), 12 调用点按功能分发 AI 供应商
 - **v3.4** (2026-06-22): 因子体系 29→57 全面实现, 价格/成交量/BOLL/ACCELERATION/波动率/基本面因子实装, 量化页改版(海龟集成+因子面板), AKShare 兼容性修复, ATR 归一化
 - **v3.3** (2026-06-13): lightweight-charts K 线图表, 社交因子+通知推送+大佬观点页, 海龟交易法集成
