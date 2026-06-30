@@ -773,7 +773,11 @@ _STRATEGIES_DIR = Path(__file__).resolve().parent.parent / "strategies"
 
 
 def _load_strategy_yaml(strategy_id: str) -> dict | None:
-    """从 YAML 文件加载策略定义"""
+    """从 YAML 文件加载策略定义
+
+    YAML 中 conditions 存储为列表，需要包装为 condition_engine 期望的
+    {"logic": "AND", "conditions": [...]} 格式。
+    """
     try:
         import yaml
     except ImportError:
@@ -782,7 +786,11 @@ def _load_strategy_yaml(strategy_id: str) -> dict | None:
     if not fpath.exists():
         return None
     with open(fpath, "r", encoding="utf-8") as f:
-        return yaml.safe_load(f)
+        data = yaml.safe_load(f)
+    # YAML conditions 是裸列表 → 包装为条件树字典
+    if isinstance(data.get("conditions"), list):
+        data["conditions"] = {"logic": "AND", "conditions": data["conditions"]}
+    return data
 
 
 def _list_strategies() -> list[dict]:
@@ -1244,9 +1252,15 @@ def condition_scan(body: ConditionScanRequest):
             sd[key + "_seq"] = seq
             sd[key] = ([v for v in seq if v is not None] or [None])[-1]
 
-        # Open price
+        # Close / Open / High / Low
+        if closes:
+            sd["close"] = closes[-1]
         if opens_list:
             sd["open"] = opens_list[-1]
+        if highs:
+            sd["high"] = highs[-1]
+        if lows:
+            sd["low"] = lows[-1]
 
         # 高/低点参考
         if len(highs) >= 21:
@@ -1267,10 +1281,16 @@ def condition_scan(body: ConditionScanRequest):
 
         # 量比 + 日均成交额
         if volumes and len(volumes) >= 20:
-            vm = sum(volumes[-21:-1]) / 20
-            sd["vol_ratio"] = round(volumes[-1] / vm, 2) if vm > 0 else 1.0
-            amounts = [volumes[i] * closes[i] for i in range(min(len(volumes), len(closes)))]
-            sd["avg_amount_20d"] = sum(amounts[-20:]) / min(len(amounts), 20)
+            valid_v = [v for v in volumes[-21:-1] if v is not None]
+            vm = sum(valid_v) / len(valid_v) if valid_v else 0
+            sd["vol_ratio"] = round(volumes[-1] / vm, 2) if vm > 0 and volumes[-1] is not None else 1.0
+            amounts = []
+            for i in range(min(len(volumes), len(closes))):
+                v = volumes[i]
+                c = closes[i]
+                if v is not None and c is not None:
+                    amounts.append(v * c)
+            sd["avg_amount_20d"] = sum(amounts[-20:]) / min(len(amounts), 20) if amounts else 0
         else:
             sd["vol_ratio"] = 1.0
             sd["avg_amount_20d"] = 0
