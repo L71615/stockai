@@ -8,8 +8,10 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from database import query_all, query_one, execute
+from dependencies import get_current_user_id
 from services.news_service import get_matched_news, fetch_news_jsonp, _industry_keyword
 from services.ai_service import ai_chat
+from services.ai_exceptions import AIServiceError
 from services.technical import get_indicators as calc_indicators
 from services.utils import run_curl, get_market, detect_asset_type, get_fund_nav
 
@@ -436,13 +438,16 @@ RSI(14): {result['RSI']}
 3. 给出短线操作建议（一句话）
 4. 不超过 200 字，直接输出不要标题"""
 
-    interpretation = await ai_chat(
-        prompt,
-        function="watchdog",
-        provider=body.provider,
-        api_key=body.apiKey,
-        model=body.model,
-    )
+    try:
+        interpretation = await ai_chat(
+            prompt,
+            function="watchdog",
+            provider=body.provider,
+            api_key=body.apiKey,
+            model=body.model,
+        )
+    except AIServiceError as e:
+        return {"error": str(e), "provider": e.provider_name}
     return {"interpretation": interpretation.strip()}
 
 
@@ -453,7 +458,7 @@ RSI(14): {result['RSI']}
 @router.get("/news/holdings")
 def get_holdings_news():
     """获取持仓相关新闻（按行业+代码匹配）"""
-    holdings = query_all("SELECT * FROM holdings WHERE user_id = 1")
+    holdings = query_all("SELECT * FROM holdings WHERE user_id = ?", (get_current_user_id(),))
     if not holdings:
         return []
     return get_matched_news(holdings)
@@ -489,7 +494,7 @@ async def generate_review(body: ReviewRequest):
 
     period_label, period_filter = _PERIOD_CONFIG.get(body.period, ("全部", ""))
 
-    txs = query_all(f"SELECT * FROM transactions WHERE user_id = 1 {period_filter} ORDER BY traded_at ASC")
+    txs = query_all(f"SELECT * FROM transactions WHERE user_id = ? {period_filter} ORDER BY traded_at ASC", (get_current_user_id(),))
     if not txs:
         return {"review": f"暂无{period_label}交易记录，无法生成复盘报告。"}
 
@@ -576,13 +581,16 @@ async def generate_review(body: ReviewRequest):
 5. 语言简洁专业，不超过 500 字
 6. 直接输出报告正文，不要加"复盘报告"等标题"""
 
-    review = await ai_chat(
-        prompt,
-        function="review",
-        provider=body.provider,
-        api_key=body.apiKey,
-        model=body.model,
-    )
+    try:
+        review = await ai_chat(
+            prompt,
+            function="review",
+            provider=body.provider,
+            api_key=body.apiKey,
+            model=body.model,
+        )
+    except AIServiceError as e:
+        return {"error": str(e), "provider": e.provider_name}
 
     return {"review": review.strip()}
 
@@ -733,7 +741,7 @@ def _classify_fund(name: str, code: str) -> tuple[str, str]:
 @router.get("/diversification")
 def get_diversification():
     """持仓分散度分析：行业占比、市场占比、集中风险"""
-    holdings = query_all("SELECT * FROM holdings WHERE user_id = 1")
+    holdings = query_all("SELECT * FROM holdings WHERE user_id = ?", (get_current_user_id(),))
     if not holdings:
         return {"by_industry": [], "by_market": [], "risk_level": "无持仓", "max_single_pct": 0}
 
@@ -829,7 +837,7 @@ def get_diversification():
 @router.get("/peer-comparison")
 def get_peer_comparison():
     """持仓 vs 大盘指数对比（仅股票和ETF，基金不参与）"""
-    holdings = query_all("SELECT * FROM holdings WHERE user_id = 1 AND asset_type IN ('stock', 'etf', '')")
+    holdings = query_all("SELECT * FROM holdings WHERE user_id = ? AND asset_type IN ('stock', 'etf', '')", (get_current_user_id(),))
     if not holdings:
         return {"items": [], "indices": {}}
 
@@ -877,28 +885,28 @@ class AlertBody(BaseModel):
 
 @router.get("/alerts")
 def list_alerts():
-    return query_all("SELECT * FROM price_alerts WHERE user_id = 1 ORDER BY id DESC")
+    return query_all("SELECT * FROM price_alerts WHERE user_id = ? ORDER BY id DESC", (get_current_user_id(),))
 
 
 @router.post("/alerts")
 def add_alert(body: AlertBody):
     # 同股同类型去重
     existing = query_one(
-        "SELECT id FROM price_alerts WHERE user_id = 1 AND stock_code = ? AND alert_type = ?",
-        (body.stock_code, body.alert_type),
+        "SELECT id FROM price_alerts WHERE user_id = ? AND stock_code = ? AND alert_type = ?",
+        (get_current_user_id(), body.stock_code, body.alert_type),
     )
     if existing:
         execute("DELETE FROM price_alerts WHERE id = ?", (existing["id"],))
     result = execute(
-        "INSERT INTO price_alerts (user_id, stock_code, alert_type, target_value) VALUES (1, ?, ?, ?)",
-        (body.stock_code, body.alert_type, body.target_value),
+        "INSERT INTO price_alerts (user_id, stock_code, alert_type, target_value) VALUES (?, ?, ?, ?)",
+        (get_current_user_id(), body.stock_code, body.alert_type, body.target_value),
     )
     return {"id": result["lastrowid"], "message": "预警已设置"}
 
 
 @router.delete("/alerts/{alert_id}")
 def delete_alert(alert_id: int):
-    execute("DELETE FROM price_alerts WHERE id = ? AND user_id = 1", (alert_id,))
+    execute("DELETE FROM price_alerts WHERE id = ? AND user_id = ?", (alert_id, get_current_user_id()))
     return {"message": "已删除"}
 
 
@@ -915,22 +923,22 @@ class DividendBody(BaseModel):
 
 @router.get("/dividends")
 def list_dividends():
-    return query_all("SELECT * FROM dividends WHERE user_id = 1 ORDER BY ex_date DESC")
+    return query_all("SELECT * FROM dividends WHERE user_id = ? ORDER BY ex_date DESC", (get_current_user_id(),))
 
 
 @router.post("/dividends")
 def add_dividend(body: DividendBody):
     result = execute(
         """INSERT INTO dividends (user_id, stock_code, stock_name, amount_per_share, ex_date, total_amount, note)
-           VALUES (1, ?, ?, ?, ?, ?, ?)""",
-        (body.stock_code, body.stock_name, body.amount_per_share, body.ex_date, body.total_amount, body.note),
+           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        (get_current_user_id(), body.stock_code, body.stock_name, body.amount_per_share, body.ex_date, body.total_amount, body.note),
     )
     return {"id": result["lastrowid"], "message": "已记录"}
 
 
 @router.delete("/dividends/{div_id}")
 def delete_dividend(div_id: int):
-    execute("DELETE FROM dividends WHERE id = ? AND user_id = 1", (div_id,))
+    execute("DELETE FROM dividends WHERE id = ? AND user_id = ?", (div_id, get_current_user_id()))
     return {"message": "已删除"}
 
 
@@ -939,8 +947,9 @@ def dividends_summary():
     """股息汇总：总股息、按股票汇总"""
     rows = query_all(
         """SELECT stock_code, stock_name, SUM(total_amount) as total_div
-           FROM dividends WHERE user_id = 1
-           GROUP BY stock_code ORDER BY total_div DESC"""
+           FROM dividends WHERE user_id = ?
+           GROUP BY stock_code ORDER BY total_div DESC""",
+        (get_current_user_id(),),
     )
     total = sum(r["total_div"] for r in rows)
     return {"total_dividends": total, "by_stock": rows}

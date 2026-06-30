@@ -10,6 +10,7 @@ from pydantic import BaseModel
 import bcrypt as _bcrypt
 
 from database import query_one
+from dependencies import get_current_user_id
 from config import JWT_SECRET, JWT_EXPIRES, LOGIN_RATE_LIMIT, LOGIN_LOCK_MINUTES
 
 router = APIRouter()
@@ -99,9 +100,10 @@ def register():
 
 @router.get("/profile")
 def profile():
-    """获取当前用户信息（单用户模式）"""
+    """获取当前用户信息"""
     user = query_one(
-        "SELECT id, username, email, phone, avatar_url, created_at FROM users WHERE id = 1"
+        "SELECT id, username, email, phone, avatar_url, created_at FROM users WHERE id = ?",
+        (get_current_user_id(),),
     )
     if not user:
         raise HTTPException(404, "用户不存在")

@@ -3,6 +3,8 @@
 import * as React from "react"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
+import useSWR from "swr"
+import { swrFetcher } from "@/lib/swr-config"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import {
   Sidebar,
@@ -76,6 +78,9 @@ export function AppSidebar() {
     tools: true,
   })
 
+  const { data: versionData } = useSWR<{ version: string }>("/api/version", swrFetcher)
+  const version = versionData?.version ?? "?.?"
+
   const toggleGroup = (id: string) => {
     setOpenGroups((prev) => ({ ...prev, [id]: !prev[id] }))
   }
@@ -140,7 +145,7 @@ export function AppSidebar() {
       <SidebarFooter>
         <div className="px-3 py-2 space-y-1">
           <p className="text-[10px] text-muted-foreground font-mono group-data-[collapsible=icon]:hidden">
-            StockAI v3.5
+            StockAI v{version}
           </p>
           <p className="text-[10px] text-muted-foreground group-data-[collapsible=icon]:hidden">
             <kbd className="rounded-none border border-border bg-muted px-1 py-0.5 font-mono text-[10px]">Ctrl+B</kbd>{" "}

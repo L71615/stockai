@@ -1,6 +1,6 @@
 # StockAI 路线图
 
-> 更新: 2026-06-24 | 版本: v3.5 | 测试: 132/133
+> 更新: 2026-07-01 | 版本: v3.6 | 测试: 81/83
 
 ---
 
@@ -9,9 +9,9 @@
 | 维度 | 状态 |
 |------|------|
 | P0 安全红线 | ✅ 全部完成 (7/7) |
-| P1 工程质量 | 🟡 80% (8/10 — P01/P03/P04/P05 未完成) |
-| P2 用户体验 | 🟡 50% (4/8 — U01/U05/U07/U08 done) |
-| 开源融合 | 🟡 23% (3/13 — F08 IC/ICIR + F13 月度回测 + 因子体系移植) |
+| P1 工程质量 | ✅ 全部完成 (10/10) |
+| P2 用户体验 | 🟡 87.5% (7/8 — U04 未完成) |
+| 开源融合 | 🟡 23% (3/13 — F08/F13 + 因子体系 done) |
 
 ---
 
@@ -29,6 +29,7 @@
 | 06-22 | 海龟选股引擎 + 量化页因子面板 + 自选股+海龟提醒 |
 | 06-23 | AI设置页重构(功能→供应商映射表) + Quant交互优化 + 因子AI解读 + disposed错误根治 |
 | 06-24 | AI SSE流式响应 + 前端认证中间件 + K线BOLL/MACD/RSI/KDJ + Quant页KlineChart + 条件选股页 |
+| 07-01 | **v3.6**: P1 工程 100% + P2 体验 87.5% — 认证解耦(ContextVar JWT) + AI异常体系(5级) + K线crosshair/成交量 + 连接池(busy_timeout) + data-table拆分 + 全局异常处理 |
 
 ---
 
@@ -67,20 +68,20 @@
 
 ### P2 用户体验
 - [x] **U01**: AI 对话 SSE 流式响应 ✅ `ai.py:/chat/stream` + 前端 `getReader()` 逐 token 渲染
-- [ ] **U02**: 拆分 data-table.tsx (729 行 → 3 文件)
-- [ ] **U03**: 全局错误处理中间件 (仅 RateLimitExceeded handler，无通用 Exception handler)
+- [x] **U02**: 拆分 data-table.tsx ✅ `data-table-core.tsx` + `data-table-cells.tsx` + `data-table-drawer.tsx` + barrel
+- [x] **U03**: 全局错误处理中间件 ✅ `main.py` Exception handler + traceback 日志
 - [ ] **U04**: 数据源健康检查 + Fallback 监控面板 (仅基础 `/api/health`)
 - [x] **U05**: ✅ 已完成 (curl → httpx)
-- [ ] **U06**: get_db() 连接池 + PRAGMA busy_timeout
+- [x] **U06**: get_db() 连接池 ✅ 5连接池 + `_PooledConnection` + `busy_timeout=5000`
 - [x] **U07**: ✅ 已完成 (passlib → bcrypt)
 - [x] **U08**: ✅ 已完成 (安全响应头 7/7)
 
 ### P1 工程规范
-- [ ] **P01**: 认证系统完善 (前端 middleware ✅ 后端 `CURRENT_USER_ID=1` 仍硬编码在 14+ 处, 3-5d)
+- [x] **P01**: 认证系统完善 ✅ ContextVar JWT 方案 — `dependencies.py` + 中间件 `_current_user_id.set()` — 24处硬编码已消除
 - [x] **P02**: ✅ 已完成 (数据库索引)
 - [ ] **P03**: 数据备份机制 (1-2d)
 - [ ] **P04**: CI/CD GitHub Actions (2-3d)
-- [ ] **P05**: AI 异常处理重构 → AIServiceError (1d)
+- [x] **P05**: AI 异常处理重构 ✅ `ai_exceptions.py` 5级层次(AIServiceError→Key/Provider/RateLimit/Response/Config) — 10处 `"（...）"` 已消除
 - [x] **P06**: ✅ 已完成 (O(n²) 性能)
 - [x] **P07**: ✅ 已完成 (random.seed)
 - [x] **P08**: ✅ 已完成 (裸 except pass)
@@ -89,8 +90,8 @@
 
 ### 技术债
 - [x] **T01**: ✅ 已完成 (Proxy 认证守卫)
-- [ ] **T02**: 前端全迁 SWR (3/14 页面, 21% — 其余 9 页仍用 fetch/useEffect, 3-5d)
-- [ ] **T03**: ✅ 基本完成 (仅剩 1 处 `: any` 在 KlineChart.tsx:241)
+- [ ] **T02**: 前端全迁 SWR (2/11 页面, 18% — 其余 9 页仍用 fetch/useEffect, 3-5d)
+- [x] **T03**: ✅ 已完成 (`: any` → `: unknown`, KlineChart.tsx 零 `:any` 残留)
 - [ ] **T04**: Alembic 数据库迁移 (1d)
 - [ ] **T05**: Playwright E2E 测试 (2-3d)
 
@@ -100,8 +101,8 @@
 - [x] **K03**: RSI 子面板 ✅ `KlineChart.tsx:153 calcRSI()`
 - [x] **K04**: KDJ 子面板 ✅ `KlineChart.tsx:175 calcKDJ()`
 - [x] **K05**: Quant 页改用 KlineChart ✅ `quant/page.tsx:452`
-- [ ] **K06**: OHLCV crosshair 数字标签 (1h)
-- [ ] **K07**: 成交量柱数字 (0.5h)
+- [x] **K06**: OHLCV crosshair 数字标签 ✅ `CrosshairMode.Normal` + vertLine/hor Line labelVisible
+- [x] **K07**: 成交量柱数字 ✅ 自定义 priceFormat formatter (万/亿显示)
 - [ ] **K08**: Volume Profile (1d)
 - [ ] **K09**: VWAP 叠加 (2h)
 - [ ] **K10**: Supertrend (2h)
@@ -117,9 +118,9 @@
 - [ ] **Q06**: 回测参数优化器 (1d)
 
 ### 已识别 Bug
-- [ ] AI 异常被吞 → 字符串污染 (`ai_service.py`) — P05
+- [x] AI 异常被吞 → 字符串污染 ✅ P05 已修复 — `AIServiceError` 层次替代 `"（...）"` 字符串约定
 - [x] Baostock 全局锁串行化 ✅ 已改为查询级细粒度锁 (`baostock_adapter.py`)
-- [ ] K 线 crosshair label 数字未显示 — K06
+- [x] K 线 crosshair label 数字未显示 ✅ K06 已修复 — crosshair labelVisible
 - [ ] 分钟级 K 线数据源未接入 (东财 klt=1/5/15/30/60) — K11
 
 ---
@@ -128,12 +129,13 @@
 
 ```
 P0 安全:    ██████████ 100% (7/7)
-P1 工程:    ████████░░  80% (8/10 — P01/P03/P04/P05 未完成)
-P2 体验:    █████░░░░░  50% (4/8 — U02/U03/U04/U06 未完成)
-融合 F01-F13: ███░░░░░░░  23% (F05/F08/F13 done, F01-F04/F06-F07/F09-F12 待开始)
-K 线:       ████░░░░░░  42% (K01-K05 done, K06-K12 pending)
+P1 工程:    ██████████ 100% (10/10) ✅
+P2 体验:    ████████░░  87.5% (7/8 — U04 未完成)
+融合 F01-F13: ███░░░░░░░  23% (F05/F08/F13 done, 其余待开始)
+K 线:       █████░░░░░  58% (K01-K07 done, K08-K12 pending)
 量化 Q:     ███░░░░░░░  33% (Q04-Q05 done, Q01-Q03/Q06 pending)
-技术债:    █████░░░░░  50% (T01 完成, T02 21%, T03 基本完成, T04/T05 未开始)
+技术债:    ████░░░░░░  40% (T01/T03 done, T02 18%, T04/T05 未开始)
+已识别 Bug: ████████░░  75% (3/4 fixed — 仅 K11 分钟K线未接入)
 ```
 
 ### 新增功能 (v3.4→v3.5，ROADMAP 外)

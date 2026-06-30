@@ -341,6 +341,7 @@ async def stock_explain(code: str, body: StockExplainRequest = None):
     异常降级：超时/429/空响应 → 返回 error 字段而非 500。
     """
     from services.ai_service import ai_chat, get_default_provider
+    from services.ai_exceptions import AIServiceError
     from services.utils import get_market
 
     body = body or StockExplainRequest()
@@ -430,15 +431,12 @@ async def stock_explain(code: str, body: StockExplainRequest = None):
     try:
         provider = body.provider or get_default_provider()
         raw = await ai_chat(prompt, function="explain", provider=provider)
-    except Exception as e:
-        return {"error": f"AI 服务暂时不可用：{e}"}
+    except AIServiceError as e:
+        return {"error": str(e), "provider": e.provider_name}
 
-    # ai_chat 不抛异常，错误时返回 "（...）" 格式的字符串
     if not raw or not raw.strip():
         return {"error": "AI 返回为空，请稍后重试"}
     text = raw.strip()
-    if text.startswith("（") and text.endswith("）"):
-        return {"error": text[1:-1]}  # 返回原始错误消息
 
     # 尝试解析 JSON
     import re, json as _json
@@ -530,7 +528,8 @@ def correlation():
     from services.technical import fetch_kline
     from services.utils import get_market
 
-    holdings = query_all("SELECT * FROM holdings WHERE user_id = 1 ORDER BY id DESC")
+    from dependencies import get_current_user_id
+    holdings = query_all("SELECT * FROM holdings WHERE user_id = ? ORDER BY id DESC", (get_current_user_id(),))
     if not holdings:
         return {"stocks": [], "matrix": [], "error": "无持仓数据"}
 
@@ -646,6 +645,7 @@ async def factor_explain(body: FactorExplainRequest):
     输入因子评分摘要（前端已计算），AI 分析优势/风险维度并给出建议。
     """
     from services.ai_service import ai_chat
+    from services.ai_exceptions import AIServiceError
 
     if not body.categories:
         return {"error": "因子数据为空"}
@@ -686,14 +686,12 @@ async def factor_explain(body: FactorExplainRequest):
     try:
         raw = await ai_chat(prompt, function="explain",
             system_prompt="你是专业A股量化分析师。严格按JSON格式输出。")
-    except Exception as e:
-        return {"error": f"AI 服务暂时不可用：{e}"}
+    except AIServiceError as e:
+        return {"error": str(e), "provider": e.provider_name}
 
     if not raw or not raw.strip():
         return {"error": "AI 返回为空"}
     text = raw.strip()
-    if text.startswith("（") and text.endswith("）"):
-        return {"error": text[1:-1]}
 
     import re, json as _json
     if text.startswith("```"):

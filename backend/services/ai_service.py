@@ -10,6 +10,8 @@ from typing import AsyncGenerator
 from anthropic import AsyncAnthropic
 from openai import AsyncOpenAI
 
+from .ai_exceptions import AIKeyError, AIProviderError, AIRateLimitError, AIResponseError, AIConfigError
+
 logger = logging.getLogger("stockai")
 
 from config import (
@@ -87,12 +89,14 @@ async def _chat_openai_provider(
     env_key, default_model, base_url, name = PROVIDER_DEFAULTS[provider_key]
     key = api_key or env_key
     if not key:
-        return f"（未配置 {name} API Key，请在设置页配置）"
+        raise AIKeyError(f"未配置 {name} API Key，请在设置页配置", provider_name=name)
     m = model or default_model
     try:
         return await _chat_openai_compatible(messages, api_key=key, base_url=base_url, model=m, system_prompt=system_prompt)
+    except AIServiceError:
+        raise
     except Exception as e:
-        return f"（{name} API 调用失败: {e}）"
+        raise AIProviderError(f"{name} API 调用失败: {e}", provider_name=name, original_exception=e) from e
 
 
 async def _chat_openai_provider_stream(
@@ -103,20 +107,21 @@ async def _chat_openai_provider_stream(
     env_key, default_model, base_url, name = PROVIDER_DEFAULTS[provider_key]
     key = api_key or env_key
     if not key:
-        yield f"（未配置 {name} API Key，请在设置页配置）"
-        return
+        raise AIKeyError(f"未配置 {name} API Key，请在设置页配置", provider_name=name)
     m = model or default_model
     try:
         async for chunk in _chat_openai_compatible_stream(messages, api_key=key, base_url=base_url, model=m, system_prompt=system_prompt):
             yield chunk
+    except AIServiceError:
+        raise
     except Exception as e:
-        yield f"\n（{name} API 流式调用失败: {e}）"
+        raise AIProviderError(f"{name} API 流式调用失败: {e}", provider_name=name, original_exception=e) from e
 
 
 async def chat_with_claude(messages: list[dict], *, system_prompt: str = "", api_key: str = "", model: str = "") -> str:
     key = api_key or CLAUDE_API_KEY
     if not key:
-        return "（未配置 Claude API Key，请在设置页配置）"
+        raise AIKeyError("未配置 Claude API Key，请在设置页配置", provider_name="Claude")
     m = model or CLAUDE_MODEL
     try:
         client = _get_anthropic_client(key)
@@ -126,11 +131,13 @@ async def chat_with_claude(messages: list[dict], *, system_prompt: str = "", api
         )
         if response.content and len(response.content) > 0:
             return response.content[0].text
-        return "（Claude 返回空响应）"
+        raise AIResponseError("Claude 返回空响应", provider_name="Claude")
+    except AIServiceError:
+        raise
     except ImportError:
-        return "（请先安装 anthropic SDK: pip install anthropic）"
+        raise AIConfigError("请先安装 anthropic SDK: pip install anthropic", provider_name="Claude")
     except Exception as e:
-        return f"（Claude API 调用失败: {e}）"
+        raise AIProviderError(f"Claude API 调用失败: {e}", provider_name="Claude", original_exception=e) from e
 
 
 async def chat_with_claude_stream(
@@ -139,8 +146,7 @@ async def chat_with_claude_stream(
     """Claude 流式输出 — 逐 token yield 文本"""
     key = api_key or CLAUDE_API_KEY
     if not key:
-        yield "（未配置 Claude API Key，请在设置页配置）"
-        return
+        raise AIKeyError("未配置 Claude API Key，请在设置页配置", provider_name="Claude")
     m = model or CLAUDE_MODEL
     try:
         client = _get_anthropic_client(key)
@@ -150,10 +156,12 @@ async def chat_with_claude_stream(
         ) as stream:
             async for text in stream.text_stream:
                 yield text
+    except AIServiceError:
+        raise
     except ImportError:
-        yield "（请先安装 anthropic SDK: pip install anthropic）"
+        raise AIConfigError("请先安装 anthropic SDK: pip install anthropic", provider_name="Claude")
     except Exception as e:
-        yield f"\n（Claude API 流式调用失败: {e}）"
+        raise AIProviderError(f"Claude API 流式调用失败: {e}", provider_name="Claude", original_exception=e) from e
 
 
 def get_default_provider() -> str:
@@ -232,14 +240,16 @@ async def ai_chat(
         return await chat_with_claude(messages, api_key=api_key, model=model, system_prompt=system_prompt)
     elif p == "custom":
         if not base_url:
-            return "（使用自定义供应商请填写 Base URL）"
+            raise AIConfigError("使用自定义供应商请填写 Base URL", provider_name="custom")
         m = model or "gpt-4o"
         try:
             return await _chat_openai_compatible(messages, api_key=api_key, base_url=base_url, model=m, system_prompt=system_prompt)
+        except AIServiceError:
+            raise
         except Exception as e:
-            return f"（自定义 API 调用失败: {e}）"
+            raise AIProviderError(f"自定义 API 调用失败: {e}", provider_name="custom", original_exception=e) from e
     else:
-        return f"（不支持的 AI 供应商: {p}）"
+        raise AIConfigError(f"不支持的 AI 供应商: {p}", provider_name=p)
 
 
 async def ai_chat_stream(
@@ -278,16 +288,17 @@ async def ai_chat_stream(
             yield chunk
     elif p == "custom":
         if not base_url:
-            yield "（使用自定义供应商请填写 Base URL）"
-            return
+            raise AIConfigError("使用自定义供应商请填写 Base URL", provider_name="custom")
         m = model or "gpt-4o"
         try:
             async for chunk in _chat_openai_compatible_stream(messages, api_key=api_key, base_url=base_url, model=m, system_prompt=system_prompt):
                 yield chunk
+        except AIServiceError:
+            raise
         except Exception as e:
-            yield f"\n（自定义 API 流式调用失败: {e}）"
+            raise AIProviderError(f"自定义 API 流式调用失败: {e}", provider_name="custom", original_exception=e) from e
     else:
-        yield f"（不支持的 AI 供应商: {p}）"
+        raise AIConfigError(f"不支持的 AI 供应商: {p}", provider_name=p)
 
 
 def _decrypt_dict(cfg: dict) -> dict:

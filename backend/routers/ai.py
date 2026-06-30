@@ -8,6 +8,7 @@ from pydantic import BaseModel
 
 from database import query_all, query_one, execute
 from services.ai_service import ai_chat, ai_chat_stream
+from services.ai_exceptions import AIServiceError
 from services.rate_limit import limiter_ai
 from dependencies import get_current_user_id
 
@@ -56,16 +57,19 @@ async def chat(req: ChatRequest, request: Request):
     full_system = req.systemPrompt
 
     # 调用 AI
-    reply = await ai_chat(
-        req.message,
-        history,
-        function="chat",
-        provider=req.provider,
-        api_key=req.apiKey,
-        model=req.model,
-        base_url=req.baseUrl,
-        system_prompt=full_system,
-    )
+    try:
+        reply = await ai_chat(
+            req.message,
+            history,
+            function="chat",
+            provider=req.provider,
+            api_key=req.apiKey,
+            model=req.model,
+            base_url=req.baseUrl,
+            system_prompt=full_system,
+        )
+    except AIServiceError as e:
+        return {"error": str(e), "conversationId": conv_id}
 
     # 存 AI 回复
     execute(
@@ -107,6 +111,7 @@ async def chat_stream(req: ChatRequest, request: Request):
 
     async def generate():
         full_reply = ""
+        had_error = False
         try:
             async for chunk in ai_chat_stream(
                 req.message,
@@ -120,11 +125,15 @@ async def chat_stream(req: ChatRequest, request: Request):
             ):
                 full_reply += chunk
                 yield f"data: {_json.dumps({'content': chunk}, ensure_ascii=False)}\n\n"
+        except AIServiceError as e:
+            had_error = True
+            yield f"data: {_json.dumps({'error': str(e), 'provider': e.provider_name}, ensure_ascii=False)}\n\n"
         except Exception as e:
+            had_error = True
             yield f"data: {_json.dumps({'error': str(e)}, ensure_ascii=False)}\n\n"
         finally:
-            # 存完整回复
-            if full_reply:
+            # 仅在无错误时保存完整回复
+            if full_reply and not had_error:
                 execute(
                     "INSERT INTO ai_messages (conversation_id, role, content, model) VALUES (?, ?, ?, ?)",
                     (conv_id, "assistant", full_reply, req.model or None),

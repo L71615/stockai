@@ -1,20 +1,57 @@
-"""StockAI — SQLite 数据库连接"""
+"""StockAI — SQLite 数据库连接（连接池 + busy_timeout）"""
 
 import sqlite3
+import queue
 from pathlib import Path
 from config import DB_PATH
 
 # 确保数据库目录存在
 Path(DB_PATH).parent.mkdir(parents=True, exist_ok=True)
 
+# ── 连接池 ──
+_POOL_SIZE = 5
+_conn_pool: queue.Queue[sqlite3.Connection] = queue.Queue(maxsize=_POOL_SIZE)
 
-def get_db() -> sqlite3.Connection:
-    """获取数据库连接"""
-    conn = sqlite3.connect(DB_PATH)
+
+def _new_connection() -> sqlite3.Connection:
+    """创建新连接（含 PRAGMA 初始化）"""
+    conn = sqlite3.connect(DB_PATH, timeout=5, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
+    conn.execute("PRAGMA busy_timeout=5000")
     return conn
+
+
+class _PooledConnection:
+    """sqlite3.Connection 包装器 — 拦截 close() 归还连接池"""
+
+    def __init__(self, conn: sqlite3.Connection) -> None:
+        self._conn = conn
+
+    def __getattr__(self, name: str):
+        return getattr(self._conn, name)
+
+    def close(self) -> None:
+        """归还连接到池中（而非真正关闭）"""
+        try:
+            self._conn.rollback()
+            _conn_pool.put_nowait(self._conn)
+        except (queue.Full, sqlite3.ProgrammingError):
+            self._conn.close()
+
+
+def get_db() -> sqlite3.Connection:
+    """获取数据库连接（优先从连接池取，池空则新建）。
+
+    返回 _PooledConnection 包装器，调用方仍可安全调用 conn.close()
+    连接会被归还到池中而非真正关闭。
+    """
+    try:
+        raw = _conn_pool.get_nowait()
+    except queue.Empty:
+        raw = _new_connection()
+    return _PooledConnection(raw)
 
 
 def query_all(sql: str, params: tuple = ()) -> list[dict]:
@@ -266,6 +303,17 @@ def init_db():
             updated_at      TEXT DEFAULT (datetime('now','localtime')),
             UNIQUE(user_id, plan_date, plan_type)
         )""")
+        conn.execute("""CREATE TABLE IF NOT EXISTS historical_kline (
+            stock_code TEXT NOT NULL,
+            trade_date TEXT NOT NULL,
+            open       REAL,
+            high       REAL,
+            low        REAL,
+            close      REAL,
+            volume     REAL,
+            PRIMARY KEY (stock_code, trade_date)
+        )""")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_hkline_date ON historical_kline(trade_date)")
         conn.execute("""CREATE TABLE IF NOT EXISTS review_reports (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER NOT NULL DEFAULT 1,

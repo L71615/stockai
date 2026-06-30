@@ -11,38 +11,35 @@ logger = logging.getLogger("stockai")
 
 
 def _check_and_remind():
-    """检查所有活跃 DCA 计划，对即将到期的发送提醒"""
+    """检查所有活跃 DCA 计划，对即将到期的发送提醒（多用户遍历）"""
     from services.email_service import get_smtp_settings, send_dca_reminder
 
     smtp = get_smtp_settings()
     if not smtp:
         return  # SMTP 未配置，静默跳过
 
-    # 查 user_id=1 的邮箱
-    user = query_one("SELECT email FROM users WHERE id = 1")
-    if not user or not user.get("email"):
-        return
-
-    email = user["email"]
+    # 遍历所有用户
+    users = query_all("SELECT id, email FROM users WHERE email IS NOT NULL AND email != ''")
     now = datetime.now()
     cutoff = (now + timedelta(hours=24)).strftime("%Y-%m-%d")
 
-    plans = query_all(
-        """SELECT * FROM dca_plans
-           WHERE user_id = 1 AND active = 1
-             AND next_deduction IS NOT NULL
-             AND next_deduction <= ?
-             AND (last_reminded IS NULL OR last_reminded = '' OR last_reminded != next_deduction)""",
-        (cutoff,),
-    )
+    for user in users:
+        plans = query_all(
+            """SELECT * FROM dca_plans
+               WHERE user_id = ? AND active = 1
+                 AND next_deduction IS NOT NULL
+                 AND next_deduction <= ?
+                 AND (last_reminded IS NULL OR last_reminded = '' OR last_reminded != next_deduction)""",
+            (user["id"], cutoff),
+        )
 
-    for plan in plans:
-        ok = send_dca_reminder(email, plan)
-        if ok:
-            execute(
-                "UPDATE dca_plans SET last_reminded = ? WHERE id = ?",
-                (plan["next_deduction"], plan["id"]),
-            )
+        for plan in plans:
+            ok = send_dca_reminder(user["email"], plan)
+            if ok:
+                execute(
+                    "UPDATE dca_plans SET last_reminded = ? WHERE id = ?",
+                    (plan["next_deduction"], plan["id"]),
+                )
 
 
 def start_dca_reminder_thread(interval_seconds: int = 3600):
@@ -61,13 +58,11 @@ def start_dca_reminder_thread(interval_seconds: int = 3600):
 
 
 def _check_stop_losses():
-    """检查持仓止损触发，推送通知"""
+    """检查所有用户持仓止损触发，推送通知"""
     from services.notify_service import send_notification
 
-    uid = 1
     holdings = query_all(
-        "SELECT * FROM holdings WHERE user_id = ? AND quantity > 0 AND stop_loss_price IS NOT NULL",
-        (uid,),
+        "SELECT * FROM holdings WHERE quantity > 0 AND stop_loss_price IS NOT NULL",
     )
     if not holdings:
         return

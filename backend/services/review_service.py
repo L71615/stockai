@@ -354,6 +354,7 @@ async def generate_review_report(
         }
 
     # Step 5: Call AI with retry + fallback
+    from services.ai_exceptions import AIServiceError
     raw = ""
     try:
         raw = await asyncio.wait_for(
@@ -367,6 +368,10 @@ async def generate_review_report(
             ),
             timeout=60.0,
         )
+    except AIServiceError:
+        # AI 服务配置/调用错误，不重试
+        logger.warning(f"AI review 服务异常 (provider={effective_provider}), 跳过AI分析")
+        raw = ""
     except (asyncio.TimeoutError, ConnectionError, OSError):
         # Retry once on transient errors
         try:

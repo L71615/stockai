@@ -21,6 +21,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 from database import query_all, query_one, execute, execute_many
+from dependencies import get_current_user_id
 
 logger = logging.getLogger(__name__)
 
@@ -29,17 +30,11 @@ logger = logging.getLogger(__name__)
 # 盯盘检查
 # ═══════════════════════════════════════════════════════════
 
-def check_single_stock(code: str, name: str = "", user_id: int = 1) -> dict:
-    """检查单只股票的今日状态
+def check_single_stock(code: str, name: str = "", user_id: int | None = None) -> dict:
+    """检查单只股票的今日状态"""
+    if user_id is None:
+        user_id = get_current_user_id()
 
-    Returns:
-        {
-            code, name, price, change_pct,
-            alerts: [{type, severity, message}],
-            technical_signals: [str],
-            volume_anomaly: bool,
-        }
-    """
     from services.technical import fetch_kline, get_indicators as calc_indicators
     from services.utils import get_market, detect_asset_type
 
@@ -159,7 +154,7 @@ def check_single_stock(code: str, name: str = "", user_id: int = 1) -> dict:
     return result
 
 
-def check_watchlist(user_id: int = 1) -> dict:
+def check_watchlist(user_id: int | None = None) -> dict:
     """检查盯盘列表中所有股票的状态
 
     Returns:
@@ -169,6 +164,10 @@ def check_watchlist(user_id: int = 1) -> dict:
             summary: {total, alert_count, high_severity_count},
         }
     """
+
+    if user_id is None:
+        user_id = get_current_user_id()
+
     items = query_all(
         "SELECT * FROM screener_watchlist WHERE user_id = ? AND status = 'watching' ORDER BY added_at DESC",
         (user_id,),
@@ -239,7 +238,7 @@ def json_dumps_zh(alerts: list[dict]) -> str:
 # AI 盯盘简报
 # ═══════════════════════════════════════════════════════════
 
-async def generate_daily_briefing(user_id: int = 1, provider: str = "") -> str:
+async def generate_daily_briefing(user_id: int | None = None, provider: str = "") -> str:
     """AI 生成当前盯盘股票的每日简报
 
     Args:
@@ -249,6 +248,8 @@ async def generate_daily_briefing(user_id: int = 1, provider: str = "") -> str:
     Returns:
         AI 生成的简报文本（Markdown格式）
     """
+    if user_id is None:
+        user_id = get_current_user_id()
     # 先跑一遍检查
     data = check_watchlist(user_id)
     if not data["stocks"]:
@@ -280,6 +281,7 @@ async def generate_daily_briefing(user_id: int = 1, provider: str = "") -> str:
 
     try:
         from services.ai_service import ai_chat
+        from services.ai_exceptions import AIServiceError
         briefing = await ai_chat(
             prompt,
             function="watchdog",
@@ -287,6 +289,9 @@ async def generate_daily_briefing(user_id: int = 1, provider: str = "") -> str:
             system_prompt="你是专业A股分析师。你的回复简洁、专业、可操作。用中文回复。",
         )
         return briefing.strip()
+    except AIServiceError as e:
+        logger.warning(f"AI 简报生成失败 (provider={e.provider_name}): {e}")
+        return f"⚠️ AI 简报生成失败: {e}\n\n原始数据:\n{stocks_text}"
     except Exception as e:
         logger.warning(f"AI 简报生成失败: {e}")
         return f"⚠️ AI 简报生成失败: {e}\n\n原始数据:\n{stocks_text}"
@@ -296,7 +301,7 @@ async def generate_daily_briefing(user_id: int = 1, provider: str = "") -> str:
 # 盯盘列表管理
 # ═══════════════════════════════════════════════════════════
 
-def add_to_watchlist(code: str, name: str = "", user_id: int = 1,
+def add_to_watchlist(code: str, name: str = "", user_id: int | None = None,
                      reason: str = "", score: float = None,
                      backtest_strategy: str = "",
                      backtest_sharpe: float = None) -> dict:
@@ -311,6 +316,10 @@ def add_to_watchlist(code: str, name: str = "", user_id: int = 1,
         backtest_strategy: 回测通过的最佳策略
         backtest_sharpe: 回测夏普比率
     """
+
+    if user_id is None:
+        user_id = get_current_user_id()
+
     from services.utils import get_market, detect_asset_type
 
     mkt = get_market(code)
@@ -343,8 +352,10 @@ def add_to_watchlist(code: str, name: str = "", user_id: int = 1,
     return {"added": True, "code": code, "id": result["lastrowid"], "message": f"{code} {name} 已加入盯盘"}
 
 
-def remove_from_watchlist(code: str, user_id: int = 1) -> dict:
+def remove_from_watchlist(code: str, user_id: int | None = None) -> dict:
     """从盯盘列表移除（软删除，标记为 archived）"""
+    if user_id is None:
+        user_id = get_current_user_id()
     execute(
         "UPDATE screener_watchlist SET status = 'archived', updated_at = datetime('now','localtime') WHERE user_id = ? AND stock_code = ?",
         (user_id, code),
@@ -352,16 +363,20 @@ def remove_from_watchlist(code: str, user_id: int = 1) -> dict:
     return {"removed": True, "code": code}
 
 
-def get_watchlist(user_id: int = 1) -> list[dict]:
+def get_watchlist(user_id: int | None = None) -> list[dict]:
     """获取当前盯盘列表"""
+    if user_id is None:
+        user_id = get_current_user_id()
     return query_all(
         "SELECT * FROM screener_watchlist WHERE user_id = ? AND status = 'watching' ORDER BY added_at DESC",
         (user_id,),
     )
 
 
-def get_watch_history(user_id: int = 1, limit: int = 50) -> list[dict]:
+def get_watch_history(user_id: int | None = None, limit: int = 50) -> list[dict]:
     """获取盯盘历史（含已归档的）"""
+    if user_id is None:
+        user_id = get_current_user_id()
     return query_all(
         "SELECT * FROM screener_watchlist WHERE user_id = ? ORDER BY updated_at DESC LIMIT ?",
         (user_id, limit),

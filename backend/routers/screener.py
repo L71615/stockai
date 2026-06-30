@@ -13,6 +13,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel
 
 from database import query_all, query_one, execute
+from dependencies import get_current_user_id
 from services.rate_limit import limiter_ai
 
 router = APIRouter(prefix="/api/screener", tags=["Screener"])
@@ -102,8 +103,8 @@ def run_screener(body: ScreenerRequest):
         try:
             execute(
                 """INSERT INTO screener_results (user_id, total_stocks, scanned, candidates_json, factor_weights_json, market_state)
-                   VALUES (1, ?, ?, ?, ?, ?)""",
-                (result.get("total_stocks", 0), result.get("scanned", 0),
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (get_current_user_id(), result.get("total_stocks", 0), result.get("scanned", 0),
                  json.dumps(result.get("candidates", []), ensure_ascii=False),
                  json.dumps(result.get("factor_weights", {}), ensure_ascii=False),
                  result.get("market_state", "")),
@@ -184,6 +185,7 @@ def get_candidates(sort_by: str = "score", limit: int = 20):
 async def ai_screen(body: AIScreenRequest):
     """让 AI 从候选池中二次筛选，给出推荐理由"""
     from services.ai_service import ai_chat
+    from services.ai_exceptions import AIServiceError
 
     if body.candidates_json:
         candidates = json.loads(body.candidates_json)
@@ -255,6 +257,8 @@ async def ai_screen(body: AIScreenRequest):
             "total_candidates": len(candidates),
         }
 
+    except AIServiceError as e:
+        raise HTTPException(503, f"AI筛选失败: {e}")
     except Exception as e:
         raise HTTPException(500, f"AI筛选失败: {e}")
 
@@ -292,8 +296,8 @@ def backtest_single(body: BacktestSingleRequest):
         execute(
             """INSERT INTO backtest_results (user_id, stock_code, strategy, total_return, annual_return, sharpe,
                max_drawdown, win_rate, profit_factor, num_trades, initial_cash, final_value, params_json)
-               VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (body.code, body.strategy,
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (get_current_user_id(), body.code, body.strategy,
              result.get("total_return"), result.get("annual_return"), result.get("sharpe"),
              result.get("max_drawdown"), result.get("win_rate"), result.get("profit_factor"),
              result.get("num_trades"), result.get("initial_cash"), result.get("final_value"),
@@ -317,12 +321,12 @@ def backtest_history(code: str = "", limit: int = 50):
     """查询历史回测记录"""
     if code:
         return query_all(
-            "SELECT * FROM backtest_results WHERE user_id = 1 AND stock_code = ? ORDER BY id DESC LIMIT ?",
-            (code, limit),
+            "SELECT * FROM backtest_results WHERE user_id = ? AND stock_code = ? ORDER BY id DESC LIMIT ?",
+            (get_current_user_id(), code, limit),
         )
     return query_all(
-        "SELECT * FROM backtest_results WHERE user_id = 1 ORDER BY id DESC LIMIT ?",
-        (limit,),
+        "SELECT * FROM backtest_results WHERE user_id = ? ORDER BY id DESC LIMIT ?",
+        (get_current_user_id(), limit),
     )
 
 
@@ -385,12 +389,12 @@ def get_alerts(limit: int = 30, severity: str = ""):
     """获取历史预警记录"""
     if severity:
         return query_all(
-            "SELECT * FROM screener_alerts WHERE user_id = 1 AND severity = ? ORDER BY id DESC LIMIT ?",
-            (severity, limit),
+            "SELECT * FROM screener_alerts WHERE user_id = ? AND severity = ? ORDER BY id DESC LIMIT ?",
+            (get_current_user_id(), severity, limit),
         )
     return query_all(
-        "SELECT * FROM screener_alerts WHERE user_id = 1 ORDER BY id DESC LIMIT ?",
-        (limit,),
+        "SELECT * FROM screener_alerts WHERE user_id = ? ORDER BY id DESC LIMIT ?",
+        (get_current_user_id(), limit),
     )
 
 
@@ -1362,7 +1366,8 @@ class SaveScreenRequest(BaseModel):
 def list_screens():
     """列出用户保存的条件选股策略"""
     rows = query_all(
-        "SELECT id, name, description, sort_by, sort_order, created_at, updated_at FROM condition_screens WHERE user_id = 1 ORDER BY updated_at DESC"
+        "SELECT id, name, description, sort_by, sort_order, created_at, updated_at FROM condition_screens WHERE user_id = ? ORDER BY updated_at DESC",
+        (get_current_user_id(),),
     )
     return [dict(r) for r in rows]
 
@@ -1372,8 +1377,8 @@ def save_screen(body: SaveScreenRequest):
     """保存新的条件选股策略"""
     import json as _json
     result = execute(
-        "INSERT INTO condition_screens (user_id, name, description, conditions_json, sort_by, sort_order) VALUES (1, ?, ?, ?, ?, ?)",
-        (body.name, body.description, _json.dumps(body.conditions, ensure_ascii=False), body.sort_by, body.sort_order),
+        "INSERT INTO condition_screens (user_id, name, description, conditions_json, sort_by, sort_order) VALUES (?, ?, ?, ?, ?, ?)",
+        (get_current_user_id(), body.name, body.description, _json.dumps(body.conditions, ensure_ascii=False), body.sort_by, body.sort_order),
     )
     return {"id": result["lastrowid"], "message": "保存成功"}
 
@@ -1382,7 +1387,7 @@ def save_screen(body: SaveScreenRequest):
 def update_screen(screen_id: int, body: SaveScreenRequest):
     """更新保存的策略"""
     import json as _json
-    row = query_one("SELECT id FROM condition_screens WHERE id = ? AND user_id = 1", (screen_id,))
+    row = query_one("SELECT id FROM condition_screens WHERE id = ? AND user_id = ?", (screen_id, get_current_user_id()))
     if not row:
         raise HTTPException(404, "策略不存在")
     execute(
@@ -1395,5 +1400,5 @@ def update_screen(screen_id: int, body: SaveScreenRequest):
 @router.delete("/screens/{screen_id}")
 def delete_screen(screen_id: int):
     """删除保存的策略"""
-    execute("DELETE FROM condition_screens WHERE id = ? AND user_id = 1", (screen_id,))
+    execute("DELETE FROM condition_screens WHERE id = ? AND user_id = ?", (screen_id, get_current_user_id()))
     return {"message": "已删除"}

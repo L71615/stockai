@@ -1,26 +1,18 @@
 """FastAPI 依赖注入 — 用户身份 / 配置等
 
-当前为单用户模式（user_id 固定为 CURRENT_USER_ID），后续接入多用户时改为从 JWT 解析。
+通过 ContextVar 在线程/coroutine 间传递当前用户 ID。
+Auth 中间件负责解析 JWT 并设置 user_id，业务代码直接调用 get_current_user_id() 即可。
 """
 
-# ═══════════════════════════════════════════════════════════
-# ⚠️ 重要：默认用户 ID 配置
-# ═══════════════════════════════════════════════════════════
-# 系统默认为 admin 用户（user_id = 1）。
-# ensure_admin_user() 在全新部署时使用显式 id=1 创建管理员。
-# 如需修改为其他用户，请先在数据库中确认目标用户的 id 值，
-# 然后将下方的 CURRENT_USER_ID 改为对应数字。
-#
-# 查询用户 ID：sqlite3 "D:\stocks\database\stockai.db" "SELECT id, username FROM users;"
-# ═══════════════════════════════════════════════════════════
+from contextvars import ContextVar
 
-CURRENT_USER_ID = 1
+_current_user_id: ContextVar[int] = ContextVar("current_user_id", default=1)
 
 
 def get_current_user_id() -> int:
-    """获取当前登录用户 ID
+    """获取当前登录用户 ID（从中间件设置的 ContextVar 读取）。
 
-    单用户模式：直接返回 CURRENT_USER_ID。
-    后续接入多用户时，从 Request.headers 解析 JWT token 并返回真实用户 ID。
+    中间件从 JWT token 解析 user_id 并存入当前 context，
+    业务代码无需传参即可获取真实用户 ID。
     """
-    return CURRENT_USER_ID
+    return _current_user_id.get()

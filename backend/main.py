@@ -1,7 +1,9 @@
 """StockAI — FastAPI 主入口"""
 
+import logging
 import os
 import sys
+import traceback
 from pathlib import Path
 
 # 确保 backend 目录在 sys.path 中
@@ -12,7 +14,7 @@ from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 from config import PORT, ENV, VERSION
-from routers import auth, stocks, ai, dca, discipline, settings as settings_router, quant, holdings, transactions, screener
+from routers import auth, stocks, ai, dca, discipline, prediction, settings as settings_router, quant, holdings, transactions, screener
 
 app = FastAPI(title="StockAI", version=VERSION, docs_url="/api/docs")
 
@@ -46,6 +48,31 @@ async def rate_limit_handler(request: Request, exc: RateLimitExceeded):
         status_code=429,
     )
 
+
+logger = logging.getLogger("stockai")
+
+from services.ai_exceptions import AIServiceError
+
+@app.exception_handler(AIServiceError)
+async def ai_service_error_handler(request: Request, exc: AIServiceError):
+    """AI 服务异常 — 统一返回 503，前端可据此提示用户"""
+    logger.warning(f"AI服务异常 [{request.method} {request.url.path}]: {exc} (provider={exc.provider_name}, function={exc.function_key})")
+    return JSONResponse(
+        {"error": str(exc), "provider": exc.provider_name, "function": exc.function_key},
+        status_code=503,
+    )
+
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    """全局异常处理器 — 捕获所有未处理的异常，记录完整 traceback，返回 JSON 错误"""
+    tb = traceback.format_exc()
+    logger.error(f"未处理异常 [{request.method} {request.url.path}]: {exc}\n{tb}")
+    return JSONResponse(
+        {"error": f"服务器内部错误：{exc}"},
+        status_code=500,
+    )
+
 # API 路由
 app.include_router(auth.router, prefix="/api/auth", tags=["Auth"])
 app.include_router(stocks.router, prefix="/api/stocks", tags=["Stocks"])
@@ -57,6 +84,7 @@ app.include_router(settings_router.router, tags=["Settings"])
 app.include_router(quant.router)
 app.include_router(screener.router)
 app.include_router(discipline.router)
+app.include_router(prediction.router)
 
 # 健康检查
 @app.get("/api/health")
@@ -92,6 +120,7 @@ def startup():
 # ── 认证中间件：保护所有 /api/ 路由（登录接口除外）──
 import jwt as pyjwt
 from config import JWT_SECRET
+from dependencies import _current_user_id
 
 # 不需要认证的接口
 PUBLIC_APIS = {"/api/auth/login", "/api/auth/register", "/api/health", "/api/version", "/api/docs", "/api/openapi.json"}
@@ -104,17 +133,19 @@ async def auth_middleware(request: Request, call_next):
     if not path.startswith("/api/"):
         return await call_next(request)
 
-    # 公开接口放行
+    # 公开接口放行（user_id 保持默认值 1）
     if path in PUBLIC_APIS or path.startswith("/api/docs") or path.startswith("/api/openapi"):
         return await call_next(request)
 
-    # 验证 JWT
+    # 验证 JWT 并提取 user_id
     token = request.headers.get("Authorization", "").removeprefix("Bearer ").strip()
     if not token:
         return JSONResponse({"error": "未登录，请先登录"}, status_code=401)
 
     try:
-        pyjwt.decode(token, JWT_SECRET, algorithms=["HS256"])
+        payload = pyjwt.decode(token, JWT_SECRET, algorithms=["HS256"])
+        user_id = int(payload["sub"])
+        _current_user_id.set(user_id)
     except pyjwt.ExpiredSignatureError:
         return JSONResponse({"error": "登录已过期，请重新登录"}, status_code=401)
     except pyjwt.InvalidTokenError:

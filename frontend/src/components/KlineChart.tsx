@@ -7,6 +7,7 @@ import {
   HistogramSeries,
   LineSeries,
   LineStyle,
+  CrosshairMode,
   type IChartApi,
   type ISeriesApi,
   type CandlestickData,
@@ -390,7 +391,7 @@ function loadStoredIndicators(): IndicatorPane[] | null {
     const raw = localStorage.getItem(INDICATOR_STORAGE_KEY)
     if (raw) {
       const parsed = JSON.parse(raw)
-      if (Array.isArray(parsed) && parsed.every((v: any) => typeof v === "string")) return parsed as IndicatorPane[]
+      if (Array.isArray(parsed) && parsed.every((v: unknown) => typeof v === "string")) return parsed as IndicatorPane[]
     }
   } catch { /* corrupted */ }
   return null
@@ -484,7 +485,11 @@ export function KlineChart({ rawData, height = 500, indicators: controlledIndica
       height,
       layout: { background: { color: "transparent" }, textColor: "#888" },
       grid: { vertLines: { color: "#222" }, horzLines: { color: "#222" } },
-      crosshair: { mode: 1 },
+      crosshair: {
+        mode: CrosshairMode.Normal,
+        vertLine: { color: "#555", width: 1, style: LineStyle.Dashed, labelVisible: true, labelBackgroundColor: "#1a1a2e" },
+        horzLine: { color: "#555", width: 1, style: LineStyle.Dashed, labelVisible: true, labelBackgroundColor: "#1a1a2e" },
+      },
       rightPriceScale: { borderColor: "#333" },
       timeScale: { borderColor: "#333", timeVisible: true,
         tickMarkFormatter: (t: Time) => {
@@ -522,7 +527,19 @@ export function KlineChart({ rawData, height = 500, indicators: controlledIndica
 
     // ── Volume pane ──
     if (showVolume) {
-      const vol = chart.addSeries(HistogramSeries, { priceFormat: { type: "volume" }, priceScaleId: "volume" })
+      const vol = chart.addSeries(HistogramSeries, {
+        priceFormat: {
+          type: "custom",
+          formatter: (price: number) => {
+            if (price >= 1e8) return `${(price / 1e8).toFixed(2)}亿`
+            if (price >= 1e4) return `${(price / 1e4).toFixed(0)}万`
+            return String(Math.round(price))
+          },
+          minMove: 1,
+        },
+        priceScaleId: "volume",
+        lastValueVisible: true,
+      })
       series.push(vol)
     }
 

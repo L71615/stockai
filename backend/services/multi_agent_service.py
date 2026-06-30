@@ -202,6 +202,7 @@ async def _run_single_agent(
 
     try:
         from services.ai_service import ai_chat
+        from services.ai_exceptions import AIServiceError
 
         prompt = _build_agent_prompt(agent_key, candidates)
 
@@ -286,6 +287,14 @@ async def _run_single_agent(
             "picks": [],
             "summary": "",
             "top_themes": [],
+        }
+    except AIServiceError as e:
+        logger.warning(f"Agent {agent_key} AI服务异常: {e} (provider={e.provider_name})")
+        return {
+            "agent_key": agent_key,
+            "agent_name": role["name"],
+            "error": f"AI服务异常: {e}",
+            "picks": [],
         }
     except Exception as e:
         logger.warning(f"Agent {agent_key} 执行失败: {e}")
