@@ -122,6 +122,7 @@
 - [x] Baostock 全局锁串行化 ✅ 已改为查询级细粒度锁 (`baostock_adapter.py`)
 - [x] K 线 crosshair label 数字未显示 ✅ K06 已修复 — crosshair labelVisible
 - [ ] 分钟级 K 线数据源未接入 (东财 klt=1/5/15/30/60) — K11
+- [ ] **条件选股/AI选股筛选功能不可用** (2026-07-01 发现) — 待排查：数据源超时/并发锁/前端请求失败
 
 ---
 
