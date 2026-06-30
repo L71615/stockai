@@ -82,6 +82,18 @@
 
 ### 第七优先级 — 架构参考
 - [x] **F13**: 回测架构参考 (moonshot + vnpy + nautilus) ✅ `monthly_backtest.py` + `/api/quant/monthly-backtest`
+- [ ] **F14**: TradingAgents 多智能体融合 — 多空辩论/结构化决策/厂商扩展 (`memory/stockai-tradingagents-plan.md`)
+
+**TradingAgents 融合点（TauricResearch/TradingAgents + TradingAgents-CN）：**
+
+| 融合项 | 说明 | 优先级 |
+|--------|------|--------|
+| **多空辩论机制** | 多头/空头研究员结构化辩论 → 增强 `multi_agent_service.py` | 🔴 高 |
+| **结构化决策输出** | Buy/Overweight/Hold/Underweight/Sell 五级 + Pydantic schema | 🔴 高 |
+| **LLM 厂商扩展** | 参考其 15+ 厂商支持 → 扩展 AI 映射表 | 🟡 中 |
+| **LangGraph 持久化** | 断点续跑 → 适合 AI 选股长链路 | 🟡 中 |
+| **A股数据源对齐** | TradingAgents-CN 的 Tushare/AKShare/Baostock 经验 | 🟢 低 |
+| **Docker 一键部署** | 多架构 Docker 支持（参考其方案） | 🟢 低 |
 
 ---
 
@@ -137,6 +149,11 @@
 - [x] **Q04**: AI 量化解读 ✅ `/api/quant/stock/{code}/explain` + `/api/quant/factor-explain`
 - [x] **Q05**: 条件选股 ✅ `screener.py` 多因子扫描 + AI二次筛选 + 盯盘管理
 - [ ] **Q06**: 回测参数优化器 (1d)
+
+### 策略模板（新增）
+- [ ] **S01**: 热门板块龙头回调策略 — 14:00选涨停最多板块→找下跌龙头→PE<60→2日分歧回调 (`memory/trading-strategy-hot-sector-pullback.md`)
+  - 依赖：板块涨停统计 / 龙头标记 / 分歧回调形态识别
+  - 实现：条件选股 YAML 策略 + 新算子扩展
 
 ### 已识别 Bug
 - [x] AI 异常被吞 → 字符串污染 ✅ P05 已修复 — `AIServiceError` 层次替代 `"（...）"` 字符串约定
