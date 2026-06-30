@@ -1,6 +1,6 @@
-# StockAI v3.5 — AI 量化选股 + 投资决策平台
+# StockAI v3.6 — AI 量化选股 + 投资决策平台
 
-> 55 因子多因子选股 · 海龟交易法 · 因子全景面板 · 条件选股四层过滤 · TradingView K 线
+> 55 因子多因子选股 · 海龟交易法 · 因子全景面板 · 条件选股四层过滤 · TradingView K 线 · P1 工程 100%
 >
 > A 股投资者的量化工具箱。数据驱动，AI 增强。
 
@@ -120,6 +120,7 @@ NOTIFY_ENABLED=true
 
 ## 版本历史
 
+- **v3.6** (2026-07-01): P1 工程质量 100% — 认证解耦(ContextVar JWT, 24处硬编码清零) + AI 异常体系(5级层次) + K线 crosshair 标签 + 成交量格式化 + 连接池(busy_timeout) + data-table 拆分(730→4文件) + 全局异常处理 + TypeScript 零 :any
 - **v3.5** (2026-06-26): 条件选股四层过滤(L1-L4) + 因子清理(57→55, 删社交死因子, 修5阈值) + K线三合一修复(对齐+讲解栏+默认精简) + L3两阶段重构(AKShare快筛→Baostock精筛) + Baostock超时保护 + 废弃页面清理(duel/kol/review/skills)
 - **v3.5** (2026-06-23): AI 设置页重构(功能→供应商映射表+连通测试), Quant 页交互优化(统一查询按钮+因子AI解读), 根治 Turbopack disposed 错误(proxy→middleware+predev), 12 调用点按功能分发 AI 供应商
 - **v3.4** (2026-06-22): 因子体系 29→57 全面实现, 价格/成交量/BOLL/ACCELERATION/波动率/基本面因子实装, 量化页改版(海龟集成+因子面板), AKShare 兼容性修复, ATR 归一化
