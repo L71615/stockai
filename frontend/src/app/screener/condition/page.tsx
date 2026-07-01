@@ -36,7 +36,7 @@ interface StrategyTemplate {
 interface StrategyDetail {
   id: string; name: string; description: string
   market_state: string[]; recommended_position: string
-  conditions: { field: string; operator: string; value?: unknown; compare_field?: string }[]
+  conditions: { logic: string; conditions: { field: string; operator: string; value?: unknown; compare_field?: string }[] }
   sort_by: string; sort_order: string
 }
 
@@ -160,7 +160,8 @@ export default function ConditionPage() {
       const data = await apiGet<{ found: boolean; strategy?: StrategyDetail }>(`/api/screener/strategies/${id}`)
       if (data?.found && data.strategy) {
         const s = data.strategy
-        setConditions(s.conditions.map((c) => ({
+        const condList = Array.isArray(s.conditions) ? s.conditions : (s.conditions as { logic: string; conditions: { field: string; operator: string; value?: unknown; compare_field?: string }[] }).conditions || []
+        setConditions(condList.map((c) => ({
           id: newCondId(),
           field: c.field,
           operator: c.operator,
