@@ -7,6 +7,7 @@
 - Task 5: technical.fetch_kline 优先走 Futu 日线
 - Task 6: stocks._fetch_quote_sync 优先走 Futu quote，并保持 API 响应结构
 - Task 7: stocks.get_kline_data 在 period=1m 时优先走 Futu 分钟线
+- Task 8: sync_futu_data.py 能按参数路由到对应同步函数
 """
 
 import sys
@@ -295,3 +296,46 @@ def test_kline_api_returns_existing_shape_for_1m(client, monkeypatch):
     assert resp.status_code == 200
     body = resp.json()
     assert {"code", "period", "dates", "opens", "highs", "lows", "closes", "volumes", "ma5", "ma10", "ma20"}.issubset(body.keys())
+
+
+def test_sync_futu_script_routes_daily(monkeypatch, capsys):
+    from scripts.sync_futu_data import main as sync_futu_main
+
+    called = {}
+
+    monkeypatch.setattr(
+        "scripts.sync_futu_data.sync_daily_kline",
+        lambda code, count=200: called.setdefault("daily", code) or {"code": code, "source": "futu"},
+    )
+    monkeypatch.setattr("sys.argv", ["sync_futu_data.py", "--code", "600519", "--type", "daily"])
+
+    sync_futu_main()
+
+    assert called["daily"] == "600519"
+
+
+def test_quote_path_degrades_when_futu_unavailable(monkeypatch):
+    monkeypatch.setattr(
+        "routers.stocks.get_quote_with_fallback",
+        lambda code, fallback, client=None: fallback(),
+    )
+
+    result = stocks._fetch_quote_sync("600519")
+
+    assert "code" in result
+
+
+def test_sync_futu_script_prints_json(monkeypatch, capsys):
+    from scripts.sync_futu_data import main as sync_futu_main
+
+    monkeypatch.setattr(
+        "scripts.sync_futu_data.sync_quote",
+        lambda code: {"code": code, "source": "futu"},
+    )
+    monkeypatch.setattr("sys.argv", ["sync_futu_data.py", "--code", "600519", "--type", "quote"])
+
+    sync_futu_main()
+    out = capsys.readouterr().out
+
+    assert '"source": "futu"' in out
+    assert '"code": "600519"' in out
