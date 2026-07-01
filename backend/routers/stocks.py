@@ -14,7 +14,7 @@ from services.ai_service import ai_chat
 from services.ai_exceptions import AIServiceError
 from services.technical import get_indicators as calc_indicators
 from services.utils import run_curl, get_market, detect_asset_type, get_fund_nav
-from services.futu_ingest_service import get_quote_with_fallback
+from services.futu_ingest_service import get_quote_with_fallback, get_minute_kline_with_fallback
 
 router = APIRouter()
 
@@ -1126,7 +1126,18 @@ def get_kline_data(code: str, period: str = "1m"):
 
     days = PERIOD_DAYS[period]
     mkt = get_market(code)
-    kline = fetch_kline(code, mkt, days=max(days + 60, 120))  # 多取一些供 MA 计算
+
+    def _legacy_daily_kline_for_chart() -> dict:
+        return fetch_kline(code, mkt, days=max(days + 60, 120))
+
+    if period == "1m":
+        kline = get_minute_kline_with_fallback(
+            code,
+            count=max(days + 10, 60),
+            fallback=_legacy_daily_kline_for_chart,
+        )
+    else:
+        kline = _legacy_daily_kline_for_chart()
 
     if "error" in kline:
         raise HTTPException(500, kline["error"])

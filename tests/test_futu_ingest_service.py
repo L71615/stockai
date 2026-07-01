@@ -6,6 +6,7 @@
 - Task 4: fallback 包装函数
 - Task 5: technical.fetch_kline 优先走 Futu 日线
 - Task 6: stocks._fetch_quote_sync 优先走 Futu quote，并保持 API 响应结构
+- Task 7: stocks.get_kline_data 在 period=1m 时优先走 Futu 分钟线
 """
 
 import sys
@@ -250,3 +251,47 @@ def test_quote_api_shape_still_matches_existing_fields(client, monkeypatch):
     assert resp.status_code == 200
     body = resp.json()
     assert {"code", "name", "price", "change", "change_pct", "volume", "high", "low"}.issubset(body.keys())
+
+
+def test_get_kline_data_uses_futu_minute_for_period_1m(monkeypatch):
+    monkeypatch.setattr(
+        "routers.stocks.get_minute_kline_with_fallback",
+        lambda code, count, fallback, client=None: {
+            "code": code,
+            "dates": ["2026-07-01", "2026-07-02"],
+            "opens": [10.0, 10.1],
+            "highs": [10.5, 10.6],
+            "lows": [9.8, 10.0],
+            "closes": [10.2, 10.4],
+            "volumes": [1000, 1200],
+            "source": "futu",
+        },
+    )
+
+    result = stocks.get_kline_data("600519", period="1m")
+
+    assert result["code"] == "600519"
+    assert result["closes"] == [10.2, 10.4]
+    assert result["ma5"][-1] is None or isinstance(result["ma5"][-1], float)
+
+
+def test_kline_api_returns_existing_shape_for_1m(client, monkeypatch):
+    monkeypatch.setattr(
+        "routers.stocks.get_minute_kline_with_fallback",
+        lambda code, count, fallback, client=None: {
+            "code": code,
+            "dates": ["2026-07-01", "2026-07-02"],
+            "opens": [10.0, 10.1],
+            "highs": [10.5, 10.6],
+            "lows": [9.8, 10.0],
+            "closes": [10.2, 10.4],
+            "volumes": [1000, 1200],
+            "source": "futu",
+        },
+    )
+
+    resp = client.get("/api/stocks/kline/600519?period=1m")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert {"code", "period", "dates", "opens", "highs", "lows", "closes", "volumes", "ma5", "ma10", "ma20"}.issubset(body.keys())
