@@ -16,6 +16,8 @@
 | 🔔 **通知推送** | 企业微信 / Telegram / 邮件，盯盘异动自动推送 |
 | 💼 **持仓管理** | 实时盈亏 + 分散度饼图 + 行业自动分类（20+ 板块） |
 | 📉 **K 线图表** | TradingView lightweight-charts 蜡烛图，MA/BOLL/MACD/RSI/KDJ 五指标 + 海龟通道线 + 指标讲解栏 |
+| 📡 **Futu 行情接入** | A 股 `quote / minute / daily` 已接入 Futu OpenD + futu-api，现有报价、日线和 1m 图表优先走 Futu |
+| 🔄 **Futu 同步系统 (P1)** | `watchlist + holdings` 批量目标，支持 `intraday`(quote+minute) / `nightly`(daily) 同步，落库 `futu_sync_runs` / `futu_sync_run_items` 并支持严重失败告警 |
 
 ## 因子体系（55 个）
 
@@ -40,38 +42,57 @@
 
 ## 数据源
 
-```
-实时行情:  A股(腾讯) + 港股(新浪) + 基金(天天基金)
-历史K线:   Baostock(15年前复权) → 腾讯 → 东方财富
+```text
+实时行情:  A股(Futu 优先 → 腾讯/东财 fallback) + 港股(新浪) + 基金(天天基金)
+历史K线:   A股(Futu 日线优先 → 新浪/腾讯/东方财富/Baostock fallback)
+图表1m:    A股 1m 优先走 Futu
 全球指数:  腾讯(7) + 新浪(4) = 11/15 覆盖
 基本面:    AKShare(同花顺 stock_financial_abstract_ths) + Baostock 兜底(PE/PB/ROE/EPS/市值/行业/分红)
 资金流向:  AKShare(北向资金 stock_hsgt_individual_em + 机构持仓 stock_institute_hold_detail)
 AI:        MiniMax / DeepSeek / Claude / OpenAI / 小米(7功能×5供应商独立配置)
 图表:      lightweight-charts v5.2 (TradingView 开源)
+同步层:    futu_raw_quote / futu_raw_kline + daily 同步 historical_kline
 ```
 
 ## 项目结构
 
-```
+```text
 stocks/
 ├── frontend/                    # Next.js 16 + React 19 + shadcn/ui + Tailwind CSS 4
 │   └── src/app/                 # 8 个页面
 ├── backend/                     # Python FastAPI
-│   ├── routers/                 # API 路由 (10 个)
-│   ├── services/                # 业务服务 (20 个)
+│   ├── routers/                 # API 路由 (11 个)
+│   ├── services/                # 业务服务 (30+ 个，含 futu_client / futu_ingest_service / futu_sync_service)
 │   └── strategies/              # 条件选股策略 YAML (9 个)
-├── database/                    # SQLite (WAL 模式, 20+ 表)
-├── tests/                       # pytest (132 测试)
-└── scripts/                     # 工具脚本
+├── database/                    # SQLite (WAL 模式, 20+ 表，含 futu_raw_* 与 futu_sync_* 状态表)
+├── tests/                       # pytest（Futu client / ingest / sync / quant 等回归）
+└── scripts/                     # 工具脚本（导入、同步等）
 ```
 
 ## 快速启动
+
+### 推荐：控制面板启动
+
+```bat
+D:\stocks\start.bat
+```
+
+作用：
+- 启动后端 API（3000）
+- 启动前端 Next.js（3001）
+- 后端 startup 会自动接入：
+  - DCA 提醒线程
+  - 止损检查线程
+  - Futu `intraday` 同步线程
+  - Futu `nightly` 同步线程
+
+### 手动启动
 
 ```bash
 # 后端 (端口 3000)
 cd backend
 pip install -r requirements.txt
-uvicorn main:app --host 0.0.0.0 --port 3000 --reload
+python -m uvicorn main:app --host 0.0.0.0 --port 3000 --reload --env-file .env
 
 # 前端 (端口 3001)
 cd frontend
@@ -79,6 +100,19 @@ npm install
 npm run dev
 
 # 浏览器打开 http://localhost:3001
+```
+
+### Futu 单股 / 批量同步脚本
+
+```bash
+# 单股
+python backend/scripts/sync_futu_data.py --code 600519 --type quote
+python backend/scripts/sync_futu_data.py --code 600519 --type minute --count 60
+python backend/scripts/sync_futu_data.py --code 600519 --type daily --count 30
+
+# 批量
+python backend/scripts/sync_futu_data.py --mode intraday --scope watchlist+holdings
+python backend/scripts/sync_futu_data.py --mode nightly --scope watchlist+holdings
 ```
 
 ## 页面路由
@@ -111,6 +145,10 @@ DEEPSEEK_API_KEY=sk-xxx
 MINIMAX_API_KEY=xxx
 CLAUDE_API_KEY=sk-ant-xxx
 
+# Futu (本地 OpenD)
+# 先安装并启动 Futu OpenD，默认本机 127.0.0.1:11111
+# Python 依赖已包含 futu-api==10.8.6808
+
 # 通知 (可选)
 WECHAT_WEBHOOK_URL=https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=xxx
 TELEGRAM_BOT_TOKEN=xxx
@@ -120,6 +158,7 @@ NOTIFY_ENABLED=true
 
 ## 版本历史
 
+- **v3.6** (2026-07-01): Futu Phase A + P1 — A 股 `quote / minute / daily` 接入 Futu OpenD，新增 `futu_raw_quote` / `futu_raw_kline`，日线同步 `historical_kline`，现有报价 / 日线 / 1m 图表优先走 Futu；新增 `futu_sync_service`、`futu_sync_runs` / `futu_sync_run_items`、`intraday` / `nightly` 批量同步、告警逻辑与调度触发
 - **v3.6** (2026-07-01): P1 工程质量 100% — 认证解耦(ContextVar JWT, 24处硬编码清零) + AI 异常体系(5级层次) + K线 crosshair 标签 + 成交量格式化 + 连接池(busy_timeout) + data-table 拆分(730→4文件) + 全局异常处理 + TypeScript 零 :any
 - **v3.5** (2026-06-26): 条件选股四层过滤(L1-L4) + 因子清理(57→55, 删社交死因子, 修5阈值) + K线三合一修复(对齐+讲解栏+默认精简) + L3两阶段重构(AKShare快筛→Baostock精筛) + Baostock超时保护 + 废弃页面清理(duel/kol/review/skills)
 - **v3.5** (2026-06-23): AI 设置页重构(功能→供应商映射表+连通测试), Quant 页交互优化(统一查询按钮+因子AI解读), 根治 Turbopack disposed 错误(proxy→middleware+predev), 12 调用点按功能分发 AI 供应商
