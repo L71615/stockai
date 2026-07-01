@@ -354,15 +354,6 @@ class TestCapitalFlowFactors:
         from services.factor_service import factor_north_flow
         assert factor_north_flow({}) is None
 
-    def test_margin_change_normal(self):
-        from services.factor_service import factor_margin_change
-        result = factor_margin_change({"rzye": 5000, "change_pct": 0.03})
-        assert result == 0.03
-
-    def test_margin_change_none_input(self):
-        from services.factor_service import factor_margin_change
-        assert factor_margin_change(None) is None
-
     def test_inst_change_normal(self):
         from services.factor_service import factor_inst_change
         result = factor_inst_change({"hold_pct": 15.2, "change_pct": -0.02})

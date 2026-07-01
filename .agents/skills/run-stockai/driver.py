@@ -7,16 +7,38 @@ BACKEND = ROOT / "backend"
 PORT = 8765  # 用非常规端口避免冲突
 BASE = f"http://localhost:{PORT}"
 
+_token = None
+
 def fail(msg):
     print(f"FAIL {msg}"); sys.exit(1)
 
 def ok(msg):
     print(f"OK   {msg}")
 
-def api(path):
-    """GET JSON from API"""
+def login():
+    """登录获取 JWT token"""
+    global _token
+    data = json.dumps({"email": os.environ.get("ADMIN_EMAIL", "admin@stockai.com"),
+                       "password": os.environ.get("ADMIN_PASSWORD", "")}).encode()
     try:
-        with urllib.request.urlopen(f"{BASE}{path}", timeout=15) as resp:
+        req = urllib.request.Request(f"{BASE}/api/auth/login", data=data,
+                                     headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            result = json.loads(resp.read().decode())
+            _token = result.get("token", "")
+            if not _token:
+                fail("登录失败：未获取到 token")
+    except Exception as e:
+        fail(f"登录失败: {e}")
+
+def api(path):
+    """GET JSON from API（带 JWT 认证）"""
+    try:
+        headers = {}
+        if _token:
+            headers["Authorization"] = f"Bearer {_token}"
+        req = urllib.request.Request(f"{BASE}{path}", headers=headers)
+        with urllib.request.urlopen(req, timeout=15) as resp:
             return json.loads(resp.read().decode())
     except Exception as e:
         fail(f"API {path}: {e}")
@@ -58,6 +80,10 @@ print("=== 核心 API 验证 ===")
 h = api("/api/health")
 assert h["status"] == "ok", f"health: {h}"
 ok("GET /api/health")
+
+# 登录获取 token
+login()
+ok("POST /api/auth/login (JWT obtained)")
 
 # 全球指数
 indices = api("/api/stocks/indices/global")
