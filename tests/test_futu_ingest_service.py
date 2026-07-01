@@ -169,13 +169,27 @@ def test_get_quote_with_fallback_returns_old_source_when_futu_fails(db):
     assert result["price"] == 1000.0
 
 
-def test_get_daily_kline_with_fallback_returns_old_source_when_futu_fails(db):
-    result = get_daily_kline_with_fallback(
-        "600519",
-        count=2,
-        fallback=lambda: {"code": "600519", "dates": ["2026-07-01"], "closes": [1000.0], "source": "legacy"},
-        client=_FailingClient(),
+
+
+from services import technical
+
+
+def test_fetch_kline_uses_futu_daily_first_for_a_share(monkeypatch):
+    monkeypatch.setattr(
+        "services.futu_ingest_service.get_daily_kline_with_fallback",
+        lambda code, count, fallback, client=None: {
+            "code": code,
+            "dates": ["2026-07-01"],
+            "opens": [10.0],
+            "highs": [11.0],
+            "lows": [9.0],
+            "closes": [10.5],
+            "volumes": [1000],
+            "source": "futu",
+        },
     )
 
-    assert result["source"] == "legacy"
-    assert result["closes"] == [1000.0]
+    result = technical.fetch_kline("600519", days=1)
+
+    assert result["source"] == "futu"
+    assert result["closes"] == [10.5]

@@ -8,6 +8,7 @@ from typing import Any
 logger = logging.getLogger("stockai")
 
 from services.utils import run_curl, get_market
+from services import futu_ingest_service
 
 # ── K线数据源健康状态 ──
 # 快速源（腾讯/东方财富）连续失败计数，超过阈值后直接使用 Baostock 兜底
@@ -16,38 +17,8 @@ _FAST_SOURCE_SKIP_AFTER = 3
 _FAST_SOURCE_CHECKED = False
 
 
-def fetch_kline(code: str, market: str = None, days: int = 120) -> dict[str, Any]:
-    """获取日K线数据（多市场适配：A股/港股/美股，多源兜底）
-
-    A股: akshare(腾讯) → 东方财富 → Baostock
-    港股: akshare(ak.stock_hk_hist) → 新浪
-    美股: akshare(ak.stock_us_hist)
-    """
-    from services.utils import is_hk_stock, is_us_stock
-
-    # ── 港股 K 线 ──
-    if is_hk_stock(code):
-        try:
-            from services.akshare_adapter import get_hk_kline
-            result = get_hk_kline(code, days)
-            if result and "error" not in result:
-                return result
-        except Exception:
-            logger.warning("technical: 港股K线获取失败 (%s)", code, exc_info=True)
-        return {"error": "获取港股K线失败", "code": code}
-
-    # ── 美股 K 线 ──
-    if is_us_stock(code):
-        try:
-            from services.akshare_adapter import get_us_kline
-            result = get_us_kline(code, days)
-            if result and "error" not in result:
-                return result
-        except Exception:
-            logger.warning("technical: 美股K线获取失败 (%s)", code, exc_info=True)
-        return {"error": "获取美股K线失败", "code": code}
-
-    # ── A 股 K 线（多源回退：新浪 → 腾讯 → 东方财富 → Baostock）──
+def _fetch_a_share_daily_legacy(code: str, market: str | None, days: int) -> dict[str, Any]:
+    """A 股旧日线链路：新浪 → 腾讯 → 东方财富 → Baostock。"""
     global _FAST_SOURCE_FAILS, _FAST_SOURCE_CHECKED
 
     # 1. 新浪财经 JSON API（HTTP，最快最稳，优先级最高）
@@ -92,8 +63,11 @@ def fetch_kline(code: str, market: str = None, days: int = 120) -> dict[str, Any
                 highs.append(float(parts[3]))
                 lows.append(float(parts[4]))
             return {
-                "code": code, "dates": dates,
-                "closes": closes, "highs": highs, "lows": lows,
+                "code": code,
+                "dates": dates,
+                "closes": closes,
+                "highs": highs,
+                "lows": lows,
             }
         _FAST_SOURCE_FAILS += 1
 
@@ -111,6 +85,45 @@ def fetch_kline(code: str, market: str = None, days: int = 120) -> dict[str, Any
         logger.warning("technical: Baostock K线获取失败 (%s)", code, exc_info=True)
 
     return {"error": "获取K线数据失败", "code": code}
+
+
+def fetch_kline(code: str, market: str = None, days: int = 120) -> dict[str, Any]:
+    """获取日K线数据（多市场适配：A股/港股/美股，多源兜底）
+
+    A股: Futu(日线优先) → 新浪 → 腾讯 → 东方财富 → Baostock
+    港股: akshare(ak.stock_hk_hist) → 新浪
+    美股: akshare(ak.stock_us_hist)
+    """
+    from services.utils import is_hk_stock, is_us_stock
+
+    # ── 港股 K 线 ──
+    if is_hk_stock(code):
+        try:
+            from services.akshare_adapter import get_hk_kline
+            result = get_hk_kline(code, days)
+            if result and "error" not in result:
+                return result
+        except Exception:
+            logger.warning("technical: 港股K线获取失败 (%s)", code, exc_info=True)
+        return {"error": "获取港股K线失败", "code": code}
+
+    # ── 美股 K 线 ──
+    if is_us_stock(code):
+        try:
+            from services.akshare_adapter import get_us_kline
+            result = get_us_kline(code, days)
+            if result and "error" not in result:
+                return result
+        except Exception:
+            logger.warning("technical: 美股K线获取失败 (%s)", code, exc_info=True)
+        return {"error": "获取美股K线失败", "code": code}
+
+    # ── A 股日线：优先 Futu，再回退旧链路 ──
+    return futu_ingest_service.get_daily_kline_with_fallback(
+        code,
+        count=days,
+        fallback=lambda: _fetch_a_share_daily_legacy(code, market, days),
+    )
 
 
 def _ema(data: list[float], period: int) -> list[float]:
@@ -259,73 +272,52 @@ def _signal_summary(ma_map: dict, macd: dict, kdj: dict, rsi: list[float], close
                 signals.append("KDJ 超卖区（<20）")
 
     # RSI 信号
-    if rsi:
-        rsi_val = _latest(rsi)
-        if rsi_val is not None:
-            if rsi_val > 70:
-                signals.append(f"RSI({rsi_val}) 超买")
-            elif rsi_val < 30:
-                signals.append(f"RSI({rsi_val}) 超卖")
-            else:
-                signals.append(f"RSI({rsi_val}) 中性")
+    rsi_val = _latest(rsi)
+    if rsi_val is not None:
+        if rsi_val > 70:
+            signals.append(f"RSI 超买（{rsi_val}）")
+        elif rsi_val < 30:
+            signals.append(f"RSI 超卖（{rsi_val}）")
+        else:
+            signals.append(f"RSI 中性（{rsi_val}）")
 
-    # 价格位置
-    if ma_map.get("MA60") and closes:
-        ma60 = _latest(ma_map["MA60"])
-        price = closes[-1]
-        if ma60 and price:
-            if price > ma60:
-                signals.append("股价位于 MA60 上方（中长期偏多）")
-            else:
-                signals.append("股价位于 MA60 下方（中长期偏空）")
+    price = closes[-1] if closes else None
+    if price is not None and ma_map.get("MA20"):
+        ma20 = _latest(ma_map["MA20"])
+        if ma20 is not None:
+            signals.append("股价在 MA20 上方" if price > ma20 else "股价在 MA20 下方")
 
-    return "；".join(signals) if signals else "无明显技术信号"
+    return "；".join(signals) if signals else "暂无明显技术信号"
 
 
-def get_indicators(code: str, market: str = None, days: int = 120) -> dict:
-    """一站式返回所有技术指标"""
+def get_indicators(code: str, market: str = None, days: int = 120) -> dict[str, Any]:
+    """获取某只股票的完整技术指标 + 简要信号"""
+    from routers.stocks import _cached_quote
+
+    q = _cached_quote(code, market)
     kline = fetch_kline(code, market, days)
     if "error" in kline:
-        return kline
+        return {"error": kline["error"], "name": q.get("name", "") if q else ""}
 
-    closes = kline["closes"]
-    highs = kline["highs"]
-    lows = kline["lows"]
+    closes = kline.get("closes", [])
+    highs = kline.get("highs", [])
+    lows = kline.get("lows", [])
+
+    if not closes or not highs or not lows:
+        return {"error": "K线数据不完整", "name": q.get("name", "") if q else ""}
 
     ma = calc_ma(closes)
     macd = calc_macd(closes)
     kdj = calc_kdj(highs, lows, closes)
     rsi = calc_rsi(closes)
+    signal = _signal_summary(ma, macd, kdj, rsi, closes)
 
-    # 取最新值
-    indicators = {
-        "code": code,
-        "name": "",
-        "price": closes[-1] if closes else None,
-        "date": kline["dates"][-1] if kline["dates"] else None,
-        "MA": {k: _latest(v) for k, v in ma.items()},
-        "MACD": {k: _latest(v) for k, v in macd.items()},
-        "KDJ": {k: _latest(v) for k, v in kdj.items()},
-        "RSI": _latest(rsi),
-        "signal": _signal_summary(ma, macd, kdj, rsi, closes),
-        # 保留最近 60 个数据点给前端画简易走势
-        "recent": {
-            "dates": kline["dates"][-60:],
-            "closes": kline["closes"][-60:],
-        },
+    return {
+        "name": q.get("name", "") if q else "",
+        "price": q.get("price") if q else None,
+        "MA": ma,
+        "MACD": macd,
+        "KDJ": kdj,
+        "RSI": rsi,
+        "signal": signal,
     }
-
-    # 尝试获取名称
-    try:
-        from services.akshare_adapter import get_stock_name
-        name = get_stock_name(code)
-        if name:
-            indicators["name"] = name
-        else:
-            m = market or get_market(code)
-            raw = run_curl(f"https://push2.eastmoney.com/api/qt/stock/get?secid={m}.{code}&fields=f58")
-            indicators["name"] = json.loads(raw).get("data", {}).get("f58", "")
-    except Exception:
-        logger.warning("technical: 获取股票名称失败 (%s)", code, exc_info=True)
-
-    return indicators
