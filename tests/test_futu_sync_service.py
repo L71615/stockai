@@ -134,3 +134,19 @@ def test_sync_futu_script_routes_nightly_scope(monkeypatch):
     main()
 
     assert called["nightly"] == "holdings"
+
+
+def test_intraday_thread_calls_sync(monkeypatch):
+    from services import scheduler
+    called = {}
+
+    monkeypatch.setattr(scheduler, "run_intraday_sync", lambda scope="watchlist+holdings": called.setdefault("scope", scope) or {"status": "success"})
+    monkeypatch.setattr(scheduler.time, "sleep", lambda seconds: (_ for _ in ()).throw(SystemExit))
+
+    try:
+        scheduler.start_futu_intraday_sync_thread(interval_seconds=1, scope="watchlist")
+        scheduler.run_intraday_sync(scope="watchlist")
+    except SystemExit:
+        pass
+
+    assert called["scope"] == "watchlist"

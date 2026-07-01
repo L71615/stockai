@@ -1,11 +1,12 @@
-"""StockAI — 后台定时任务（DCA 邮件提醒）"""
+"""StockAI — 后台定时任务（DCA 邮件提醒 / 止损检查 / Futu 同步）"""
 
 import logging
 import threading
 import time
 from datetime import datetime, timedelta
 
-from database import query_all, query_one, execute
+from database import query_all, execute
+from services.futu_sync_service import run_intraday_sync, run_nightly_sync
 
 logger = logging.getLogger("stockai")
 
@@ -16,9 +17,8 @@ def _check_and_remind():
 
     smtp = get_smtp_settings()
     if not smtp:
-        return  # SMTP 未配置，静默跳过
+        return
 
-    # 遍历所有用户
     users = query_all("SELECT id, email FROM users WHERE email IS NOT NULL AND email != ''")
     now = datetime.now()
     cutoff = (now + timedelta(hours=24)).strftime("%Y-%m-%d")
@@ -60,15 +60,13 @@ def start_dca_reminder_thread(interval_seconds: int = 3600):
 def _check_stop_losses():
     """检查所有用户持仓止损触发，推送通知"""
     from services.notify_service import send_notification
+    from services.akshare_adapter import get_batch_quotes
 
     holdings = query_all(
         "SELECT * FROM holdings WHERE quantity > 0 AND stop_loss_price IS NOT NULL",
     )
     if not holdings:
         return
-
-    from services.utils import get_market
-    from services.akshare_adapter import get_batch_quotes
 
     codes = [h["stock_code"] for h in holdings]
     try:
@@ -106,5 +104,42 @@ def start_stop_loss_thread(interval_seconds: int = 300):
             time.sleep(interval_seconds)
 
     t = threading.Thread(target=_loop, daemon=True, name="stop-loss-checker")
+    t.start()
+    return t
+
+
+def start_futu_intraday_sync_thread(interval_seconds: int = 300, scope: str = "watchlist+holdings"):
+    """白天增量同步线程：交易时段定期跑 quote + minute。"""
+    def _loop():
+        while True:
+            try:
+                now = datetime.now()
+                if now.weekday() < 5 and 9 <= now.hour <= 15:
+                    run_intraday_sync(scope=scope)
+            except Exception:
+                logger.warning("scheduler: Futu intraday 同步线程异常", exc_info=True)
+            time.sleep(interval_seconds)
+
+    t = threading.Thread(target=_loop, daemon=True, name="futu-intraday-sync")
+    t.start()
+    return t
+
+
+def start_futu_nightly_sync_thread(run_hour: int = 20, run_minute: int = 5, scope: str = "watchlist+holdings"):
+    """夜间补齐线程：每天固定时间跑 nightly。"""
+    def _loop():
+        last_run = None
+        while True:
+            try:
+                now = datetime.now()
+                today_key = now.strftime("%Y-%m-%d")
+                if now.weekday() < 5 and now.hour == run_hour and now.minute >= run_minute and last_run != today_key:
+                    run_nightly_sync(scope=scope)
+                    last_run = today_key
+            except Exception:
+                logger.warning("scheduler: Futu nightly 同步线程异常", exc_info=True)
+            time.sleep(60)
+
+    t = threading.Thread(target=_loop, daemon=True, name="futu-nightly-sync")
     t.start()
     return t
