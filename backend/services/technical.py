@@ -70,7 +70,16 @@ def fetch_kline(code: str, market: str = None, days: int = 120) -> dict[str, Any
     except Exception:
         pass
 
-    # 2. 东方财富 push2his（HTTP，无锁，可并发）
+    # 2. 新浪财经 JSON API（HTTP，无锁，可并发）
+    try:
+        from services.sina_adapter import get_kline as sina_kline
+        result = sina_kline(code, days)
+        if result and "error" not in result:
+            return result
+    except Exception:
+        pass
+
+    # 3. 东方财富 push2his（HTTP，无锁，可并发）
     if market is None:
         market = get_market(code)
     secid = f"{market}.{code}"

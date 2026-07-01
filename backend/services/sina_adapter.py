@@ -168,3 +168,48 @@ def _f(val) -> Optional[float]:
         return float(val)
     except (ValueError, TypeError):
         return None
+
+
+# ==================== A股 K 线 ====================
+
+def get_kline(code: str, days: int = 120) -> dict:
+    """获取 A 股日 K 线数据（新浪财经 JSON API）
+
+    scale=240 表示日线，返回最近 N 条 K 线。
+    格式: [{"day":"2026-06-24","open":"...","high":"...","low":"...","close":"...","volume":"..."},...]
+    """
+    c = code.strip()
+    # 沪市 vs 深市
+    if c.startswith(("51", "56", "58", "60", "68")):
+        sym = f"sh{c}"
+    else:
+        sym = f"sz{c}"
+
+    url = f"https://money.finance.sina.com.cn/quotes_service/api/json_v2.php/CN_MarketData.getKLineData?symbol={sym}&scale=240&ma=no&datalen={days}"
+
+    try:
+        import json
+        raw = _http_get(url, timeout=10)
+        klines = json.loads(raw)
+        if not klines or not isinstance(klines, list):
+            return {"error": "无K线数据", "code": code}
+
+        dates = [k["day"] for k in klines[-days:]]
+        opens = [float(k["open"]) for k in klines[-days:]]
+        closes = [float(k["close"]) for k in klines[-days:]]
+        highs = [float(k["high"]) for k in klines[-days:]]
+        lows = [float(k["low"]) for k in klines[-days:]]
+        volumes = [float(k["volume"]) for k in klines[-days:]]
+
+        return {
+            "code": code,
+            "dates": dates,
+            "opens": opens,
+            "closes": closes,
+            "highs": highs,
+            "lows": lows,
+            "volumes": volumes,
+        }
+    except Exception as e:
+        logger.warning(f"sina_adapter: K线获取失败 ({code}): {e}")
+        return {"error": f"获取K线失败: {e}", "code": code}
