@@ -150,3 +150,17 @@ def test_intraday_thread_calls_sync(monkeypatch):
         pass
 
     assert called["scope"] == "watchlist"
+
+
+def test_run_nightly_sync_marks_failed_and_alerts(monkeypatch):
+    from services import futu_sync_service
+    alerts = []
+
+    monkeypatch.setattr(futu_sync_service, "_load_sync_targets", lambda scope: [{"code": "600519", "from_watchlist": True, "from_holdings": True}])
+    monkeypatch.setattr(futu_sync_service, "sync_daily_kline", lambda code, count=200: {"error": "opend offline", "source": "futu", "code": code})
+    monkeypatch.setattr(futu_sync_service, "send_notification", lambda markdown, title="": alerts.append((title, markdown)) or {"ok": True})
+
+    result = run_nightly_sync()
+
+    assert result["status"] == "failed"
+    assert alerts
