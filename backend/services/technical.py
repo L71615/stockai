@@ -48,7 +48,7 @@ def fetch_kline(code: str, market: str = None, days: int = 120) -> dict[str, Any
         return {"error": "获取美股K线失败", "code": code}
 
     # ── A 股 K 线（多源回退：新浪 → 腾讯 → 东方财富 → Baostock）──
-    global _FAST_SOURCE_FAILS
+    global _FAST_SOURCE_FAILS, _FAST_SOURCE_CHECKED
 
     # 1. 新浪财经 JSON API（HTTP，最快最稳，优先级最高）
     try:
