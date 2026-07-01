@@ -1330,12 +1330,12 @@ def condition_scan(body: ConditionScanRequest):
         return None
 
     if layer_trees[4]["conditions"] and survivors:
-        _L4_MAX = 300
+        _L4_MAX = 500
         if len(survivors) > _L4_MAX:
             raise HTTPException(
                 400,
                 f"L4候选 {len(survivors)} 只 > {_L4_MAX}，K线获取太慢。"
-                f"请先添加 L1(行业) 或 L2(价格区间) 条件缩小候选池至 {_L4_MAX} 以下。"
+                f"请先缩小价格区间或添加更多条件缩小候选池至 {_L4_MAX} 以下。"
             )
         results = []
         with ThreadPoolExecutor(max_workers=6) as pool:

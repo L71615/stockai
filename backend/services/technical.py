@@ -47,30 +47,10 @@ def fetch_kline(code: str, market: str = None, days: int = 120) -> dict[str, Any
             logger.warning("technical: 美股K线获取失败 (%s)", code, exc_info=True)
         return {"error": "获取美股K线失败", "code": code}
 
-    # ── A 股 K 线（带数据源健康检测）──
+    # ── A 股 K 线（多源回退：新浪 → 腾讯 → 东方财富 → Baostock）──
     global _FAST_SOURCE_FAILS
 
-    # 快速源已确认不可用 → 直接 Baostock
-    if _FAST_SOURCE_FAILS >= _FAST_SOURCE_SKIP_AFTER:
-        try:
-            from services.baostock_adapter import get_kline as bs_kline
-            result = bs_kline(code, days)
-            if result and "error" not in result:
-                return result
-        except Exception:
-            logger.warning("technical: Baostock K线获取失败 (%s)", code, exc_info=True)
-        return {"error": "获取K线数据失败", "code": code}
-
-    # 1. akshare / 腾讯财经（HTTP，无锁，可并发）
-    try:
-        from services.akshare_adapter import get_kline
-        result = get_kline(code, days)
-        if result and "error" not in result:
-            return result
-    except Exception:
-        pass
-
-    # 2. 新浪财经 JSON API（HTTP，无锁，可并发）
+    # 1. 新浪财经 JSON API（HTTP，最快最稳，优先级最高）
     try:
         from services.sina_adapter import get_kline as sina_kline
         result = sina_kline(code, days)
@@ -79,37 +59,49 @@ def fetch_kline(code: str, market: str = None, days: int = 120) -> dict[str, Any
     except Exception:
         pass
 
-    # 3. 东方财富 push2his（HTTP，无锁，可并发）
-    if market is None:
-        market = get_market(code)
-    secid = f"{market}.{code}"
-    url = f"https://push2his.eastmoney.com/api/qt/stock/kline/get?secid={secid}&klt=101&fqt=1&lmt={days}&fields2=f51,f52,f53,f54,f55,f56,f57,f60"
-    try:
-        raw = run_curl(url)
-        data = json.loads(raw)
-        klines = data.get("data", {}).get("klines", []) or []
-    except Exception:
-        klines = []
+    # 2. 腾讯财经（HTTP，skip if known dead）
+    if _FAST_SOURCE_FAILS < _FAST_SOURCE_SKIP_AFTER:
+        try:
+            from services.akshare_adapter import get_kline
+            result = get_kline(code, days)
+            if result and "error" not in result:
+                return result
+            _FAST_SOURCE_FAILS += 1
+        except Exception:
+            _FAST_SOURCE_FAILS += 1
 
-    if klines:
-        dates, closes, highs, lows = [], [], [], []
-        for line in klines:
-            parts = line.split(",")
-            dates.append(parts[0])
-            closes.append(float(parts[2]))
-            highs.append(float(parts[3]))
-            lows.append(float(parts[4]))
-        return {
-            "code": code, "dates": dates,
-            "closes": closes, "highs": highs, "lows": lows,
-        }
+    # 3. 东方财富 push2his（HTTP，skip if known dead）
+    if _FAST_SOURCE_FAILS < _FAST_SOURCE_SKIP_AFTER:
+        if market is None:
+            market = get_market(code)
+        secid = f"{market}.{code}"
+        url = f"https://push2his.eastmoney.com/api/qt/stock/kline/get?secid={secid}&klt=101&fqt=1&lmt={days}&fields2=f51,f52,f53,f54,f55,f56,f57,f60"
+        try:
+            raw = run_curl(url)
+            data = json.loads(raw)
+            klines = data.get("data", {}).get("klines", []) or []
+        except Exception:
+            klines = []
 
-    # 两个快速源都失败了 → 标记并切换到 Baostock 兜底
-    _FAST_SOURCE_FAILS += 1
-    if _FAST_SOURCE_FAILS >= _FAST_SOURCE_SKIP_AFTER:
-        logger.warning("technical: 腾讯/东方财富K线不可用，后续将直接使用Baostock")
+        if klines:
+            dates, closes, highs, lows = [], [], [], []
+            for line in klines:
+                parts = line.split(",")
+                dates.append(parts[0])
+                closes.append(float(parts[2]))
+                highs.append(float(parts[3]))
+                lows.append(float(parts[4]))
+            return {
+                "code": code, "dates": dates,
+                "closes": closes, "highs": highs, "lows": lows,
+            }
+        _FAST_SOURCE_FAILS += 1
 
-    # 3. Baostock（查询级锁，最后兜底）
+    if _FAST_SOURCE_FAILS >= _FAST_SOURCE_SKIP_AFTER and not _FAST_SOURCE_CHECKED:
+        _FAST_SOURCE_CHECKED = True
+        logger.warning("technical: 腾讯/东方财富K线不可用，已跳过")
+
+    # 4. Baostock（查询级锁，最后兜底）
     try:
         from services.baostock_adapter import get_kline as bs_kline
         result = bs_kline(code, days)

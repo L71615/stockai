@@ -300,7 +300,7 @@ def get_kline(code: str, days: int = 120) -> dict:
         _KLINE_CACHE[cache_key] = (now, result)
         return result
     except Exception as e:
-        logger.warning(f"get_kline({code}): {e}")
+        logger.debug(f"get_kline({code}): {e}")
         return {"error": f"获取K线失败: {e}", "code": code}
 
 

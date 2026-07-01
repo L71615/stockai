@@ -10,13 +10,10 @@ description: >
 market_state: [neutral, bull]
 recommended_position: "10-20%（单票）"
 conditions:
-  # ── 价格过滤：一手 2500 以内 ──
-  - field: close
-    operator: "<="
-    value: 25
-  - field: close
-    operator: ">="
-    value: 3
+  # ── 价格过滤：一手 2500 以内（L2实时行情，零成本筛选）──
+  - field: price
+    operator: "between"
+    value: [3, 25]
   # ── 流动性：日均成交额 > 2000万，确保能进出 ──
   - field: avg_amount_20d
     operator: ">="
