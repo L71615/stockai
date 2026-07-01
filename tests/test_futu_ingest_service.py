@@ -4,6 +4,8 @@
 - Task 1: init_db 应创建 Futu raw 表与唯一索引
 - Task 3: raw 落库 / 日线同步 / 幂等
 - Task 4: fallback 包装函数
+- Task 5: technical.fetch_kline 优先走 Futu 日线
+- Task 6: stocks._fetch_quote_sync 优先走 Futu quote，并保持 API 响应结构
 """
 
 import sys
@@ -19,6 +21,8 @@ from services.futu_ingest_service import (
     get_quote_with_fallback,
     get_daily_kline_with_fallback,
 )
+from services import technical
+from routers import stocks
 
 
 class _StubClient:
@@ -169,9 +173,16 @@ def test_get_quote_with_fallback_returns_old_source_when_futu_fails(db):
     assert result["price"] == 1000.0
 
 
+def test_get_daily_kline_with_fallback_returns_old_source_when_futu_fails(db):
+    result = get_daily_kline_with_fallback(
+        "600519",
+        count=2,
+        fallback=lambda: {"code": "600519", "dates": ["2026-07-01"], "closes": [1000.0], "source": "legacy"},
+        client=_FailingClient(),
+    )
 
-
-from services import technical
+    assert result["source"] == "legacy"
+    assert result["closes"] == [1000.0]
 
 
 def test_fetch_kline_uses_futu_daily_first_for_a_share(monkeypatch):
@@ -193,3 +204,49 @@ def test_fetch_kline_uses_futu_daily_first_for_a_share(monkeypatch):
 
     assert result["source"] == "futu"
     assert result["closes"] == [10.5]
+
+
+def test_fetch_quote_sync_uses_futu_first(monkeypatch):
+    monkeypatch.setattr(
+        "routers.stocks.get_quote_with_fallback",
+        lambda code, fallback, client=None: {
+            "code": code,
+            "name": "贵州茅台",
+            "price": 1234.5,
+            "change": 24.5,
+            "change_pct": 2.02,
+            "volume": 2000,
+            "high_price": 1240.0,
+            "low_price": 1218.0,
+            "source": "futu",
+        },
+    )
+
+    result = stocks._fetch_quote_sync("600519")
+
+    assert result["code"] == "600519"
+    assert result["price"] == 1234.5
+    assert result["high"] == 1240.0
+    assert result["low"] == 1218.0
+
+
+def test_quote_api_shape_still_matches_existing_fields(client, monkeypatch):
+    monkeypatch.setattr(
+        "routers.stocks._cached_quote",
+        lambda code, market=None: {
+            "code": code,
+            "name": "贵州茅台",
+            "price": 1234.5,
+            "change": 24.5,
+            "change_pct": 2.02,
+            "volume": 2000,
+            "high": 1240.0,
+            "low": 1218.0,
+        },
+    )
+
+    resp = client.get("/api/stocks/quote/600519")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert {"code", "name", "price", "change", "change_pct", "volume", "high", "low"}.issubset(body.keys())

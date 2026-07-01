@@ -14,6 +14,7 @@ from services.ai_service import ai_chat
 from services.ai_exceptions import AIServiceError
 from services.technical import get_indicators as calc_indicators
 from services.utils import run_curl, get_market, detect_asset_type, get_fund_nav
+from services.futu_ingest_service import get_quote_with_fallback
 
 router = APIRouter()
 
@@ -39,8 +40,8 @@ def _cached_quote(code: str, market: str | None = None) -> dict:
     return result
 
 
-def _fetch_quote_sync(code: str, market: str | None = None) -> dict:
-    """获取单只股票实时行情（港股→新浪，美股→akshare，A股→腾讯→东方财富）"""
+def _fetch_quote_legacy(code: str, market: str | None = None) -> dict:
+    """旧实时行情链路：港股→新浪，美股→akshare，A股→腾讯→东方财富。"""
     from services.utils import is_hk_stock, is_us_stock
 
     # 港股：新浪财经
@@ -124,6 +125,28 @@ def _fetch_quote_sync(code: str, market: str | None = None) -> dict:
     except Exception as e:
         print(f"[Quote Error] {code}: {e}")
     return {"code": code, "error": "获取失败"}
+
+
+def _fetch_quote_sync(code: str, market: str | None = None) -> dict:
+    """获取单只股票实时行情（港股→新浪，美股→akshare，A股→Futu→腾讯→东方财富）"""
+    from services.utils import is_hk_stock, is_us_stock
+
+    if is_hk_stock(code) or is_us_stock(code):
+        return _fetch_quote_legacy(code, market)
+
+    result = get_quote_with_fallback(code, fallback=lambda: _fetch_quote_legacy(code, market))
+    if result.get("source") == "futu":
+        return {
+            "code": result["code"],
+            "name": result.get("name", ""),
+            "price": result.get("price"),
+            "change": result.get("change"),
+            "change_pct": result.get("change_pct"),
+            "volume": result.get("volume"),
+            "high": result.get("high_price"),
+            "low": result.get("low_price"),
+        }
+    return result
 
 
 @router.get("/quote/{code}")
