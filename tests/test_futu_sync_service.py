@@ -119,3 +119,18 @@ def test_maybe_alert_skips_single_partial_failure(monkeypatch):
 
     assert sent is False
     assert called == {}
+
+
+def test_sync_futu_script_routes_nightly_scope(monkeypatch):
+    from scripts.sync_futu_data import main
+    called = {}
+
+    monkeypatch.setattr(
+        "scripts.sync_futu_data.run_nightly_sync",
+        lambda scope="watchlist+holdings": called.setdefault("nightly", scope) or {"status": "success"},
+    )
+    monkeypatch.setattr(sys, "argv", ["sync_futu_data.py", "--mode", "nightly", "--scope", "holdings"])
+
+    main()
+
+    assert called["nightly"] == "holdings"
