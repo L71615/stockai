@@ -164,11 +164,26 @@ def stock_insight(code: str, days: int = 120):
     turtle = _calc_turtle()
 
     # 6. 基本面因子
+    factors = {}
+    _factors_executor = None
     try:
+        from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
         from services.baostock_adapter import get_stock_factors
-        factors = get_stock_factors(code)
+
+        _factors_executor = ThreadPoolExecutor(max_workers=1)
+        fut = _factors_executor.submit(get_stock_factors, code)
+        factors = fut.result(timeout=0.8)
+    except FuturesTimeoutError:
+        factors = {}
+        try:
+            fut.cancel()
+        except Exception:
+            pass
     except Exception:
         factors = {}
+    finally:
+        if _factors_executor is not None:
+            _factors_executor.shutdown(wait=False, cancel_futures=True)
 
     return {
         "code": code,

@@ -4,6 +4,193 @@
 
 ---
 
+## 2026-07-01 #2 — Futu P1 同步系统：批量同步 + 夜间补齐 + 状态落库 + 告警
+
+### 目标
+
+在已完成的 Futu Phase A 基础上，把 A 股 Futu 接入升级成一个可持续运行的小型同步系统，不再停留在单股脚本验证。
+
+本轮 P1 范围锁定为：
+- 覆盖对象：`watchlist + holdings`
+- 白天增量同步：`quote + minute`
+- 夜间补齐：以 `daily` 为主，必要时补 `minute`
+- 监控方式：日志 + 数据库状态 + 严重失败主动通知
+
+### 同步任务中心 `futu_sync_service.py`
+
+**新增 `backend/services/futu_sync_service.py`：**
+- `_load_sync_targets(scope)` — 从 `watchlist + holdings` 生成 A 股同步目标集合，去重并标记来源
+- `_summarize_run()` — 统一分级：`success / partial_success / failed / skipped`
+- `run_intraday_sync()` — 批量执行 `quote + minute`
+- `run_nightly_sync()` — 批量执行 `daily`
+- `_maybe_alert()` — 整轮失败或高失败率时触发告警
+- `_build_alert_message()` — 生成告警摘要
+
+### 状态表
+
+**数据库 `backend/database.py` 新增 2 张表：**
+
+- `futu_sync_runs`
+  - 记录每一轮同步任务
+  - 字段：`run_type`, `scope`, `target_count`, `success_count`, `failed_count`, `status`, `started_at`, `finished_at`, `duration_ms`, `error_summary`, `alert_sent`
+
+- `futu_sync_run_items`
+  - 记录每只股票、每种同步类型的结果
+  - 字段：`stock_code`, `sync_type`, `status`, `error_message`, `source`, `from_watchlist`, `from_holdings`
+
+### 脚本升级
+
+**`backend/scripts/sync_futu_data.py` 升级为双模式入口：**
+
+- `--mode single`
+  - 保留 Phase A 单股脚本能力
+- `--mode intraday`
+  - 跑批量白天同步
+- `--mode nightly`
+  - 跑批量夜间补齐
+
+并支持：
+- `--scope watchlist`
+- `--scope holdings`
+- `--scope watchlist+holdings`
+
+### 调度器接线
+
+**`backend/services/scheduler.py` 新增：**
+- `start_futu_intraday_sync_thread()` — 交易时段定时跑 `run_intraday_sync()`
+- `start_futu_nightly_sync_thread()` — 每天固定时间跑 `run_nightly_sync()`
+
+调度器只做触发，不承载业务同步逻辑。
+
+### 告警与通知
+
+复用现有 `notify_service.send_notification()`：
+- 整轮失败 → 告警
+- 失败比例过高 → 告警
+- 单只股票偶发失败 → 仅记录，不立即通知
+
+### 测试与真实验收
+
+**自动化测试新增/补充：**
+- `tests/test_futu_sync_service.py`
+  - 目标集合生成
+  - 运行状态分级
+  - intraday / nightly 编排
+  - 告警逻辑
+  - 批量脚本路由
+  - 调度触发
+- 全量自动化回归：`108 passed`
+
+**真实验收：**
+- 在 `watchlist` 中加入 `600667`、`603399`
+- 运行 `intraday`：成功，`target_count=2`, `success_count=4`
+- 运行 `nightly`：成功，`target_count=2`, `success_count=2`
+- `futu_sync_runs` 与 `futu_sync_run_items` 成功落库
+
+### 文件变更
+- **新增**: `backend/services/futu_sync_service.py`
+- **修改**: `backend/database.py`, `backend/scripts/sync_futu_data.py`, `backend/services/scheduler.py`, `backend/requirements.txt`, `tests/test_futu_sync_service.py`
+- **总计**: 1 新建 + 4 主要修改 + 完整测试补齐
+
+---
+
+## 2026-07-01 #1 — Futu Phase A：A 股 quote / minute / daily 接入 + raw 落库 + 现有链路接通
+
+### 目标
+
+把 Futu `OpenD + futu-api` 正式接入 StockAI，先只做 A 股，不碰 PG 底座和港美股。
+
+本轮范围：
+- A 股 `quote / minute / daily`
+- raw 落库
+- 日线同步 `historical_kline`
+- 现有报价 / 日线 / 1m 图表链路接通
+
+### Futu SDK 封装
+
+**新增 `backend/services/futu_client.py`：**
+- `healthcheck()` — 检查 Futu SDK / OpenD 可用性
+- `get_snapshot()` — A 股实时报价映射
+- `get_kline()` — A 股 `1m / 1d` K 线映射
+- 统一 `symbol` / `market` / `dates` / `closes` 等返回结构
+- 未安装 `futu-api` 时返回结构化错误，而不是启动时崩掉
+
+### 原始落库与兼容层同步
+
+**新增 `backend/services/futu_ingest_service.py`：**
+- `sync_quote()` — 写 `futu_raw_quote`
+- `sync_minute_kline()` — 写 `futu_raw_kline`
+- `sync_daily_kline()` — 写 `futu_raw_kline` 并同步 `historical_kline`
+- `get_quote_with_fallback()` / `get_daily_kline_with_fallback()` / `get_minute_kline_with_fallback()`
+
+### 数据库结构
+
+**`backend/database.py` 新增：**
+- `futu_raw_quote`
+- `futu_raw_kline`
+- 唯一键：`(symbol, interval, bar_time, adjust_type)`
+- 索引：
+  - `idx_futu_raw_quote_symbol_time`
+  - `idx_futu_raw_kline_symbol_interval_time`
+
+### 现有服务链路接通
+
+**1. 日线：`backend/services/technical.py`**
+- A 股 `fetch_kline()` 改为：
+  - Futu 日线优先
+  - 失败再回退新浪 / 腾讯 / 东方财富 / Baostock
+
+**2. 报价：`backend/routers/stocks.py`**
+- `_fetch_quote_sync()` 改为：
+  - A 股报价优先 Futu
+  - 失败回退旧源
+- 港股 / 美股维持旧逻辑
+
+**3. 图表：`backend/routers/stocks.py`**
+- `get_kline_data(period=1m)` 改为优先走 Futu 分钟线
+- 其他周期继续沿用现有日线 / 聚合逻辑
+
+### 脚本与真实验证
+
+**新增 `backend/scripts/sync_futu_data.py`（Phase A 初版）**
+- 支持单股：
+  - `--type quote`
+  - `--type minute`
+  - `--type daily`
+- 补了脚本环境变量与 `init_db()` 初始化，避免 CLI 直接启动时报错
+
+**真实 OpenD 验证：**
+- `600519` 的 quote 成功
+- `600519` 的 minute 成功
+- `600519` 的 daily 成功
+- SQLite 中成功写入：
+  - `futu_raw_quote`
+  - `futu_raw_kline`
+  - `historical_kline`
+
+### 测试
+
+**新增/补齐：**
+- `tests/conftest.py`（恢复当前 worktree 的 pytest 基座）
+- `tests/test_futu_client.py`
+- `tests/test_futu_ingest_service.py`
+- `tests/test_quant_service.py`（补回 worktree 量化回归）
+
+覆盖：
+- SDK 可用性
+- raw 落库
+- 日线同步
+- fallback
+- quote / 1m API 兼容
+- 自动化测试通过
+
+### 文件变更
+- **新增**: `backend/services/futu_client.py`, `backend/services/futu_ingest_service.py`, `backend/scripts/sync_futu_data.py`, `tests/test_futu_client.py`, `tests/test_futu_ingest_service.py`, `tests/conftest.py`, `tests/test_quant_service.py`
+- **修改**: `backend/database.py`, `backend/services/technical.py`, `backend/routers/stocks.py`, `backend/requirements.txt`
+- **总计**: A 股 Futu 接入 + 落库 + 链路接通 + 测试闭环
+
+---
+
 ## 2026-06-27 — 交易纪律系统 v1
 
 ### 背景
