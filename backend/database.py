@@ -361,6 +361,39 @@ def init_db():
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_futu_raw_kline_symbol_interval_time ON futu_raw_kline(symbol, interval, bar_time DESC)"
         )
+        conn.execute("""CREATE TABLE IF NOT EXISTS futu_sync_runs (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_type      TEXT NOT NULL,
+            scope         TEXT NOT NULL,
+            target_count  INTEGER NOT NULL DEFAULT 0,
+            success_count INTEGER NOT NULL DEFAULT 0,
+            failed_count  INTEGER NOT NULL DEFAULT 0,
+            status        TEXT NOT NULL DEFAULT 'skipped',
+            started_at    TEXT NOT NULL,
+            finished_at   TEXT,
+            duration_ms   INTEGER DEFAULT 0,
+            error_summary TEXT DEFAULT '',
+            alert_sent    INTEGER NOT NULL DEFAULT 0,
+            created_at    TEXT DEFAULT (datetime('now','localtime'))
+        )""")
+        conn.execute("""CREATE TABLE IF NOT EXISTS futu_sync_run_items (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id          INTEGER NOT NULL REFERENCES futu_sync_runs(id) ON DELETE CASCADE,
+            stock_code      TEXT NOT NULL,
+            sync_type       TEXT NOT NULL,
+            status          TEXT NOT NULL,
+            error_message   TEXT DEFAULT '',
+            source          TEXT DEFAULT 'futu',
+            started_at      TEXT NOT NULL,
+            finished_at     TEXT,
+            duration_ms     INTEGER DEFAULT 0,
+            from_watchlist  INTEGER NOT NULL DEFAULT 0,
+            from_holdings   INTEGER NOT NULL DEFAULT 0,
+            created_at      TEXT DEFAULT (datetime('now','localtime'))
+        )""")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_futu_sync_runs_type_time ON futu_sync_runs(run_type, created_at DESC)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_futu_sync_run_items_run ON futu_sync_run_items(run_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_futu_sync_run_items_code_type ON futu_sync_run_items(stock_code, sync_type)")
         conn.execute("""CREATE TABLE IF NOT EXISTS review_reports (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER NOT NULL DEFAULT 1,
