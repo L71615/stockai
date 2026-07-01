@@ -6,6 +6,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "backend"))
 
 from database import init_db, query_one
+from services.futu_sync_service import _load_sync_targets, _summarize_run
 
 
 def test_init_db_creates_futu_sync_tables(db):
@@ -24,7 +25,6 @@ def test_init_db_creates_futu_sync_tables(db):
 
 def test_load_sync_targets_merges_watchlist_and_holdings(monkeypatch):
     from services import futu_sync_service
-    from services.futu_sync_service import _load_sync_targets
 
     def fake_query_all(sql, params=()):
         if "FROM watchlist" in sql:
@@ -44,9 +44,48 @@ def test_load_sync_targets_merges_watchlist_and_holdings(monkeypatch):
 
 
 def test_summarize_run_status_values():
-    from services.futu_sync_service import _summarize_run
-
     assert _summarize_run(3, 3, 0) == "success"
     assert _summarize_run(3, 2, 1) == "partial_success"
     assert _summarize_run(3, 0, 3) == "failed"
     assert _summarize_run(0, 0, 0) == "skipped"
+
+
+def test_run_intraday_sync_calls_quote_and_minute(monkeypatch):
+    from services import futu_sync_service
+    from services.futu_sync_service import run_intraday_sync
+    calls = []
+
+    monkeypatch.setattr(futu_sync_service, "_load_sync_targets", lambda scope: [
+        {"code": "600519", "from_watchlist": True, "from_holdings": False}
+    ])
+    monkeypatch.setattr(futu_sync_service, "sync_quote", lambda code: calls.append(("quote", code)) or {"code": code, "source": "futu"})
+    monkeypatch.setattr(futu_sync_service, "sync_minute_kline", lambda code, count=240: calls.append(("minute", code)) or {"code": code, "source": "futu"})
+    monkeypatch.setattr(futu_sync_service, "_record_run", lambda *args, **kwargs: 1)
+    monkeypatch.setattr(futu_sync_service, "_record_item_result", lambda *args, **kwargs: None)
+    monkeypatch.setattr(futu_sync_service, "_finalize_run", lambda *args, **kwargs: None)
+    monkeypatch.setattr(futu_sync_service, "_maybe_alert", lambda *args, **kwargs: False)
+
+    result = run_intraday_sync()
+
+    assert calls == [("quote", "600519"), ("minute", "600519")]
+    assert result["status"] == "success"
+
+
+def test_run_nightly_sync_calls_daily(monkeypatch):
+    from services import futu_sync_service
+    from services.futu_sync_service import run_nightly_sync
+    calls = []
+
+    monkeypatch.setattr(futu_sync_service, "_load_sync_targets", lambda scope: [
+        {"code": "600519", "from_watchlist": True, "from_holdings": True}
+    ])
+    monkeypatch.setattr(futu_sync_service, "sync_daily_kline", lambda code, count=200: calls.append(("daily", code)) or {"code": code, "source": "futu"})
+    monkeypatch.setattr(futu_sync_service, "_record_run", lambda *args, **kwargs: 2)
+    monkeypatch.setattr(futu_sync_service, "_record_item_result", lambda *args, **kwargs: None)
+    monkeypatch.setattr(futu_sync_service, "_finalize_run", lambda *args, **kwargs: None)
+    monkeypatch.setattr(futu_sync_service, "_maybe_alert", lambda *args, **kwargs: False)
+
+    result = run_nightly_sync()
+
+    assert calls == [("daily", "600519")]
+    assert result["status"] == "success"
