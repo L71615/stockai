@@ -3,6 +3,7 @@ from datetime import datetime
 from database import query_all, execute
 from services.utils import detect_asset_type
 from services.futu_ingest_service import sync_quote, sync_minute_kline, sync_daily_kline
+from services.notify_service import send_notification
 
 
 def _normalize_scope(scope: str) -> str:
@@ -92,8 +93,32 @@ def _finalize_run(run_id: int, success_count: int, failed_count: int, status: st
 
 
 
+def _build_alert_message(run_id: int, status: str, target_count: int, failed_count: int) -> tuple[str, str]:
+    title = f"Futu 同步告警 — {status}"
+    markdown = (
+        f"# Futu Sync Alert\n\n"
+        f"- run_id: {run_id}\n"
+        f"- status: {status}\n"
+        f"- target_count: {target_count}\n"
+        f"- failed_count: {failed_count}\n"
+    )
+    return title, markdown
+
+
+
 def _maybe_alert(run_id: int, status: str, target_count: int, failed_count: int) -> bool:
-    return False
+    should_alert = False
+    if status == "failed":
+        should_alert = True
+    elif status == "partial_success" and target_count > 0 and failed_count / target_count >= 0.5:
+        should_alert = True
+
+    if not should_alert:
+        return False
+
+    title, markdown = _build_alert_message(run_id, status, target_count, failed_count)
+    result = send_notification(markdown, title=title)
+    return bool(result.get("ok")) if isinstance(result, dict) else bool(result)
 
 
 
@@ -116,8 +141,8 @@ def run_intraday_sync(scope: str = "watchlist+holdings") -> dict:
                 _record_item_result(run_id, target, sync_type, "success")
 
     status = _summarize_run(len(targets) * 2, success_count, failed_count)
-    _finalize_run(run_id, success_count, failed_count, status, "; ".join(errors[:5]))
-    _maybe_alert(run_id, status, len(targets) * 2, failed_count)
+    alert_sent = _maybe_alert(run_id, status, len(targets) * 2, failed_count)
+    _finalize_run(run_id, success_count, failed_count, status, "; ".join(errors[:5]), alert_sent=alert_sent)
     return {
         "run_id": run_id,
         "status": status,
@@ -146,8 +171,8 @@ def run_nightly_sync(scope: str = "watchlist+holdings") -> dict:
             _record_item_result(run_id, target, "daily", "success")
 
     status = _summarize_run(len(targets), success_count, failed_count)
-    _finalize_run(run_id, success_count, failed_count, status, "; ".join(errors[:5]))
-    _maybe_alert(run_id, status, len(targets), failed_count)
+    alert_sent = _maybe_alert(run_id, status, len(targets), failed_count)
+    _finalize_run(run_id, success_count, failed_count, status, "; ".join(errors[:5]), alert_sent=alert_sent)
     return {
         "run_id": run_id,
         "status": status,

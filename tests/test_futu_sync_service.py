@@ -6,7 +6,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "backend"))
 
 from database import init_db, query_one
-from services.futu_sync_service import _load_sync_targets, _summarize_run
+from services.futu_sync_service import _load_sync_targets, _summarize_run, run_intraday_sync, run_nightly_sync
 
 
 def test_init_db_creates_futu_sync_tables(db):
@@ -52,7 +52,6 @@ def test_summarize_run_status_values():
 
 def test_run_intraday_sync_calls_quote_and_minute(monkeypatch):
     from services import futu_sync_service
-    from services.futu_sync_service import run_intraday_sync
     calls = []
 
     monkeypatch.setattr(futu_sync_service, "_load_sync_targets", lambda scope: [
@@ -73,7 +72,6 @@ def test_run_intraday_sync_calls_quote_and_minute(monkeypatch):
 
 def test_run_nightly_sync_calls_daily(monkeypatch):
     from services import futu_sync_service
-    from services.futu_sync_service import run_nightly_sync
     calls = []
 
     monkeypatch.setattr(futu_sync_service, "_load_sync_targets", lambda scope: [
@@ -89,3 +87,35 @@ def test_run_nightly_sync_calls_daily(monkeypatch):
 
     assert calls == [("daily", "600519")]
     assert result["status"] == "success"
+
+
+def test_maybe_alert_on_failed_run(monkeypatch):
+    from services import futu_sync_service
+    called = {}
+
+    monkeypatch.setattr(
+        futu_sync_service,
+        "send_notification",
+        lambda markdown, title="": called.setdefault("payload", (title, markdown)) or {"ok": True},
+    )
+
+    sent = futu_sync_service._maybe_alert(run_id=1, status="failed", target_count=10, failed_count=10)
+
+    assert sent is True
+    assert "payload" in called
+
+
+def test_maybe_alert_skips_single_partial_failure(monkeypatch):
+    from services import futu_sync_service
+    called = {}
+
+    monkeypatch.setattr(
+        futu_sync_service,
+        "send_notification",
+        lambda markdown, title="": called.setdefault("payload", (title, markdown)) or {"ok": True},
+    )
+
+    sent = futu_sync_service._maybe_alert(run_id=1, status="partial_success", target_count=10, failed_count=1)
+
+    assert sent is False
+    assert called == {}
