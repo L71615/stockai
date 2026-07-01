@@ -2,6 +2,7 @@
 
 import json
 import logging
+from typing import Callable
 
 from database import execute, execute_many
 from services.futu_client import FutuClient
@@ -34,7 +35,6 @@ def _upsert_raw_quote(row: dict) -> None:
             row.get("raw_payload", "{}"),
         ),
     )
-
 
 
 def _build_raw_kline_statements(payload: dict) -> list[tuple[str, tuple]]:
@@ -79,7 +79,6 @@ def _build_raw_kline_statements(payload: dict) -> list[tuple[str, tuple]]:
     return statements
 
 
-
 def _build_historical_sync_statements(payload: dict) -> list[tuple[str, tuple]]:
     statements: list[tuple[str, tuple]] = []
     for idx, trade_date in enumerate(payload["dates"]):
@@ -106,7 +105,6 @@ def _build_historical_sync_statements(payload: dict) -> list[tuple[str, tuple]]:
     return statements
 
 
-
 def sync_quote(code: str, client: FutuClient | None = None) -> dict:
     client = client or FutuClient()
     rows = client.get_snapshot([code])
@@ -115,7 +113,6 @@ def sync_quote(code: str, client: FutuClient | None = None) -> dict:
         return row
     _upsert_raw_quote(row)
     return row
-
 
 
 def sync_minute_kline(code: str, count: int = 240, client: FutuClient | None = None) -> dict:
@@ -127,7 +124,6 @@ def sync_minute_kline(code: str, count: int = 240, client: FutuClient | None = N
     return payload
 
 
-
 def sync_daily_kline(code: str, count: int = 200, client: FutuClient | None = None) -> dict:
     client = client or FutuClient()
     payload = client.get_kline(code, "1d", count=count)
@@ -136,3 +132,27 @@ def sync_daily_kline(code: str, count: int = 200, client: FutuClient | None = No
     statements = _build_raw_kline_statements(payload) + _build_historical_sync_statements(payload)
     execute_many(statements)
     return payload
+
+
+def get_quote_with_fallback(code: str, fallback: Callable[[], dict], client: FutuClient | None = None) -> dict:
+    result = sync_quote(code, client=client)
+    if "error" in result:
+        logger.warning("futu quote failed for %s, fallback engaged: %s", code, result["error"])
+        return fallback()
+    return result
+
+
+def get_daily_kline_with_fallback(code: str, count: int, fallback: Callable[[], dict], client: FutuClient | None = None) -> dict:
+    result = sync_daily_kline(code, count=count, client=client)
+    if "error" in result:
+        logger.warning("futu daily kline failed for %s, fallback engaged: %s", code, result["error"])
+        return fallback()
+    return result
+
+
+def get_minute_kline_with_fallback(code: str, count: int, fallback: Callable[[], dict], client: FutuClient | None = None) -> dict:
+    result = sync_minute_kline(code, count=count, client=client)
+    if "error" in result:
+        logger.warning("futu minute kline failed for %s, fallback engaged: %s", code, result["error"])
+        return fallback()
+    return result
