@@ -6,6 +6,7 @@ python-dotenv==1.0.1
 # Stock data (Tencent real-time + Baostock history)
 akshare==1.18.62
 baostock==0.9.1
+futu-api==10.8.6808
 pandas==3.0.3
 polars>=1.0
 pyarrow>=14.0

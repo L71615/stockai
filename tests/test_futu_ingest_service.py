@@ -8,6 +8,7 @@
 - Task 6: stocks._fetch_quote_sync 优先走 Futu quote，并保持 API 响应结构
 - Task 7: stocks.get_kline_data 在 period=1m 时优先走 Futu 分钟线
 - Task 8: sync_futu_data.py 能按参数路由到对应同步函数
+- Task 9: OpenD 不可用时仍可降级，整组自动化回归可通过
 """
 
 import sys
