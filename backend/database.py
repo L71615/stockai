@@ -314,6 +314,53 @@ def init_db():
             PRIMARY KEY (stock_code, trade_date)
         )""")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_hkline_date ON historical_kline(trade_date)")
+        conn.execute("""CREATE TABLE IF NOT EXISTS futu_raw_quote (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            code        TEXT NOT NULL,
+            market      TEXT NOT NULL,
+            symbol      TEXT NOT NULL,
+            price       REAL,
+            open_price  REAL,
+            high_price  REAL,
+            low_price   REAL,
+            prev_close  REAL,
+            change      REAL,
+            change_pct  REAL,
+            volume      REAL,
+            turnover    REAL,
+            quote_time  TEXT NOT NULL,
+            source      TEXT NOT NULL DEFAULT 'futu',
+            raw_payload TEXT NOT NULL DEFAULT '{}',
+            created_at  TEXT DEFAULT (datetime('now','localtime'))
+        )""")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_futu_raw_quote_symbol_time ON futu_raw_quote(symbol, quote_time DESC)"
+        )
+        conn.execute("""CREATE TABLE IF NOT EXISTS futu_raw_kline (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            code        TEXT NOT NULL,
+            market      TEXT NOT NULL,
+            symbol      TEXT NOT NULL,
+            interval    TEXT NOT NULL,
+            bar_time    TEXT NOT NULL,
+            open        REAL,
+            high        REAL,
+            low         REAL,
+            close       REAL,
+            volume      REAL,
+            turnover    REAL,
+            adjust_type TEXT NOT NULL DEFAULT 'qfq',
+            source      TEXT NOT NULL DEFAULT 'futu',
+            raw_payload TEXT NOT NULL DEFAULT '{}',
+            created_at  TEXT DEFAULT (datetime('now','localtime')),
+            updated_at  TEXT DEFAULT (datetime('now','localtime'))
+        )""")
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_futu_raw_kline_bar ON futu_raw_kline(symbol, interval, bar_time, adjust_type)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_futu_raw_kline_symbol_interval_time ON futu_raw_kline(symbol, interval, bar_time DESC)"
+        )
         conn.execute("""CREATE TABLE IF NOT EXISTS review_reports (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER NOT NULL DEFAULT 1,
