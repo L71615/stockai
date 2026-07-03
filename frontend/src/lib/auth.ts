@@ -67,7 +67,8 @@ async function apiRequest<T = unknown>(path: string, options: ApiOptions = {}): 
   }
   if (!res.ok) {
     const body = await res.json().catch(() => ({}))
-    throw new Error((body as { error?: string }).error || `HTTP ${res.status}`)
+    const msg = (body as Record<string, unknown>).error || (body as Record<string, unknown>).detail || `HTTP ${res.status}`
+    throw new Error(String(msg))
   }
   return res.json()
 }

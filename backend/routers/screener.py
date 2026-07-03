@@ -4,6 +4,7 @@
 """
 
 import json
+import logging
 import threading
 from datetime import datetime
 from pathlib import Path
@@ -15,6 +16,8 @@ from pydantic import BaseModel
 from database import query_all, query_one, execute
 from dependencies import get_current_user_id
 from services.rate_limit import limiter_ai
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/screener", tags=["Screener"])
 
@@ -859,10 +862,10 @@ CONDITION_SCHEMA = [
      "operators": [">", "<"],
      "compare_field": "ma60"},
     {"key": "close_vs_high_20d", "label": "收盘价 vs 20日高点", "type": "cross", "category": "layer4_kline",
-     "operators": ["cross_above"],
+     "operators": [">", "cross_above"],
      "compare_field": "high_20d"},
     {"key": "close_vs_high_55d", "label": "收盘价 vs 55日高点", "type": "cross", "category": "layer4_kline",
-     "operators": ["cross_above"],
+     "operators": [">", "cross_above"],
      "compare_field": "high_55d"},
     {"key": "close_vs_low_5d", "label": "收盘价 vs 5日低点", "type": "compare", "category": "layer4_kline",
      "operators": [">="],
@@ -993,15 +996,6 @@ class ConditionScanRequest(BaseModel):
 @router.post("/conditions/scan")
 def condition_scan(body: ConditionScanRequest):
     """两阶段条件扫描：Phase1 行情快筛(全市场) - Phase2 K线精筛(候选集)"""
-    from services.condition_engine import evaluate
-    from services.screener_service import get_all_stock_list
-    from services.technical import calc_ma, calc_rsi, calc_macd
-    from services.factor_service import factor_ret_5d, factor_ret_20d, factor_atr
-    from services.akshare_adapter import get_stock_factors_http, get_batch_quotes
-    from services.technical import fetch_kline as fetch_kline_fast
-    from services.utils import detect_asset_type
-    from concurrent.futures import ThreadPoolExecutor, as_completed
-
     conditions = body.conditions
 
     # ── 四层字段分类（按数据获取成本从低到高）──
@@ -1116,6 +1110,9 @@ def condition_scan(body: ConditionScanRequest):
                 "l2_passed": l2_passed, "matched_count": 0,
                 "conditions": conditions, "results": []}
 
+    l3_passed = len(survivors)  # 默认值，L3 block 内可能被覆盖
+    l3_warning = ""             # L3 截断警告
+
     # ═══════════════════════════════════════════════════════════
     # L3: 基本面过滤（两阶段：AKShare 快筛 → Baostock 精筛）
     # ═══════════════════════════════════════════════════════════
@@ -1131,13 +1128,12 @@ def condition_scan(body: ConditionScanRequest):
         l3a_tree = {"logic": l3_tree["logic"], "conditions": l3a_conds}
 
         # 候选上限保护，避免扫描超时（5并发≈60s/300只）
-        _L3_MAX_CANDIDATES = 500
+        _L3_MAX_CANDIDATES = 2000
+        l3_warning = ""
         if l3a_conds and len(survivors) > _L3_MAX_CANDIDATES:
-            raise HTTPException(
-                400,
-                f"L3候选 {len(survivors)} 只 > {_L3_MAX_CANDIDATES}，AKShare调用太慢。"
-                f"请先添加 L1(行业) 或 L2(价格区间) 条件缩小候选池。"
-            )
+            l3_warning = f"L3候选过多 ({len(survivors)} 只)，已自动截取前 {_L3_MAX_CANDIDATES} 只。建议添加行业或价格条件缩小范围。"
+            logger.warning("L3 auto-cap: %d survivors > %d, truncating", len(survivors), _L3_MAX_CANDIDATES)
+            survivors = survivors[:_L3_MAX_CANDIDATES]
 
         # ── L3a: AKShare HTTP（PE/PB/ROE），并发快速缩池 ──
         if l3a_conds:
@@ -1221,6 +1217,8 @@ def condition_scan(body: ConditionScanRequest):
         return {"total_scanned": total_full, "l1_passed": l1_passed,
                 "l2_passed": l2_passed, "l3_passed": l3_passed,
                 "matched_count": 0, "conditions": conditions, "results": []}
+
+    l4_warning = ""  # L4 截断警告
 
     # ═══════════════════════════════════════════════════════════
     # L4: K线+技术指标（逐个HTTP+并行计算，最重）
@@ -1331,12 +1329,11 @@ def condition_scan(body: ConditionScanRequest):
 
     if layer_trees[4]["conditions"] and survivors:
         _L4_MAX = 500
+        l4_warning = ""
         if len(survivors) > _L4_MAX:
-            raise HTTPException(
-                400,
-                f"L4候选 {len(survivors)} 只 > {_L4_MAX}，K线获取太慢。"
-                f"请先缩小价格区间或添加更多条件缩小候选池至 {_L4_MAX} 以下。"
-            )
+            l4_warning = f"候选股过多 ({len(survivors)} 只)，已自动截取前 {_L4_MAX} 只。建议添加行业或价格条件缩小范围。"
+            logger.warning("L4 auto-cap: %d survivors > %d, truncating", len(survivors), _L4_MAX)
+            survivors = survivors[:_L4_MAX]
         results = []
         with ThreadPoolExecutor(max_workers=6) as pool:
             futures = {pool.submit(_process_l4, item): item for item in survivors}
@@ -1361,14 +1358,17 @@ def condition_scan(body: ConditionScanRequest):
     except Exception:
         pass
 
+    warning = " ".join(filter(None, [l3_warning, l4_warning])).strip()
+
     return {
         "total_scanned": total_full,
         "l1_passed": l1_passed,
         "l2_passed": l2_passed,
-        "l3_passed": locals().get("l3_passed", len(survivors) if not layer_trees[3]["conditions"] else len(survivors)),
+        "l3_passed": l3_passed,
         "matched_count": len(results),
         "conditions": conditions,
         "results": results[:body.max_results],
+        "warning": warning or None,
     }
 
 

@@ -113,6 +113,7 @@ export default function ConditionPage() {
   const [fields, setFields] = useState<ConditionField[]>([])
   const [strategies, setStrategies] = useState<StrategyTemplate[]>([])
   const [activeStrategyId, setActiveStrategyId] = useState("")
+  const [loadingStrategyId, setLoadingStrategyId] = useState("")
   const [conditions, setConditions] = useState<Condition[]>([])
   const [logic, setLogic] = useState<"AND" | "OR">("AND")
   const [newField, setNewField] = useState("")
@@ -156,6 +157,7 @@ export default function ConditionPage() {
       return
     }
     setActiveStrategyId(id)
+    setLoadingStrategyId(id)
     try {
       const data = await apiGet<{ found: boolean; strategy?: StrategyDetail }>(`/api/screener/strategies/${id}`)
       if (data?.found && data.strategy) {
@@ -171,7 +173,11 @@ export default function ConditionPage() {
         setSortBy(s.sort_by || "")
         setSortOrder(s.sort_order || "desc")
       }
-    } catch { /* */ }
+    } catch (e) {
+      console.error('Failed to load strategy:', e)
+    } finally {
+      setLoadingStrategyId('')
+    }
   }, [activeStrategyId])
 
   // ── Condition CRUD ──
@@ -331,9 +337,10 @@ export default function ConditionPage() {
                 variant={activeStrategyId === s.id ? "default" : "outline"}
                 size="sm"
                 className="text-xs h-7"
+                disabled={loadingStrategyId !== ""}
                 onClick={() => loadStrategy(s.id)}
               >
-                {CONDITION_EMOJI[s.id] || "📋"} {s.name}
+                {loadingStrategyId === s.id ? "加载中..." : (CONDITION_EMOJI[s.id] || "📋") + " " + s.name}
               </Button>
             ))}
           </CardContent>

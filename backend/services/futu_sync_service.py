@@ -4,6 +4,7 @@ from database import query_all, execute
 from services.utils import detect_asset_type
 from services.futu_ingest_service import sync_quote, sync_minute_kline, sync_daily_kline
 from services.notify_service import send_notification
+from services.futu_client import FutuClient
 
 
 def _normalize_scope(scope: str) -> str:
@@ -129,9 +130,10 @@ def run_intraday_sync(scope: str = "watchlist+holdings") -> dict:
     failed_count = 0
     errors = []
 
+    client = FutuClient()
     for target in targets:
         for sync_type, fn in (("quote", sync_quote), ("minute", sync_minute_kline)):
-            result = fn(target["code"])
+            result = fn(target["code"], client=client)
             if "error" in result:
                 failed_count += 1
                 errors.append(f"{target['code']}:{sync_type}:{result['error']}")
@@ -153,15 +155,16 @@ def run_intraday_sync(scope: str = "watchlist+holdings") -> dict:
 
 
 
-def run_nightly_sync(scope: str = "watchlist+holdings") -> dict:
+def run_nightly_sync(scope: str = "watchlist+holdings", count: int = 200) -> dict:
     targets = _load_sync_targets(scope)
     run_id = _record_run("nightly", scope, len(targets))
     success_count = 0
     failed_count = 0
     errors = []
 
+    client = FutuClient()
     for target in targets:
-        result = sync_daily_kline(target["code"])
+        result = sync_daily_kline(target["code"], count=count, client=client)
         if "error" in result:
             failed_count += 1
             errors.append(f"{target['code']}:daily:{result['error']}")

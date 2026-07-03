@@ -17,7 +17,8 @@ import type { KlineResponse } from "@/lib/api-types"
 import { Area, AreaChart, CartesianGrid, XAxis, BarChart, Bar, Cell } from "recharts"
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from "@/components/ui/chart"
 import { KlineChart } from "@/components/KlineChart"
-import { IconBrain, IconRadar2 } from "@tabler/icons-react"
+import { IconBrain, IconRadar2, IconPlayerPlay, IconPlus, IconX } from "@tabler/icons-react"
+import { BacktestResults } from "@/components/backtest-results"
 
 interface AISignal { indicator: string; value: string; reason: string }
 interface AIVerdict { verdict: string; signals: AISignal[] }
@@ -112,6 +113,42 @@ interface MCResult {
   distribution?: { price: number; count: number }[]
 }
 
+// Strategy backtest types
+interface StrategyInfo {
+  id: string; name: string; description: string
+  conditions_count: number; builtin?: boolean
+}
+
+interface StrategyBacktestMetrics {
+  total_return: number; annual_return: number; sharpe: number
+  max_drawdown: number; win_rate: number; profit_factor: number
+  num_trades: number; win_count: number; loss_count: number
+  calmar: number; final_value: number; initial_cash: number
+  total_pnl: number; avg_win: number; avg_loss: number
+}
+interface StrategyBacktestTrade {
+  id: number; date: string; code: string; name: string
+  direction: string; price: number; shares: number
+  pnl: number | null; pnl_pct: number | null; reason: string
+}
+interface StrategyBacktestEquity {
+  date: string; value: number; cash: number
+  positions_value: number; benchmark_value: number | null
+  positions_count: number
+}
+interface StrategyBacktestMonthly {
+  month: string; strategy_return: number; benchmark_return: number | null
+}
+interface StrategyBacktestResult {
+  error?: string
+  config?: Record<string, unknown>
+  metrics?: StrategyBacktestMetrics
+  equity_curve?: StrategyBacktestEquity[]
+  trades?: StrategyBacktestTrade[]
+  monthly_returns?: StrategyBacktestMonthly[]
+  final_value?: number
+}
+
 function QuantPageInner() {
   const router = useRouter()
   const params = useSearchParams()
@@ -162,6 +199,68 @@ function QuantPageInner() {
   // Factor panel
   const [factorData, setFactorData] = useState<FactorPanelData | null>(null)
   const [factorLoading, setFactorLoading] = useState(false)
+
+  // Strategy backtest
+  const [strategies, setStrategies] = useState<StrategyInfo[]>([])
+  const [selectedStrategies, setSelectedStrategies] = useState<string[]>(["turtle_s1"])
+  const [btStockCodes, setBtStockCodes] = useState("")
+  const [btStartDate, setBtStartDate] = useState("2025-06-01")
+  const [btEndDate, setBtEndDate] = useState("2026-06-01")
+  const [btHoldDays, setBtHoldDays] = useState("5")
+  const [btRebalanceFreq, setBtRebalanceFreq] = useState("daily")
+  const [btMaxPos, setBtMaxPos] = useState("10")
+  const [btPosSize, setBtPosSize] = useState("0.1")
+  const [btBenchmark, setBtBenchmark] = useState("000300")
+  const [btRunning, setBtRunning] = useState(false)
+  const [btStrategyResult, setBtStrategyResult] = useState<StrategyBacktestResult | null>(null)
+
+  // Load strategies on mount
+  useEffect(() => {
+    apiGet<StrategyInfo[]>("/api/quant/strategies").then((d) => {
+      if (Array.isArray(d)) setStrategies(d)
+    }).catch(() => {})
+  }, [])
+
+  const toggleStrategy = (sid: string) => {
+    setSelectedStrategies((prev) =>
+      prev.includes(sid) ? prev.filter((s) => s !== sid) : [...prev, sid]
+    )
+  }
+
+  const addStockFromQuick = (codes: string[]) => {
+    const current = btStockCodes.split(/[,，\s]+/).filter(Boolean)
+    const merged = [...new Set([...current, ...codes])]
+    setBtStockCodes(merged.join(", "))
+  }
+
+  const runStrategyBacktest = async () => {
+    if (selectedStrategies.length === 0) return
+    setBtRunning(true)
+    setBtStrategyResult(null)
+    try {
+      const stockCodes = btStockCodes
+        .split(/[,，\s]+/)
+        .map((s) => s.trim())
+        .filter(Boolean)
+      const data = await apiPost<StrategyBacktestResult>("/api/quant/strategy-backtest", {
+        strategy_ids: selectedStrategies,
+        stock_codes: stockCodes,
+        start_date: btStartDate,
+        end_date: btEndDate,
+        initial_cash: 100000,
+        hold_days: Number(btHoldDays) || 5,
+        rebalance_freq: btRebalanceFreq,
+        max_positions: Number(btMaxPos) || 10,
+        position_size_pct: Number(btPosSize) || 0.1,
+        benchmark: btBenchmark,
+      })
+      setBtStrategyResult(data)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "回测失败")
+    } finally {
+      setBtRunning(false)
+    }
+  }
 
   // Factor AI explain
   interface FactorExplainResult {
@@ -359,7 +458,7 @@ function QuantPageInner() {
     switch (tab) {
       case "insight": await fetchInsight(); break
       case "factors": await fetchFactors(); break
-      case "backtest": await runBacktest(); break
+      case "backtest": await runStrategyBacktest(); break
       case "mc": await runMC(); break
       case "risk": await fetchRisk(); break
       case "review": await fetchLatestReview(); break
@@ -692,17 +791,27 @@ function QuantPageInner() {
                         {Object.entries(insight.indicators)
                           .filter(([key]) => key !== "signal")
                           .map(([key, val]) => {
-                            const latest = typeof val === "object" && val !== null
-                              ? Object.entries(val as Record<string, unknown>).slice(0, 1).map(([k, v]) => ({ k, v }))
-                              : [{ k: key, v: val }]
-                            return latest.map(({ k, v }) => (
-                              <div key={`${key}-${k}`} className="border border-border rounded-none p-1.5">
-                                <p className="text-[10px] text-muted-foreground">{k}</p>
-                                <p className="text-xs font-mono font-medium">
-                                  {typeof v === "number" ? v.toFixed(v < 1 ? 4 : 2) : String(v)}
-                                </p>
+                            if (typeof val === "object" && val !== null && !Array.isArray(val)) {
+                              return Object.entries(val as Record<string, unknown>).map(([label, arr]) => {
+                                const v = Array.isArray(arr) ? arr.filter((x) => x != null).slice(-1)[0] : arr
+                                const display = typeof v === "number" ? v.toFixed(v < 1 ? 4 : 2) : (v != null ? String(v) : "--")
+                                return (
+                                  <div key={`${key}-${label}`} className="border border-border rounded-none p-1.5">
+                                    <p className="text-[10px] text-muted-foreground">{label}</p>
+                                    <p className="text-xs font-mono font-medium">{display}</p>
+                                  </div>
+                                )
+                              })
+                            }
+                            // 标量值（如 RSI）
+                            const v = Array.isArray(val) ? val.filter((x) => x != null).slice(-1)[0] : val
+                            const display = typeof v === "number" ? v.toFixed(v < 1 ? 4 : 2) : (v != null ? String(v) : "--")
+                            return (
+                              <div key={key} className="border border-border rounded-none p-1.5">
+                                <p className="text-[10px] text-muted-foreground">{key}</p>
+                                <p className="text-xs font-mono font-medium">{display}</p>
                               </div>
-                            ))
+                            )
                           })}
                       </div>
                     </CardContent>
@@ -782,70 +891,153 @@ function QuantPageInner() {
             )}
           </TabsContent>
 
-          {/* Tab 3: Backtest */}
+          {/* Tab 3: Strategy Backtest */}
           <TabsContent value="backtest" className="space-y-4">
+            {/* 策略选择 */}
             <Card>
-              <CardContent className="pt-4">
-                <div className="flex items-end gap-2 flex-wrap">
+              <CardHeader className="pb-2"><CardTitle className="text-xs">选择策略</CardTitle></CardHeader>
+              <CardContent>
+                <div className="flex flex-wrap gap-1.5">
+                  {strategies.length === 0 ? (
+                    <span className="text-xs text-muted-foreground">加载策略列表...</span>
+                  ) : (
+                    strategies.map((s) => {
+                      const active = selectedStrategies.includes(s.id)
+                      return (
+                        <button
+                          key={s.id}
+                          onClick={() => toggleStrategy(s.id)}
+                          className={cn(
+                            "inline-flex items-center gap-1 px-2 py-1 text-[11px] border transition-colors",
+                            active
+                              ? "border-primary bg-primary/10 text-primary"
+                              : "border-border text-muted-foreground hover:text-foreground hover:border-muted-foreground"
+                          )}
+                        >
+                          {s.name || s.id}
+                          {active && <IconX className="size-3" />}
+                          {!active && <IconPlus className="size-3" />}
+                        </button>
+                      )
+                    })
+                  )}
+                </div>
+                {selectedStrategies.length > 0 && (
+                  <p className="text-[10px] text-muted-foreground mt-1.5">
+                    已选: {selectedStrategies.map((sid) => {
+                      const s = strategies.find((st) => st.id === sid)
+                      return s?.name || sid
+                    }).join(", ")}
+                  </p>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* 股票池 */}
+            <Card>
+              <CardHeader className="pb-2"><CardTitle className="text-xs">股票池</CardTitle></CardHeader>
+              <CardContent className="space-y-2">
+                <div className="flex items-center gap-1 flex-wrap">
+                  <Button variant="outline" size="sm" className="h-6 text-[10px]" onClick={() => addStockFromQuick(quickData.holdings.map((h) => h.code))}>
+                    持仓股 ({quickData.holdings.length})
+                  </Button>
+                  <Button variant="outline" size="sm" className="h-6 text-[10px]" onClick={() => addStockFromQuick(quickData.watchlist.map((w) => w.code))}>
+                    自选股 ({quickData.watchlist.length})
+                  </Button>
+                </div>
+                <Input
+                  value={btStockCodes}
+                  onChange={(e) => setBtStockCodes(e.target.value)}
+                  placeholder="000001, 600519, ... (留空使用默认沪深300池)"
+                  className="h-8 text-xs font-mono"
+                />
+              </CardContent>
+            </Card>
+
+            {/* 参数设置 */}
+            <Card>
+              <CardHeader className="pb-2"><CardTitle className="text-xs">参数设置</CardTitle></CardHeader>
+              <CardContent>
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
                   <div className="space-y-1">
-                    <Label className="text-xs">每次定投</Label>
-                    <Input value={btAmount} onChange={(e) => setBtAmount(e.target.value)} className="h-8 w-24" />
+                    <Label className="text-[10px]">起始日期</Label>
+                    <Input value={btStartDate} onChange={(e) => setBtStartDate(e.target.value)} className="h-7 text-xs font-mono" placeholder="2024-01-01" />
                   </div>
                   <div className="space-y-1">
-                    <Label className="text-xs">频率</Label>
-                    <Select value={btFreq} onValueChange={setBtFreq}>
-                      <SelectTrigger className="h-8 text-xs w-auto min-w-[80px]">
+                    <Label className="text-[10px]">结束日期</Label>
+                    <Input value={btEndDate} onChange={(e) => setBtEndDate(e.target.value)} className="h-7 text-xs font-mono" placeholder="2025-01-01" />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-[10px]">持仓天数</Label>
+                    <Input value={btHoldDays} onChange={(e) => setBtHoldDays(e.target.value)} className="h-7 w-20 text-xs" type="number" min="1" max="60" />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-[10px]">调仓频率</Label>
+                    <Select value={btRebalanceFreq} onValueChange={setBtRebalanceFreq}>
+                      <SelectTrigger className="h-7 text-xs w-auto min-w-[80px]">
                         <SelectValue />
                       </SelectTrigger>
-                      <SelectContent className="max-h-48">
+                      <SelectContent>
+                        <SelectItem value="daily">每日</SelectItem>
                         <SelectItem value="weekly">每周</SelectItem>
                         <SelectItem value="monthly">每月</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
-                  <Button size="sm" onClick={runBacktest} disabled={loading}>定投回测</Button>
-                  <Button size="sm" variant="outline" onClick={runCompare} disabled={loading}>策略对比</Button>
+                  <div className="space-y-1">
+                    <Label className="text-[10px]">最大持仓</Label>
+                    <Input value={btMaxPos} onChange={(e) => setBtMaxPos(e.target.value)} className="h-7 w-20 text-xs" type="number" min="1" max="50" />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-[10px]">单票仓位%</Label>
+                    <Input value={btPosSize} onChange={(e) => setBtPosSize(e.target.value)} className="h-7 w-20 text-xs" placeholder="0.1" />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-[10px]">基准指数</Label>
+                    <Select value={btBenchmark} onValueChange={setBtBenchmark}>
+                      <SelectTrigger className="h-7 text-xs w-auto min-w-[100px]">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="000300">沪深300</SelectItem>
+                        <SelectItem value="000905">中证500</SelectItem>
+                        <SelectItem value="399006">创业板指</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
                 </div>
+                <Button
+                  size="sm"
+                  className="mt-3"
+                  onClick={runStrategyBacktest}
+                  disabled={btRunning || selectedStrategies.length === 0}
+                >
+                  <IconPlayerPlay className="size-3.5" />
+                  {btRunning ? "回测中..." : "开始回测"}
+                </Button>
               </CardContent>
             </Card>
 
-            {btResult && (
-              <Card>
-                <CardHeader className="pb-2"><CardTitle className="text-sm">定投回测结果</CardTitle></CardHeader>
-                <CardContent>
-                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 text-center">
-                    <div><p className="text-xs text-muted-foreground">总投资</p><p className="text-lg font-mono font-semibold">¥ {btResult.total_invested?.toLocaleString()}</p></div>
-                    <div><p className="text-xs text-muted-foreground">终值</p><p className="text-lg font-mono font-semibold">¥ {btResult.final_value?.toLocaleString()}</p></div>
-                    <div><p className="text-xs text-muted-foreground">定投收益</p><p className={cn("text-lg font-mono font-semibold", (btResult.total_return || 0) >= 0 ? "text-red-500" : "text-emerald-500")}>{btResult.total_return != null ? `${(btResult.total_return * 100).toFixed(1)}%` : "--"}</p></div>
-                    <div><p className="text-xs text-muted-foreground">一次性收益</p><p className={cn("text-lg font-mono font-semibold", (btResult.lump_sum_return || 0) >= 0 ? "text-red-500" : "text-emerald-500")}>{btResult.lump_sum_return != null ? `${(btResult.lump_sum_return * 100).toFixed(1)}%` : "--"}</p></div>
-                  </div>
-                  {btResult.conclusion && <p className="text-xs text-muted-foreground mt-3">{btResult.conclusion}</p>}
+            {/* 回测结果 */}
+            {btStrategyResult?.error && (
+              <Card className="border-red-500/30 bg-red-500/5">
+                <CardContent className="py-3">
+                  <p className="text-xs text-red-400">{btStrategyResult.error}</p>
                 </CardContent>
               </Card>
             )}
 
-            {compareResult.length > 0 && (
-              <Card>
-                <CardHeader className="pb-2"><CardTitle className="text-sm">策略对比</CardTitle></CardHeader>
-                <CardContent>
-                  <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
-                    {compareResult.map((s, i) => {
-                      const labels: Record<string, string> = { dca: "定期定额", value_avg: "价值平均", fixed_shares: "固定股数", dip_buy: "下跌加仓" }
-                      return (
-                        <div key={i} className="border border-border rounded-none p-2 text-center">
-                          <Badge variant="outline" className="text-[10px] mb-1">{labels[s.name] || s.name}</Badge>
-                          <p className={cn("text-sm font-mono font-semibold", s.return >= 0 ? "text-red-500" : "text-emerald-500")}>
-                            {s.return >= 0 ? "+" : ""}{(s.return * 100).toFixed(1)}%
-                          </p>
-                          <p className="text-[10px] text-muted-foreground">
-                            投入 ¥{s.total_invested?.toLocaleString()} · {s.trades}笔
-                          </p>
-                        </div>
-                      )
-                    })}
-                  </div>
-                </CardContent>
-              </Card>
+            {btStrategyResult?.metrics && btStrategyResult?.equity_curve && btStrategyResult?.trades && (
+              <BacktestResults
+                metrics={btStrategyResult.metrics}
+                equity_curve={btStrategyResult.equity_curve}
+                trades={btStrategyResult.trades as Array<{
+                  id: number; date: string; code: string; name: string
+                  direction: "buy" | "sell"; price: number; shares: number
+                  pnl: number | null; pnl_pct: number | null; reason: string
+                }>}
+                monthly_returns={btStrategyResult.monthly_returns ?? []}
+              />
             )}
           </TabsContent>
 

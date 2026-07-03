@@ -8,13 +8,13 @@ market_state: [bull, range]
 recommended_position: "50-70%"
 conditions:
   - field: close_vs_high_55d
-    operator: "cross_above"
-    value: 0
+    operator: ">"
+    compare_field: high_55d
   - field: avg_amount_20d
     operator: ">="
     value: 50000000
   - field: atr_pct
     operator: "between"
     value: [1.0, 6]
-sort_by: distance_to_breakout
+sort_by: atr_pct
 sort_order: asc

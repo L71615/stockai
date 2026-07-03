@@ -33,8 +33,27 @@ def _op_between(a, b):
     if not isinstance(b, (list, tuple)) or len(b) != 2:
         return False
     return b[0] <= a <= b[1]
-def _op_in_list(a, b): return a is not None and b is not None and a in b
-def _op_not_in_list(a, b): return a is not None and b is not None and a not in b
+def _op_in_list(a, b):
+    """检查 a 是否匹配 b 中的任一项（b 支持逗号分隔的字符串或列表）
+    e.g. _op_in_list('半导体', '科技,白酒') → '科技' in '半导体'? False
+         _op_in_list('半导体', '科技,半导体') → '科技' in '半导体' OR '半导体' in '半导体' → True
+    """
+    if a is None or b is None or a == "": return False
+    if isinstance(b, (list, tuple)):
+        items = [str(x).strip() for x in b]
+    else:
+        items = [x.strip() for x in str(b).split(",") if x.strip()]
+    return any(item in a for item in items)
+
+def _op_not_in_list(a, b):
+    """排除匹配：a 不匹配 b 中的任一项"""
+    if a is None or b is None: return True
+    if a == "": return True  # 无行业信息的不排除
+    if isinstance(b, (list, tuple)):
+        items = [str(x).strip() for x in b]
+    else:
+        items = [x.strip() for x in str(b).split(",") if x.strip()]
+    return not any(item in a for item in items)
 
 def _op_cross_above(seq_a, threshold, window: int = 2):
     """检测序列 A 是否在最近 window 天内上穿阈值 (或上穿 compare_field 序列)"""
@@ -109,6 +128,10 @@ def compile_condition(cond: dict) -> Callable[[dict], bool]:
                 # 优先使用序列的最新值，回退到标量值
                 a = data.get(_f)
                 b = data.get(_cf)
+                # 支持 "close_vs_ma20" 等 _vs_ 字段：提取基础字段名
+                if a is None and "_vs_" in _f:
+                    base_field = _f.split("_vs_")[0]
+                    a = data.get(base_field)
                 # 尝试用序列的最后值
                 seq_a = data.get(_f_seq)
                 seq_b = data.get(_c_seq)

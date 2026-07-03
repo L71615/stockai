@@ -30,7 +30,7 @@ def main() -> None:
     if args.mode == "intraday":
         result = run_intraday_sync(scope=args.scope)
     elif args.mode == "nightly":
-        result = run_nightly_sync(scope=args.scope)
+        result = run_nightly_sync(scope=args.scope, count=args.count)
     else:
         if not args.code or not args.type:
             raise SystemExit("single mode requires --code and --type")

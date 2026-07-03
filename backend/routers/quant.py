@@ -836,3 +836,79 @@ def monthly_backtest(req: MonthlyBacktestRequest):
         "long_only": req.long_only,
         **result,
     }
+
+
+# ═══════════════════════════════════════════════════════════════
+#  策略回测 — YAML 策略 + 历史数据模拟
+# ═══════════════════════════════════════════════════════════════
+
+class StrategyBacktestRequest(BaseModel):
+    """策略回测请求"""
+    strategy_ids: list[str] = ["turtle_s1"]   # YAML 策略 id 列表
+    stock_codes: list[str] = []               # 股票代码列表，空=默认池
+    start_date: str = "2024-01-01"
+    end_date: str = "2025-01-01"
+    initial_cash: float = 100000
+    hold_days: int = 5
+    rebalance_freq: str = "daily"             # daily / weekly / monthly
+    max_positions: int = 10
+    position_size_pct: float = 0.1            # 单票仓位比例
+    benchmark: str = "000300"                 # 基准指数
+
+
+@router.post("/strategy-backtest")
+def strategy_backtest(req: StrategyBacktestRequest):
+    """策略回测：用 YAML 策略在历史数据上模拟选股 + 交易 + 绩效报告
+
+    对每个调仓日:
+      1. 从 historical_kline 构建历史截面（只用当日及之前数据）
+      2. 计算技术字段（MA/RSI/MACD/ATR 等）
+      3. 用 condition_engine 执行策略条件筛选
+      4. 模拟买入（次日开盘价）/ 卖出（持仓满 hold_days）
+      5. 记录每日净值曲线
+
+    返回:
+      - config: 回测配置
+      - metrics: 绩效指标（年化收益/夏普/最大回撤/胜率/盈亏比/卡玛）
+      - equity_curve: 每日净值 + 基准对比
+      - trades: 完整交易明细
+      - monthly_returns: 月度收益 + 基准对比
+    """
+    from services.strategy_backtest_service import run_strategy_backtest
+
+    if not req.strategy_ids:
+        raise HTTPException(400, "至少选择一个策略")
+
+    if req.hold_days < 1:
+        raise HTTPException(400, "持仓天数至少为 1")
+
+    if req.max_positions < 1:
+        raise HTTPException(400, "最大持仓数至少为 1")
+
+    if req.position_size_pct <= 0 or req.position_size_pct > 1:
+        raise HTTPException(400, "单票仓位比例需在 0.01 ~ 1.00 之间")
+
+    result = run_strategy_backtest(
+        strategy_ids=req.strategy_ids,
+        stock_codes=req.stock_codes if req.stock_codes else [],
+        start_date=req.start_date,
+        end_date=req.end_date,
+        initial_cash=req.initial_cash,
+        hold_days=req.hold_days,
+        rebalance_freq=req.rebalance_freq,
+        max_positions=req.max_positions,
+        position_size_pct=req.position_size_pct,
+        benchmark=req.benchmark,
+    )
+
+    if "error" in result:
+        raise HTTPException(400, result["error"])
+
+    return result
+
+
+@router.get("/strategies")
+def list_backtest_strategies():
+    """返回所有可用于回测的策略列表（YAML + 内置）"""
+    from services.strategy_backtest_service import _list_available_strategies
+    return _list_available_strategies()
