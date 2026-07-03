@@ -1,6 +1,6 @@
 # StockAI v3.7 — AI 量化选股 + 投资决策平台
 
-> 55 因子多因子选股 · 海龟交易法 · 因子全景面板 · 条件选股四层过滤 · TradingView K 线 · P1 工程 100%
+> 55 因子多因子选股 · 海龟交易法 · 因子全景面板 · 条件选股四层过滤 · TradingView K 线 · 多 Agent 分析 · 交易记忆 · 策略回测
 >
 > A 股投资者的量化工具箱。数据驱动，AI 增强。
 
@@ -9,15 +9,20 @@
 | 模块 | 功能 |
 |------|------|
 | 🔍 **AI 选股** | 全市场多因子扫描（55 因子）→ IC 加权打分 → AI 二次精选 → 策略回测 → 盯盘 |
-| 🎯 **条件选股** | 四层过滤架构(L1-L4)，14 个预设策略模板，YAML 策略引擎，支持 AND/OR 组合 |
+| 🎯 **条件选股** | 四层过滤架构(L1-L4)，12 个预设策略模板，YAML 策略引擎，支持 AND/OR 组合 |
 | 🐢 **海龟选股** | 唐奇安通道突破选股，S1(20日)+S2(55日)双系统，ATR止损仓位计算，综合评分 0-100 |
-| 📊 **量化分析** | 个股 K 线(5 指标+讲解栏) + 55 因子全景透视(9 类+雷达图) / 策略回测 / 蒙特卡洛 |
-| 🧠 **AI 对话** | SSE 流式响应，7 功能 × 5 供应商独立配置映射表，因子 AI 解读 |
+| 📊 **策略回测** | 17 个策略模板，YAML 策略选股→历史模拟交易→绩效报告(夏普/最大回撤/胜率)，月度收益 vs 基准 |
+| 🤖 **多 Agent 分析** | 5 角色多空辩论(技术面+基本面→多头+空头→裁判)，结构化决策输出(买入/持有/卖出+置信度) |
+| 🧠 **交易记忆** | 决策→验证→反思→注入 自动闭环，每笔交易自动记录，盘后 AI 反思，下次分析自动引用历史教训 |
+| 🔌 **数据源抽象** | 配置驱动多源 fallback(Futu→新浪→AKShare→Baostock)，环境变量一键切换，新数据源插拔式接入 |
+| 🛡 **交易纪律** | 买入前强制校验(止损检查+仓位限制+追涨停禁止+连亏保护)，设置页可视化配置 |
+| 📊 **量化分析** | 个股 K 线(5 指标+讲解栏) + 55 因子全景透视(9 类+雷达图) / 蒙特卡洛 |
+| 🧠 **AI 对话** | SSE 流式响应，DeepSeek/MiniMax/OpenAI/Claude 多供应商，功能独立配置 |
 | 🔔 **通知推送** | 企业微信 / Telegram / 邮件，盯盘异动自动推送 |
 | 💼 **持仓管理** | 实时盈亏 + 分散度饼图 + 行业自动分类（20+ 板块） |
 | 📉 **K 线图表** | TradingView lightweight-charts 蜡烛图，MA/BOLL/MACD/RSI/KDJ 五指标 + 海龟通道线 + 指标讲解栏 |
-| 📡 **Futu 行情接入** | A 股 `quote / minute / daily` 已接入 Futu OpenD + futu-api，现有报价、日线和 1m 图表优先走 Futu |
-| 🔄 **Futu 同步系统 (P1)** | `watchlist + holdings` 批量目标，支持 `intraday`(quote+minute) / `nightly`(daily) 同步，落库 `futu_sync_runs` / `futu_sync_run_items` 并支持严重失败告警 |
+| 📡 **Futu 行情接入** | A 股 `quote / minute / daily` 接入 Futu OpenD，日线同步 `historical_kline` |
+| 🔄 **Futu 同步系统** | `watchlist + holdings` 批量目标，`intraday` / `nightly` 同步，落库并支持告警 |
 
 ## 因子体系（55 个）
 
@@ -158,7 +163,7 @@ NOTIFY_ENABLED=true
 
 ## 版本历史
 
-- **v3.7** (2026-07-03): 策略回测引擎 — YAML 策略选股→历史模拟交易→绩效报告完整链路；前端回测 Tab 重写(策略选择+参数配置+净值曲线+月度收益)；Futu 连接优化(共享单实例避免连接爆炸)；沪深300成分股导入(353只, 105K 日线)；基准曲线合成兜底；技术指标摘要修复(仅显示最新值)
+- **v3.7** (2026-07-03): 策略回测引擎 + 多 Agent 分析 + 交易记忆系统 + 数据源抽象层 + 交易纪律强制 + AI 设置修复 + 性能优化(筛选页轮询修复/DataTable 3→1倍/批量报价/SWR去重/Futu跳过)。23 files, +1970/-1639 lines
 - **v3.6** (2026-07-01): Futu Phase A + P1 — A 股 `quote / minute / daily` 接入 Futu OpenD，新增 `futu_raw_quote` / `futu_raw_kline`，日线同步 `historical_kline`，现有报价 / 日线 / 1m 图表优先走 Futu；新增 `futu_sync_service`、`futu_sync_runs` / `futu_sync_run_items`、`intraday` / `nightly` 批量同步、告警逻辑与调度触发
 - **v3.6** (2026-07-01): P1 工程质量 100% — 认证解耦(ContextVar JWT, 24处硬编码清零) + AI 异常体系(5级层次) + K线 crosshair 标签 + 成交量格式化 + 连接池(busy_timeout) + data-table 拆分(730→4文件) + 全局异常处理 + TypeScript 零 :any
 - **v3.5** (2026-06-26): 条件选股四层过滤(L1-L4) + 因子清理(57→55, 删社交死因子, 修5阈值) + K线三合一修复(对齐+讲解栏+默认精简) + L3两阶段重构(AKShare快筛→Baostock精筛) + Baostock超时保护 + 废弃页面清理(duel/kol/review/skills)
