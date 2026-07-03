@@ -1,6 +1,54 @@
 # StockAI 项目日志
 
-> StockAI 从 0 到 v3.5 的完整演进记录。按时间倒序。
+> StockAI 从 0 到 v3.7 的完整演进记录。按时间倒序。
+
+---
+
+## 2026-07-03 — v3.7 策略回测引擎 + Futu 连接优化 + 数据扩充
+
+### 策略回测引擎
+
+**新增 `backend/services/strategy_backtest_service.py`：**
+- `run_strategy_backtest()` — 核心函数，串联 YAML 策略选股→历史模拟交易→绩效报告
+- 工作流：对每个调仓日，从 `historical_kline` 构建历史截面 → 计算技术字段 → `condition_engine.evaluate()` 跑策略筛选 → 模拟买入(次日开盘价)/卖出(持仓满 N 天)
+- 支持参数：策略多选(OR 逻辑)、股票池、日期范围、持仓天数、调仓频率(daily/weekly/monthly)、仓位比例、基准指数
+- 输出：6 大绩效指标(年化收益/夏普/最大回撤/胜率/盈亏比/卡玛) + 净值曲线 + 交易明细 + 月度收益 vs 基准
+
+**新增 `backend/services/backtest_field_builder.py`：**
+- 从 K 线数据计算策略所需全部技术字段(MA/RSI/MACD/ATR/布林带/动量等 30+ 字段)
+- 纯函数，不调外部 API，回测和实时选股可共用
+- 输出 `condition_engine.evaluate()` 能直接使用的 `stock_data` dict
+
+**API 端点：**
+- `POST /api/quant/strategy-backtest` — 策略回测
+- `GET /api/quant/strategies` — 列出 17 个可用策略(12 YAML + 5 内置)
+
+**前端：**
+- `chart-equity-curve.tsx` — 净值曲线对比图(Recharts，策略紫色 vs 基准灰色)
+- `backtest-results.tsx` — 回测结果展示(6 指标卡片 + 净值图 + 交易明细表 + 月度收益)
+- `quant/page.tsx` 重写回测 Tab — 策略多选 + 股票池 + 参数面板 + 结果展示
+
+### Futu 连接优化
+
+**修复连接爆炸：**
+- `futu_sync_service.py`：`run_intraday_sync` 和 `run_nightly_sync` 改为创建一个 `FutuClient` 实例，所有股票共享
+- `sync_futu_data.py`：batch 模式支持 `--count` 参数
+- 根因：之前每只股票新建 `OpenQuoteContext`，300 只 = 300 个 TCP 连接，超限后全部超时
+
+### 数据扩充
+
+- 自选股导入沪深300成分股(300 只)，总计 353 只股票，105K 条日线
+- 时间跨度 2025-04-01 ~ 2026-07-03
+
+### Bug 修复
+
+- 基准曲线：ETF 不在库时回退为全市场等权合成基准(100 只随机采样)
+- 个股透视：技术指标摘要从全序列数组改为只显示最新值
+- 日期默认值：回测页默认日期改为匹配数据实际范围
+
+### 文件变更
+- **新增**: `backend/services/strategy_backtest_service.py`, `backend/services/backtest_field_builder.py`, `frontend/src/components/backtest-results.tsx`, `frontend/src/components/chart-equity-curve.tsx`
+- **修改**: `backend/routers/quant.py`, `backend/services/futu_sync_service.py`, `backend/scripts/sync_futu_data.py`, `frontend/src/app/quant/page.tsx`, `backend/config.py`, `README.md`
 
 ---
 
