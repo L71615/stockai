@@ -1,6 +1,6 @@
 # StockAI 项目日志
 
-> StockAI 从 0 到 v3.7 的完整演进记录。按时间倒序。
+> StockAI 从 0 到 v3.7 的完整演进记录。按时间倒序。总计 23 次重大更新。
 
 ---
 
@@ -49,6 +49,94 @@
 ### 文件变更
 - **新增**: `backend/services/strategy_backtest_service.py`, `backend/services/backtest_field_builder.py`, `frontend/src/components/backtest-results.tsx`, `frontend/src/components/chart-equity-curve.tsx`
 - **修改**: `backend/routers/quant.py`, `backend/services/futu_sync_service.py`, `backend/scripts/sync_futu_data.py`, `frontend/src/app/quant/page.tsx`, `backend/config.py`, `README.md`
+
+---
+
+## 2026-07-04 — v3.7 多 Agent 分析 + 数据源抽象 + 交易记忆 + 纪律系统 + 性能修复
+
+### 多 Agent 深度分析
+
+**重写 `backend/services/multi_agent_service.py`：**
+- 5 角色多空辩论：技术面分析师 + 基本面分析师 → 多头研究员 + 空头研究员 → 裁判
+- 3 轮调用（每轮并行），DeepSeek 下 15-20 秒完成
+- 输出：结构化决策（买入/持有/卖出 + 置信度 + 止损建议 + 风险提示）
+- **数据优先本地**：K 线/指标直接从 `historical_kline` 读取（零网络），仅基本面调外部 API
+- API：`POST /api/quant/multi-agent-analysis`
+- 前端：`multi-agent-analysis.tsx` 组件，量化页「AI 分析」Tab
+
+### 数据源抽象层
+
+**新增 `backend/services/vendor_config.py` + `vendor_router.py`：**
+- 配置驱动的多源 fallback 链（Futu → Sina → AKShare → Baostock）
+- 环境变量 `VENDOR_*` 一键切换供应商优先级
+- 新数据源插拔式接入：实现函数 + 注册 + 配置
+- **Futu 快速跳过**：OpenD 不可达时 1 秒检测跳过（之前 4 分钟超时）
+- `technical.py`、`stocks.py`、`discipline.py` 全部改用 vendor_router
+
+### 交易记忆系统
+
+**新增 `backend/services/trading_memory.py`：**
+- TradingAgents 风格交易记忆日志（Markdown 追加式）
+- Phase A：卖出时自动写入 pending 条目
+- Phase B：每天 15:30 自动解析（查数据库盈亏 → AI 生成反思）
+- Phase C：下次 AI 复盘时注入历史上下文
+- `discipline_service.py` 卖出接记忆钩子
+- `scheduler.py` 新增记忆解析线程
+- `review_service.py` 注入历史记忆到 AI 复盘 Prompt
+
+### AI 复盘重构
+
+- 删除旧的 `POST /api/stocks/review` / `/review/structured` / `/reviews` / `/reviews/{id}`
+- 替换为 `GET /api/stocks/memory/stats` / `/memory/entries` / `/memory/context/{code}`
+- `review_service.py` 精简：保留 `aggregate_transactions`，新增 `get_memory_entries` / `get_memory_stats`
+- 前端量化页「AI 复盘」→「交易记忆」Tab：展示记忆条目 + 统计卡片
+
+### 交易纪律强制系统
+
+- `discipline_service.py` 新增：`get_rules` / `save_rules` / `validate_buy`
+- 买入前校验：止损检查 + 仓位限制 + 追涨停禁止 + 连亏保护
+- API：`GET/PUT /api/discipline/rules` + `POST /api/discipline/rules/validate-buy`
+- 前端设置页：`TradingRulesSection` 可视化开关 + 参数调整
+
+### AI 设置 Bug 修复（6 项）
+
+| 问题 | 修复 |
+|---|---|
+| 测试连通用掩码 Key → 必然失败 | 后端 `POST /ai-test` 自动用数据库真实 Key |
+| 改 model 保存会清空 Key | 后端 `PUT /ai-configs` 掩码检测 → 保留已存 Key |
+| 死功能 `review` 无消费者 | 前端删除，替换为 `explain`（多 Agent 分析/因子解读） |
+| 默认供应商 MiniMax 无 Key | `config.py` 默认改为 `deepseek` |
+| MiniMax 标签误导 | 改为 `MiniMax（国内）` |
+| `AIServiceError` 未导入 | `ai_service.py` 补充 import |
+
+### 性能修复（6 项）
+
+| 问题 | 修复 |
+|---|---|
+| 筛选页 6500+ 次重复请求 | `pollScan` → `useCallback` + `useRef` 防重复 |
+| DataTable 3 套 DndContext 同时挂载 | 受控 Tab `activeTab` + `forceMount={false}` |
+| DataTable `useState(initialData)` 不更新 | `useEffect` 同步 prop 变化 |
+| `GET /holdings/with-pnl` 串行 N 次 HTTP | 先收集代码 → 一次 `get_batch_quotes` 批量获取 |
+| `/api/version` 重复请求 | 删除 `app-layout.tsx` 中重复 SWR |
+| 多 Tab 切回全量刷新 | SWR 全局 `revalidateOnFocus: false` + 去重 5s |
+
+### 其他修复
+
+- 基准曲线：ETF 不在库时回退为全市场等权合成基准
+- 空 model 保存 → 后端掩码保护
+- Python 编码错误 → 修复 `ai_service.py` 异常处理
+
+### 盘前计划页面
+
+- 新增 `frontend/src/app/plan/page.tsx`
+- 侧边栏分析分组新增「盘前计划」入口
+- 日期选择 + 市场状态 + 策略多选 + 候选标的 + 仓位滑块 + 风险提示 + 总结
+
+### 文件变更
+- **新增 4 文件**: `trading_memory.py`, `vendor_config.py`, `vendor_router.py`, `multi-agent-analysis.tsx`
+- **新增 1 目录**: `frontend/src/app/plan/`
+- **修改 19 文件**: 详见 git diff
+- **总计**: 23 files, +1970/-1639 lines
 
 ---
 

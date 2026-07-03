@@ -31,6 +31,7 @@ import {
   IconRobot,
   IconSettings,
   IconChevronDown,
+  IconClipboardList,
 } from "@tabler/icons-react"
 
 const navGroups = [
@@ -54,6 +55,7 @@ const navGroups = [
       { id: "quant", label: "量化分析", icon: IconChartScatter, url: "/quant" },
       { id: "condition", label: "条件选股", icon: IconFilter, url: "/screener/condition" },
       { id: "screener", label: "AI 选股", icon: IconSearch, url: "/screener" },
+      { id: "plan", label: "盘前计划", icon: IconClipboardList, url: "/plan" },
     ],
   },
   {
