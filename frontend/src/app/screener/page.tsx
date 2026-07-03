@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState, useCallback } from "react"
+import { useEffect, useState, useCallback, useRef } from "react"
 import { useRouter } from "next/navigation"
 import { SiteHeader } from "@/components/site-header"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -90,20 +90,23 @@ export default function ScreenerPage() {
     { value: 0, label: "全市场扫描 (全部A股)" },
   ]
 
-  async function pollScan() {
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const pollScan = useCallback(async () => {
     try {
       const s = await apiGet<{ running: boolean; progress: number; total: number; has_result: boolean }>("/api/screener/status")
       setScanning(s.running)
       setProgress(s.total ? Math.round((s.progress / s.total) * 100) : 0)
       setStatusText(s.running ? `扫描中 ${s.progress}/${s.total}` : "")
       if (s.running) {
-        setTimeout(() => { void pollScan() }, 2000)
+        if (timerRef.current) clearTimeout(timerRef.current)
+        timerRef.current = setTimeout(() => { void pollScan() }, 2000)
       } else if (s.has_result) {
         const r = await apiGet<ScreenerResultsResponse>("/api/screener/results?limit=30")
         setResults(r?.candidates || [])
       }
     } catch { /* */ }
-  }
+  }, [])
 
   const fetchData = useCallback(async () => {
     try {
@@ -120,8 +123,8 @@ export default function ScreenerPage() {
 
   useEffect(() => {
     fetchData()
-    pollScan()
-  }, [fetchData, pollScan, router])
+    return () => { if (timerRef.current) clearTimeout(timerRef.current) }
+  }, [fetchData])
 
   const startScan = async () => {
     setScanning(true); setProgress(0)

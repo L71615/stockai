@@ -37,10 +37,9 @@ def _cached_quote(code: str) -> dict | None:
         if now - ts < 5:
             return {"price": price}
     try:
-        from services.utils import get_market
-        from services.akshare_adapter import get_batch_quotes
-        quotes = get_batch_quotes([code])
-        if code in quotes and quotes[code].get("price"):
+        from services.vendor_router import route
+        quotes = route("get_batch_quotes", codes=[code])
+        if isinstance(quotes, dict) and code in quotes and quotes[code].get("price"):
             price = quotes[code]["price"]
             cache[code] = (now, price)
             return {"price": price}
@@ -334,3 +333,54 @@ def get_plan(date: str = ""):
     except Exception:
         d["content"] = {}
     return d
+
+
+# ═══════════════════════════════════════════════════════════
+#  交易规则
+# ═══════════════════════════════════════════════════════════
+
+class RulesBody(BaseModel):
+    require_stop_loss: bool = True
+    max_position_pct: int = 30
+    max_total_position_pct: int = 80
+    forbid_chasing_limit_up: bool = True
+    max_consecutive_losses: int = 3
+    min_hold_days: int = 1
+    enabled: bool = True
+
+
+@router.get("/rules")
+def get_rules():
+    """获取当前交易规则"""
+    from services.discipline_service import get_rules as _get_rules
+    return _get_rules()
+
+
+@router.put("/rules")
+def update_rules(body: RulesBody):
+    """更新交易规则"""
+    from services.discipline_service import save_rules
+    rules = body.model_dump()
+    save_rules(rules)
+    return {"ok": True, "rules": rules}
+
+
+class ValidateBuyBody(BaseModel):
+    code: str
+    price: float
+    quantity: int
+    stop_loss_price: float | None = None
+
+
+@router.post("/rules/validate-buy")
+def validate_buy(body: ValidateBuyBody):
+    """买入前校验——检查是否违反交易规则"""
+    from services.discipline_service import validate_buy as _validate
+    result = _validate(
+        code=body.code,
+        price=body.price,
+        quantity=body.quantity,
+        user_id=get_current_user_id(),
+        stop_loss_price=body.stop_loss_price,
+    )
+    return result

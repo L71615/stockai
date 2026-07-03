@@ -19,6 +19,7 @@ import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } f
 import { KlineChart } from "@/components/KlineChart"
 import { IconBrain, IconRadar2, IconPlayerPlay, IconPlus, IconX } from "@tabler/icons-react"
 import { BacktestResults } from "@/components/backtest-results"
+import { MultiAgentAnalysis } from "@/components/multi-agent-analysis"
 
 interface AISignal { indicator: string; value: string; reason: string }
 interface AIVerdict { verdict: string; signals: AISignal[] }
@@ -36,17 +37,15 @@ interface AlertItem {
   target_value: number; created_at: string
 }
 
-interface ReviewDimension {
-  title: string; score: string; summary: string; detail: string
+interface MemoryEntry {
+  date: string; code: string; direction: string
+  pending: boolean; raw: string | null
+  pnl_pct: string | null; exit_date: string | null
+  decision: string; reflection: string
 }
-interface ReviewSuggestion {
-  text: string; reasoning: string
-}
-interface ReviewData {
-  id?: number; created_at?: string; total_pnl?: number
-  transactions_count?: number; avg_score?: number
-  ai_headline?: string; dimensions?: ReviewDimension[]
-  suggestions?: ReviewSuggestion[]
+interface MemoryStats {
+  total_entries: number; resolved_count: number; pending_count: number
+  total_gain: number; total_loss: number; avg_gain: number; avg_loss: number; net_pnl: number
 }
 
 interface FactorCategory {
@@ -187,14 +186,10 @@ function QuantPageInner() {
   const [alerts, setAlerts] = useState<AlertItem[]>([])
   const [alertsLoading, setAlertsLoading] = useState(false)
 
-  // AI Review tab
-  const [reviewData, setReviewData] = useState<ReviewData | null>(null)
-  const [reviewHistory, setReviewHistory] = useState<ReviewData[]>([])
-  const [reviewLoading, setReviewLoading] = useState(false)
-  const [reviewGenerating, setReviewGenerating] = useState(false)
-  const [reviewGenError, setReviewGenError] = useState("")
-  const [expandedDims, setExpandedDims] = useState<Set<number>>(new Set())
-  const [showReasoning, setShowReasoning] = useState<Set<number>>(new Set())
+  // Trading Memory tab
+  const [memoryStats, setMemoryStats] = useState<MemoryStats | null>(null)
+  const [memoryEntries, setMemoryEntries] = useState<MemoryEntry[]>([])
+  const [memoryLoading, setMemoryLoading] = useState(false)
 
   // Factor panel
   const [factorData, setFactorData] = useState<FactorPanelData | null>(null)
@@ -418,39 +413,19 @@ function QuantPageInner() {
     finally { setLoading(false) }
   }
 
-  // ── AI Review ──
-  const fetchLatestReview = useCallback(async () => {
+  // ── Trading Memory ──
+  const fetchMemory = useCallback(async () => {
+    setMemoryLoading(true)
     try {
-      const [revData, histData] = await Promise.all([
-        apiGet<ReviewData[]>("/api/stocks/reviews?limit=1").then((d) => (Array.isArray(d) ? d[0] : null)),
-        apiGet<ReviewData[]>("/api/stocks/reviews?limit=10"),
+      const [stats, entries] = await Promise.all([
+        apiGet<MemoryStats>("/api/stocks/memory/stats"),
+        apiGet<MemoryEntry[]>("/api/stocks/memory/entries?limit=50"),
       ])
-      setReviewData(revData || null)
-      setReviewHistory(Array.isArray(histData) ? histData : [])
+      setMemoryStats(stats)
+      setMemoryEntries(Array.isArray(entries) ? entries : [])
     } catch { /* */ }
+    finally { setMemoryLoading(false) }
   }, [])
-
-  const generateReview = async () => {
-    setReviewGenerating(true); setReviewGenError("")
-    try {
-      const data = await apiPost<ReviewData>("/api/stocks/review/structured", { report_type: "daily" })
-      setReviewData(data)
-    } catch (err) {
-      setReviewGenError(err instanceof Error ? err.message : "生成失败，请确认已配置 AI Key")
-    } finally { setReviewGenerating(false) }
-    try {
-      const revs = await apiGet<ReviewData[]>("/api/stocks/reviews?limit=10")
-      if (Array.isArray(revs)) setReviewHistory(revs)
-    } catch { /* */ }
-  }
-
-  const loadReview = async (id: number) => {
-    setReviewLoading(true)
-    try {
-      const data = await apiGet<ReviewData>(`/api/stocks/reviews/${id}`)
-      setReviewData(data)
-    } catch { /* */ } finally { setReviewLoading(false) }
-  }
 
   // 统一查询入口：根据当前 tab 分发到对应操作
   const handleQuery = async () => {
@@ -461,7 +436,7 @@ function QuantPageInner() {
       case "backtest": await runStrategyBacktest(); break
       case "mc": await runMC(); break
       case "risk": await fetchRisk(); break
-      case "review": await fetchLatestReview(); break
+      case "review": await fetchMemory(); break
     }
   }
 
@@ -584,8 +559,9 @@ function QuantPageInner() {
             <TabsTrigger value="risk" className="text-xs">组合风险</TabsTrigger>
             <TabsTrigger value="backtest" className="text-xs">策略回测</TabsTrigger>
             <TabsTrigger value="mc" className="text-xs">蒙特卡洛</TabsTrigger>
+            <TabsTrigger value="agents" className="text-xs">AI 分析</TabsTrigger>
             <TabsTrigger value="factors" className="text-xs">因子分析</TabsTrigger>
-            <TabsTrigger value="review" className="text-xs">AI复盘</TabsTrigger>
+            <TabsTrigger value="review" className="text-xs">交易记忆</TabsTrigger>
           </TabsList>
 
           {/* Tab 1: Stock Insight */}
@@ -1092,7 +1068,12 @@ function QuantPageInner() {
             )}
           </TabsContent>
 
-          {/* Tab 5: Factor Panel */}
+          {/* Tab 5: AI 多 Agent 分析 */}
+          <TabsContent value="agents" className="space-y-4">
+            <MultiAgentAnalysis />
+          </TabsContent>
+
+          {/* Tab 6: Factor Panel */}
           <TabsContent value="factors" className="space-y-4">
             {factorLoading ? (
               <div className="space-y-3"><Skeleton className="h-[300px] w-full" /><Skeleton className="h-20 w-full" /></div>
@@ -1300,120 +1281,80 @@ function QuantPageInner() {
             )}
           </TabsContent>
 
-          {/* Tab 6: AI 复盘 */}
+          {/* Tab 6: 交易记忆 */}
           <TabsContent value="review" className="space-y-4">
-            {/* Action bar */}
-            <div className="flex items-center gap-2 flex-wrap">
-              <Button size="sm" onClick={generateReview} disabled={reviewGenerating}>
-                <IconBrain className="size-3.5 mr-1" />
-                {reviewGenerating ? "AI 分析中..." : "生成复盘报告"}
+            <div className="flex items-center gap-2">
+              <Button size="sm" onClick={fetchMemory} disabled={memoryLoading}>
+                <IconBrain className="size-3.5" />
+                {memoryLoading ? "加载中..." : "刷新记忆"}
               </Button>
-              {reviewGenError && <p className="text-xs text-destructive">{reviewGenError}</p>}
-              {reviewHistory.length > 0 && (
-                <Select onValueChange={(v) => { const id = Number(v); if (id) loadReview(id) }}>
-                  <SelectTrigger className="h-8 text-xs w-auto min-w-[160px]">
-                    <SelectValue placeholder="历史报告" />
-                  </SelectTrigger>
-                  <SelectContent className="max-h-48">
-                    {reviewHistory.map((h) => (
-                      <SelectItem key={h.id} value={String(h.id)}>
-                        {h.created_at?.slice(0, 10)} · {h.transactions_count || 0}笔
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              )}
             </div>
 
-            {/* Loading */}
-            {(reviewLoading || reviewGenerating) && (
-              <div className="space-y-3">
-                <Skeleton className="h-16 w-full" />
-                <Skeleton className="h-32 w-full" />
+            {memoryStats && (
+              <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
+                <Card><CardContent className="py-2 text-center">
+                  <p className="text-[10px] text-muted-foreground">总记录</p>
+                  <p className="text-sm font-mono font-semibold">{memoryStats.total_entries}</p>
+                </CardContent></Card>
+                <Card><CardContent className="py-2 text-center">
+                  <p className="text-[10px] text-muted-foreground">已反思</p>
+                  <p className="text-sm font-mono font-semibold text-purple-400">{memoryStats.resolved_count}</p>
+                </CardContent></Card>
+                <Card><CardContent className="py-2 text-center">
+                  <p className="text-[10px] text-muted-foreground">待处理</p>
+                  <p className="text-sm font-mono font-semibold text-yellow-400">{memoryStats.pending_count}</p>
+                </CardContent></Card>
+                <Card><CardContent className="py-2 text-center">
+                  <p className="text-[10px] text-muted-foreground">净盈亏</p>
+                  <p className={cn("text-sm font-mono font-semibold", memoryStats.net_pnl >= 0 ? "text-red-400" : "text-emerald-400")}>
+                    {memoryStats.net_pnl >= 0 ? "+" : ""}¥{memoryStats.net_pnl.toFixed(0)}
+                  </p>
+                </CardContent></Card>
               </div>
             )}
 
-            {/* Empty */}
-            {!reviewLoading && !reviewGenerating && !reviewData && (
+            {memoryEntries.length === 0 && !memoryLoading && (
               <Card>
-                <CardContent className="py-12 text-center space-y-2">
-                  <p className="text-4xl opacity-40">🧠</p>
-                  <p className="text-sm text-muted-foreground">暂无复盘报告</p>
-                  <p className="text-xs text-muted-foreground">点击「生成复盘报告」，AI 将分析你的交易行为</p>
+                <CardContent className="py-12 text-center text-muted-foreground text-sm">
+                  <IconBrain className="size-8 mx-auto mb-2 opacity-40" />
+                  暂无交易记忆。完成一笔交易后，系统会自动记录并反思。
                 </CardContent>
               </Card>
             )}
 
-            {/* Review content */}
-            {!reviewLoading && reviewData && (
-              <>
-                {/* Hero stats */}
-                <div className="grid grid-cols-3 gap-3">
-                  <KpiCard label="总盈亏" value={reviewData.total_pnl != null ? `¥ ${reviewData.total_pnl.toLocaleString()}` : "--"} />
-                  <KpiCard label="交易次数" value={reviewData.transactions_count?.toString() || "--"} />
-                  <KpiCard label="综合评分" value={reviewData.avg_score != null ? `${reviewData.avg_score} 分` : "--"} />
-                </div>
-
-                {/* AI headline */}
-                {reviewData.ai_headline && (
-                  <Card className="border-l-[3px] border-l-purple-400">
-                    <CardContent className="py-3">
-                      <p className="text-sm italic text-muted-foreground">&ldquo;{reviewData.ai_headline}&rdquo;</p>
+            {memoryEntries.length > 0 && (
+              <div className="space-y-2">
+                {memoryEntries.map((e, i) => (
+                  <Card key={i} className={e.pending ? "border-l-[3px] border-l-yellow-400" : "border-l-[3px] border-l-purple-400"}>
+                    <CardContent className="py-2">
+                      <div className="flex items-center justify-between mb-1">
+                        <div className="flex items-center gap-2">
+                          <span className="text-[10px] text-muted-foreground font-mono">{e.date}</span>
+                          <span className="font-mono text-xs">{e.code}</span>
+                          <Badge variant="outline" className={cn("text-[10px]", e.direction === "买入" ? "text-red-400" : "text-emerald-400")}>
+                            {e.direction}
+                          </Badge>
+                          {e.raw != null && (
+                            <span className={cn("text-[10px] font-mono", parseFloat(e.raw) >= 0 ? "text-red-400" : "text-emerald-400")}>
+                              {parseFloat(e.raw) >= 0 ? "+" : ""}¥{parseFloat(e.raw).toFixed(0)}
+                            </span>
+                          )}
+                          {e.pending && <Badge className="text-[10px] bg-yellow-500/10 text-yellow-400">待反思</Badge>}
+                        </div>
+                      </div>
+                      {e.reflection && (
+                        <p className="text-xs text-muted-foreground italic mt-1">&ldquo;{e.reflection.slice(0, 200)}{e.reflection.length > 200 ? "..." : ""}&rdquo;</p>
+                      )}
+                      {e.pending && e.decision && (
+                        <p className="text-xs text-muted-foreground mt-1 truncate">{e.decision.slice(0, 150)}</p>
+                      )}
                     </CardContent>
                   </Card>
-                )}
-
-                {/* Dimensions */}
-                {reviewData.dimensions && reviewData.dimensions.length > 0 && (
-                  <div className="space-y-3">
-                    <h3 className="text-sm font-medium">分析维度</h3>
-                    {reviewData.dimensions.map((dim, i) => (
-                      <Card key={i} className="border-l-[3px] border-l-purple-400/60">
-                        <CardHeader className="pb-2 cursor-pointer select-none" onClick={() => {
-                          const next = new Set(expandedDims)
-                          next.has(i) ? next.delete(i) : next.add(i)
-                          setExpandedDims(next)
-                        }}>
-                          <div className="flex items-center justify-between">
-                            <CardTitle className="text-sm">{dim.title}</CardTitle>
-                            <Badge variant="secondary" className="text-xs">{dim.score}</Badge>
-                          </div>
-                          <CardDescription className="text-xs">{dim.summary}</CardDescription>
-                        </CardHeader>
-                        {expandedDims.has(i) && (
-                          <CardContent className="pt-0">
-                            <p className="text-xs text-muted-foreground whitespace-pre-wrap">{dim.detail}</p>
-                          </CardContent>
-                        )}
-                      </Card>
-                    ))}
-                  </div>
-                )}
-
-                {/* Suggestions */}
-                {reviewData.suggestions && reviewData.suggestions.length > 0 && (
-                  <div className="space-y-3">
-                    <h3 className="text-sm font-medium">改进建议</h3>
-                    {reviewData.suggestions.map((s, i) => (
-                      <Card key={i} className="bg-purple-400/5 border border-purple-400/20">
-                        <CardContent className="py-3 space-y-2">
-                          <p className="text-sm">{s.text}</p>
-                          {showReasoning.has(i) && <p className="text-xs text-muted-foreground border-t border-purple-400/10 pt-2">{s.reasoning}</p>}
-                          <Button variant="link" size="sm" className="h-auto p-0 text-xs text-purple-400" onClick={() => {
-                            const next = new Set(showReasoning)
-                            next.has(i) ? next.delete(i) : next.add(i)
-                            setShowReasoning(next)
-                          }}>
-                            {showReasoning.has(i) ? "收起推理" : "查看推理"}
-                          </Button>
-                        </CardContent>
-                      </Card>
-                    ))}
-                  </div>
-                )}
-              </>
+                ))}
+              </div>
             )}
           </TabsContent>
+
         </Tabs>
 
         {/* My Alerts Panel */}

@@ -143,3 +143,27 @@ def start_futu_nightly_sync_thread(run_hour: int = 20, run_minute: int = 5, scop
     t = threading.Thread(target=_loop, daemon=True, name="futu-nightly-sync")
     t.start()
     return t
+
+
+def start_memory_resolution_thread(run_hour: int = 15, run_minute: int = 30):
+    """每天收盘后（15:00）检查 pending 交易记忆，生成 AI 反思"""
+    def _loop():
+        last_run = None
+        while True:
+            try:
+                now = datetime.now()
+                today_key = now.strftime("%Y-%m-%d")
+                if now.weekday() < 5 and now.hour == run_hour and now.minute >= run_minute and last_run != today_key:
+                    from services.trading_memory import TradingMemoryLog
+                    mem = TradingMemoryLog()
+                    resolved = mem.resolve_pending()
+                    if resolved:
+                        logger.info("scheduler: 已解析 %d 条交易记忆", len(resolved))
+                    last_run = today_key
+            except Exception:
+                logger.warning("scheduler: 记忆解析线程异常", exc_info=True)
+            time.sleep(120)  # 每2分钟检查一次
+
+    t = threading.Thread(target=_loop, daemon=True, name="memory-resolution")
+    t.start()
+    return t

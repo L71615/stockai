@@ -8,7 +8,6 @@ from typing import Any
 logger = logging.getLogger("stockai")
 
 from services.utils import run_curl, get_market
-from services import futu_ingest_service
 
 # ── K线数据源健康状态 ──
 # 快速源（腾讯/东方财富）连续失败计数，超过阈值后直接使用 Baostock 兜底
@@ -88,9 +87,9 @@ def _fetch_a_share_daily_legacy(code: str, market: str | None, days: int) -> dic
 
 
 def fetch_kline(code: str, market: str = None, days: int = 120) -> dict[str, Any]:
-    """获取日K线数据（多市场适配：A股/港股/美股，多源兜底）
+    """获取日K线数据（多市场适配：A股/港股/美股，A股走 vendor_router 配置驱动）
 
-    A股: Futu(日线优先) → 新浪 → 腾讯 → 东方财富 → Baostock
+    A股: 由 vendor_router 按配置链路由（默认 futu → sina → akshare → baostock）
     港股: akshare(ak.stock_hk_hist) → 新浪
     美股: akshare(ak.stock_us_hist)
     """
@@ -118,12 +117,9 @@ def fetch_kline(code: str, market: str = None, days: int = 120) -> dict[str, Any
             logger.warning("technical: 美股K线获取失败 (%s)", code, exc_info=True)
         return {"error": "获取美股K线失败", "code": code}
 
-    # ── A 股日线：优先 Futu，再回退旧链路 ──
-    return futu_ingest_service.get_daily_kline_with_fallback(
-        code,
-        count=days,
-        fallback=lambda: _fetch_a_share_daily_legacy(code, market, days),
-    )
+    # ── A 股日线：配置驱动的多源 fallback ──
+    from services.vendor_router import route
+    return route("get_daily_kline", code=code, days=days)
 
 
 def _ema(data: list[float], period: int) -> list[float]:

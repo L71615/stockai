@@ -128,74 +128,106 @@ def update_journal(holding_id: int, body: JournalBody):
 
 @router.get("/holdings/with-pnl")
 def get_holdings_with_pnl(portfolio_id: int | None = None):
-    """持仓列表 + 实时盈亏（按资产类型分别计算）"""
+    """持仓列表 + 实时盈亏（批量报价，避免串行 HTTP）"""
     if portfolio_id:
         rows = query_all("SELECT * FROM holdings WHERE user_id = ? AND portfolio_id = ? ORDER BY id DESC", (get_current_user_id(), portfolio_id))
     else:
         rows = query_all("SELECT * FROM holdings WHERE user_id = ? ORDER BY id DESC", (get_current_user_id(),))
+
+    # ── 第一遍：分类 + 收集需要批量报价的代码 ──
+    stock_codes = []
+    fund_items = []
+    stock_items = []
+
+    for h in rows:
+        item = dict(h)
+        at = item.get("asset_type", "") or detect_asset_type(item["stock_code"])
+        if at == "fund":
+            fund_items.append(item)
+        else:
+            stock_items.append(item)
+            stock_codes.append(item["stock_code"])
+
+    # ── 批量拉取股票/ETF行情（一次 HTTP 替代 N 次串行）──
+    quotes = {}
+    if stock_codes:
+        try:
+            from services.vendor_router import route
+            quotes = route("get_batch_quotes", codes=stock_codes)
+            if not isinstance(quotes, dict):
+                quotes = {}
+        except Exception:
+            pass
 
     results = []
     total_cost = 0.0
     total_value = 0.0
     today_pnl = 0.0
 
-    for h in rows:
-        item = dict(h)
-        asset_type = item.get("asset_type", "") or detect_asset_type(item["stock_code"])
+    # ── 处理基金 ──
+    for item in fund_items:
         qty = item["quantity"] or 0
         cost = item["cost_price"] or 0
-
-        # 默认值
         item["current_price"] = None
         item["change_pct"] = None
         item["market_value"] = 0.0
         item["pnl"] = 0.0
         item["pnl_pct"] = 0.0
         item["today_pnl"] = 0.0
-        item["est_label"] = ""  # "估算" 标签（基金用）
-
-        if asset_type == "fund":
-            # 普通基金：用官方净值（非估算）
-            nav_data = get_fund_nav(item["stock_code"])
-            if nav_data:
-                item["stock_name"] = item["stock_name"] or nav_data["name"]
-                item["current_price"] = nav_data["nav"]
-                item["est_nav"] = nav_data["est_nav"]
-                item["change_pct"] = nav_data["est_change_pct"]
-                item["est_label"] = nav_data["nav_date"]
-                shares = item.get("shares") or qty
-                item["market_value"] = nav_data["nav"] * shares
-                item["pnl"] = round((nav_data["nav"] - cost) * shares, 2)
-                item["pnl_pct"] = round(item["pnl"] / (cost * shares) * 100, 2) if cost > 0 and shares > 0 else 0
-                item["today_pnl"] = nav_data["nav"] * shares * nav_data["est_change_pct"] / 100
-                item["cost_amount"] = cost * shares
+        item["est_label"] = ""
+        nav_data = get_fund_nav(item["stock_code"])
+        if nav_data:
+            item["stock_name"] = item["stock_name"] or nav_data["name"]
+            item["current_price"] = nav_data["nav"]
+            item["est_nav"] = nav_data["est_nav"]
+            item["change_pct"] = nav_data["est_change_pct"]
+            item["est_label"] = nav_data["nav_date"]
+            shares = item.get("shares") or qty
+            item["market_value"] = nav_data["nav"] * shares
+            item["pnl"] = round((nav_data["nav"] - cost) * shares, 2)
+            item["pnl_pct"] = round(item["pnl"] / (cost * shares) * 100, 2) if cost > 0 and shares > 0 else 0
+            item["today_pnl"] = nav_data["nav"] * shares * nav_data["est_change_pct"] / 100
+            item["cost_amount"] = cost * shares
         else:
-            # 股票 / ETF：查东方财富实时行情
-            mkt = get_market(item["stock_code"])
-            q = _cached_quote(item["stock_code"], mkt)
-            if q and "error" not in q:
-                item["stock_name"] = q.get("name") or item["stock_name"]
-                item["current_price"] = q.get("price")
-                item["change_pct"] = q.get("change_pct")
-                item["market_value"] = (q.get("price") or cost) * qty
-                # 同花顺口径：浮动盈亏 - 预估卖出费用
-                gross_pnl = ((q.get("price") or cost) - cost) * qty
-                sell_fee = _estimate_sell_fee(item["market_value"], asset_type, item["stock_code"])
-                item["pnl"] = round(gross_pnl - sell_fee, 2)
-                item["pnl_pct"] = round(item["pnl"] / (cost * qty) * 100, 2) if cost > 0 and qty > 0 else 0
-                change = q.get("change") or 0
-                item["today_pnl"] = round(change * qty, 2) if change else 0
-                item["cost_amount"] = cost * qty
-            else:
-                item["cost_amount"] = cost * qty
-
+            item["cost_amount"] = cost * qty
         total_cost += item.get("cost_amount", 0)
         total_value += item["market_value"]
         today_pnl += item.get("today_pnl", 0)
-
         results.append(item)
 
-    # 汇总：使用逐项已扣预估卖出费的 PnL 求和
+    # ── 处理股票/ETF（用批量行情）──
+    for item in stock_items:
+        qty = item["quantity"] or 0
+        cost = item["cost_price"] or 0
+        code = item["stock_code"]
+        item["current_price"] = None
+        item["change_pct"] = None
+        item["market_value"] = 0.0
+        item["pnl"] = 0.0
+        item["pnl_pct"] = 0.0
+        item["today_pnl"] = 0.0
+        item["est_label"] = ""
+        q = quotes.get(code, {})
+        if q and q.get("price"):
+            item["stock_name"] = q.get("name") or item["stock_name"]
+            item["current_price"] = q.get("price")
+            item["change_pct"] = q.get("change_pct")
+            item["market_value"] = q["price"] * qty
+            gross_pnl = (q["price"] - cost) * qty
+            sell_fee = _estimate_sell_fee(item["market_value"], item.get("asset_type", "stock"), code)
+            item["pnl"] = round(gross_pnl - sell_fee, 2)
+            item["pnl_pct"] = round(item["pnl"] / (cost * qty) * 100, 2) if cost > 0 and qty > 0 else 0
+            change = q.get("change") or 0
+            item["today_pnl"] = round(change * qty, 2) if change else 0
+            item["cost_amount"] = cost * qty
+        else:
+            item["cost_amount"] = cost * qty
+        total_cost += item.get("cost_amount", 0)
+        total_value += item["market_value"]
+        today_pnl += item.get("today_pnl", 0)
+        results.append(item)
+
+    # 汇总
     total_pnl = sum(r.get("pnl", 0) for r in results)
     total_pnl_pct = round(total_pnl / total_cost * 100, 2) if total_cost > 0 else 0
 

@@ -10,7 +10,7 @@ from typing import AsyncGenerator
 from anthropic import AsyncAnthropic
 from openai import AsyncOpenAI
 
-from .ai_exceptions import AIKeyError, AIProviderError, AIRateLimitError, AIResponseError, AIConfigError
+from .ai_exceptions import AIServiceError, AIKeyError, AIProviderError, AIRateLimitError, AIResponseError, AIConfigError
 
 logger = logging.getLogger("stockai")
 
@@ -96,7 +96,13 @@ async def _chat_openai_provider(
     except AIServiceError:
         raise
     except Exception as e:
-        raise AIProviderError(f"{name} API 调用失败: {e}", provider_name=name, original_exception=e) from e
+        err_msg = str(e)
+        # 避免编码错误导致无法显示
+        try:
+            err_msg = err_msg.encode("ascii", errors="replace").decode("ascii")
+        except Exception:
+            err_msg = "未知错误"
+        raise AIProviderError(f"{name} API 调用失败: {err_msg}", provider_name=name, original_exception=e) from e
 
 
 async def _chat_openai_provider_stream(

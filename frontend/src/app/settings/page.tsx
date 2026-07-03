@@ -18,7 +18,7 @@ import { cn } from "@/lib/utils"
 interface AIProvider { key: string; label: string; api_key: string; model: string; base_url: string }
 
 const PROVIDERS: AIProvider[] = [
-  { key: "minimax", label: "MiniMax", api_key: "", model: "MiniMax-M2.7", base_url: "https://api.minimax.chat/v1" },
+  { key: "minimax", label: "MiniMax（国内）", api_key: "", model: "MiniMax-M2.7", base_url: "https://api.minimax.chat/v1" },
   { key: "deepseek", label: "DeepSeek", api_key: "", model: "deepseek-chat", base_url: "https://api.deepseek.com/v1" },
   { key: "openai", label: "OpenAI", api_key: "", model: "gpt-4o", base_url: "" },
   { key: "claude", label: "Claude / Anthropic", api_key: "", model: "claude-opus-4-7", base_url: "" },
@@ -26,12 +26,130 @@ const PROVIDERS: AIProvider[] = [
 ]
 
 const AI_FUNCTIONS = [
-  { key: "screener", label: "AI 选股", desc: "二次筛选 + Agent 交叉验证" },
-  { key: "review", label: "AI 复盘", desc: "结构化投资复盘报告" },
-  { key: "chat", label: "AI 对话", desc: "投资助手聊天" },
+  { key: "screener", label: "AI 选股", desc: "多因子扫描二次筛选" },
+  { key: "explain", label: "AI 深度分析", desc: "多 Agent 分析 / 因子解读" },
+  { key: "chat", label: "AI 对话", desc: "投资助手 SSE 流式聊天" },
   { key: "watchdog", label: "AI 盯盘简报", desc: "异动推送摘要" },
-  { key: "explain", label: "AI 量化解读", desc: "个股技术面+基本面分析" },
 ]
+
+interface Rules {
+  require_stop_loss: boolean
+  max_position_pct: number
+  max_total_position_pct: number
+  forbid_chasing_limit_up: boolean
+  max_consecutive_losses: number
+  min_hold_days: number
+  enabled: boolean
+}
+
+function TradingRulesSection() {
+  const [rules, setRules] = useState<Rules | null>(null)
+  const [saving, setSaving] = useState(false)
+  const [msg, setMsg] = useState("")
+
+  useEffect(() => {
+    apiGet<Rules>("/api/discipline/rules").then(setRules).catch(() => {})
+  }, [])
+
+  const save = async () => {
+    if (!rules) return
+    setSaving(true); setMsg("")
+    try {
+      await apiPost("/api/discipline/rules", rules, "PUT")
+      setMsg("已保存")
+    } catch { setMsg("保存失败") }
+    finally { setSaving(false) }
+  }
+
+  if (!rules) return null
+
+  const toggle = (key: keyof Rules) => {
+    if (typeof rules[key] === "boolean") {
+      setRules((p) => p ? { ...p, [key]: !p[key] } : null)
+    }
+  }
+
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm">交易规则</CardTitle>
+        <CardDescription>买入时强制执行，违规将被拦截</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div className="flex items-center justify-between">
+          <Label className="text-xs">规则总开关</Label>
+          <Badge
+            variant="outline"
+            className={cn("cursor-pointer text-xs", rules.enabled ? "text-emerald-400" : "text-muted-foreground")}
+            onClick={() => toggle("enabled")}
+          >
+            {rules.enabled ? "已启用" : "已关闭"}
+          </Badge>
+        </div>
+        {rules.enabled && (
+          <>
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-muted-foreground">买入前强制设止损</span>
+                <Badge variant="outline" className="cursor-pointer text-xs" onClick={() => toggle("require_stop_loss")}>
+                  {rules.require_stop_loss ? "开启" : "关闭"}
+                </Badge>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-muted-foreground">禁止追涨停板（涨幅 &ge; 9.5%）</span>
+                <Badge variant="outline" className="cursor-pointer text-xs" onClick={() => toggle("forbid_chasing_limit_up")}>
+                  {rules.forbid_chasing_limit_up ? "开启" : "关闭"}
+                </Badge>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div className="space-y-1">
+                <Label className="text-[10px]">单票仓位上限 %</Label>
+                <Input
+                  type="number" min="5" max="100"
+                  value={rules.max_position_pct}
+                  onChange={(e) => setRules((p) => p ? { ...p, max_position_pct: Number(e.target.value) || 30 } : null)}
+                  className="h-7 text-xs w-20"
+                />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-[10px]">总仓位上限 %</Label>
+                <Input
+                  type="number" min="10" max="100"
+                  value={rules.max_total_position_pct}
+                  onChange={(e) => setRules((p) => p ? { ...p, max_total_position_pct: Number(e.target.value) || 80 } : null)}
+                  className="h-7 text-xs w-20"
+                />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-[10px]">连亏停手机制</Label>
+                <Input
+                  type="number" min="1" max="10"
+                  value={rules.max_consecutive_losses}
+                  onChange={(e) => setRules((p) => p ? { ...p, max_consecutive_losses: Number(e.target.value) || 3 } : null)}
+                  className="h-7 text-xs w-20"
+                />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-[10px]">最短持仓天数</Label>
+                <Input
+                  type="number" min="1" max="30"
+                  value={rules.min_hold_days}
+                  onChange={(e) => setRules((p) => p ? { ...p, min_hold_days: Number(e.target.value) || 1 } : null)}
+                  className="h-7 text-xs w-20"
+                />
+              </div>
+            </div>
+          </>
+        )}
+        <div className="flex items-center gap-2">
+          <Button size="sm" onClick={save} disabled={saving}>{saving ? "保存中..." : "保存规则"}</Button>
+          {msg && <span className={cn("text-[10px]", msg === "已保存" ? "text-emerald-400" : "text-destructive")}>{msg}</span>}
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
 
 export default function SettingsPage() {
   const router = useRouter()
@@ -421,6 +539,9 @@ export default function SettingsPage() {
             )}
           </CardContent>
         </Card>
+
+        {/* Trading Rules */}
+        <TradingRulesSection />
 
         {/* Logout */}
         <Separator />

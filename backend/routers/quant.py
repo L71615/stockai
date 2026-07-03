@@ -912,3 +912,46 @@ def list_backtest_strategies():
     """返回所有可用于回测的策略列表（YAML + 内置）"""
     from services.strategy_backtest_service import _list_available_strategies
     return _list_available_strategies()
+
+
+# ═══════════════════════════════════════════════════════════════
+#  多 Agent 深度分析
+# ═══════════════════════════════════════════════════════════════
+
+class MultiAgentRequest(BaseModel):
+    code: str
+    provider: str = ""
+    api_key: str = ""
+    model: str = ""
+
+
+@router.post("/multi-agent-analysis")
+async def multi_agent_analysis(req: MultiAgentRequest):
+    """多 Agent 深度分析: 技术面+基本面→多空辩论→最终判断
+
+    5 个 Agent，3 轮调用:
+      1. 技术面 + 基本面 (并行)
+      2. 多头 + 空头 辩论 (并行)
+      3. 裁判 裁决
+
+    返回:
+      {code, name, price, technical_report, fundamentals_report,
+       bull_case, bear_case, verdict, confidence, key_reasons,
+       risk_warning, suggested_hold_days, stop_loss_pct}
+    """
+    from services.multi_agent_service import analyze_stock
+
+    if not req.code or not req.code.strip():
+        raise HTTPException(400, "请输入股票代码")
+
+    result = await analyze_stock(
+        code=req.code.strip(),
+        provider=req.provider,
+        api_key=req.api_key,
+        model=req.model,
+    )
+
+    if "error" in result:
+        raise HTTPException(500, result["error"])
+
+    return result

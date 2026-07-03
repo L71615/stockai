@@ -87,11 +87,6 @@ def api_get_all_ai_configs():
     }
 
 
-@router.put("/api/settings/ai-configs")
-def api_save_all_ai_configs(body: MultiAiConfigBody):
-    """保存多个 AI 供应商配置（含 function_providers 映射）"""
-    save_stored_ai_config(body.configs)
-    return {"ok": True, "count": len(body.configs)}
 
 
 class AiTestBody(BaseModel):
@@ -101,15 +96,40 @@ class AiTestBody(BaseModel):
     base_url: str = ""
 
 
+@router.put("/api/settings/ai-configs")
+def api_save_all_ai_configs(body: MultiAiConfigBody):
+    """保存多个 AI 供应商配置（掩码 Key 不覆盖已存真实 Key）"""
+    from services.ai_service import _load_stored_ai_config
+    stored = _load_stored_ai_config()
+    for key, c in body.configs.items():
+        api_key = c.get("api_key", "")
+        # 掩码 Key（含 **** 或空）→ 保留已存储的真实 Key
+        if not api_key or "****" in str(api_key):
+            if key in stored and isinstance(stored[key], dict):
+                c["api_key"] = stored[key].get("api_key", "")
+    save_stored_ai_config(body.configs)
+    return {"ok": True, "count": len(body.configs)}
+
+
 @router.post("/api/settings/ai-test")
 async def api_ai_test(body: AiTestBody):
-    """测试 AI 供应商连通性 — 发送 "ping" 验证 Key 是否可用"""
-    from services.ai_service import ai_chat
+    """测试 AI 供应商连通性 — 如前端传来掩码 Key，自动用已存储的真实 Key"""
+    from services.ai_service import ai_chat, _load_stored_ai_config
+    api_key = body.api_key
+    model = body.model
+    base_url = body.base_url
+    # 掩码 Key → 用数据库真实 Key
+    if not api_key or "****" in api_key:
+        stored = _load_stored_ai_config()
+        pcfg = stored.get(body.provider, {})
+        if isinstance(pcfg, dict):
+            api_key = pcfg.get("api_key", "") or api_key
+            model = model or pcfg.get("model", "")
+            base_url = base_url or pcfg.get("base_url", "")
     result = await ai_chat(
         "ping", provider=body.provider,
-        api_key=body.api_key, model=body.model, base_url=body.base_url,
+        api_key=api_key, model=model, base_url=base_url,
     )
-    # ai_chat 错误时返回 "（...）" 格式
     if result.startswith("（") and result.endswith("）"):
         return {"ok": False, "error": result[1:-1]}
     return {"ok": True, "response": result[:200]}

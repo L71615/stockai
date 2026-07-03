@@ -23,9 +23,10 @@ export async function swrFetcher<T>(url: string): Promise<T> {
  */
 export const SWR_GLOBAL_CONFIG = {
   fetcher: swrFetcher,
-  dedupingInterval: 2000,
-  focusThrottleInterval: 10000,
-  revalidateOnFocus: true,
+  dedupingInterval: 5000,          // 5s 去重（原来 2s 太短）
+  focusThrottleInterval: 30000,    // 30s 内切回不再全量刷新（原来 10s）
+  revalidateOnFocus: false,        // 关闭切回刷新（最大头：多 tab 切换时所有 hook 同时发请求）
+  revalidateOnReconnect: false,    // 网络恢复不触发全量刷新
   errorRetryCount: 3,
   errorRetryInterval: 5000,
   refreshInterval: 0,

@@ -192,6 +192,11 @@ export function DataTable({
   actions?: HoldingRowActionMap
 }) {
   const [data, setData] = React.useState(() => initialData)
+
+  // 同步外部数据变化（持仓刷新后自动更新表格）
+  React.useEffect(() => {
+    setData(initialData)
+  }, [initialData])
   const [rowSelection, setRowSelection] = React.useState({})
   const [columnVisibility, setColumnVisibility] = React.useState<VisibilityState>({})
   const [columnFilters, setColumnFilters] = React.useState<ColumnFiltersState>([])
@@ -316,11 +321,13 @@ export function DataTable({
     )
   }
 
+  const [activeTab, setActiveTab] = React.useState("holdings")
+
   return (
-    <Tabs defaultValue="holdings" className="w-full flex-col justify-start gap-6">
+    <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full flex-col justify-start gap-6">
       <div className="flex items-center justify-between px-4 lg:px-6">
         <Label htmlFor="view-selector" className="sr-only">视图</Label>
-        <Select defaultValue="holdings">
+        <Select value={activeTab} onValueChange={setActiveTab}>
           <SelectTrigger className="flex w-fit @4xl/main:hidden" size="sm" id="view-selector">
             <SelectValue placeholder="选择视图" />
           </SelectTrigger>
@@ -339,9 +346,6 @@ export function DataTable({
             亏损 <Badge variant="secondary" className="text-emerald-500">{lossCount}</Badge>
           </TabsTrigger>
         </TabsList>
-
-        {/* Need to import TabsList, TabsTrigger from tabs */
-        /* Actually TabsList and TabsTrigger are already used in the JSX but not imported — fixed below */}
 
         <div className="flex items-center gap-2">
           <DropdownMenu>
@@ -376,23 +380,32 @@ export function DataTable({
         </div>
       </div>
 
+      {/* 只渲染当前 Tab，避免 3 套 DndContext + DraggableRow 同时挂载 */}
       <TabsContent value="holdings" className="relative flex flex-col gap-4 overflow-auto px-4 lg:px-6">
-        <div className="overflow-hidden rounded-none border">
-          {renderTable(() => true, "暂无数据", sortableId)}
-        </div>
-        <Pagination table={table} />
+        {activeTab === "holdings" && (
+          <>
+            <div className="overflow-hidden rounded-none border">
+              {renderTable(() => true, "暂无数据", sortableId)}
+            </div>
+            <Pagination table={table} />
+          </>
+        )}
       </TabsContent>
 
       <TabsContent value="profit" className="relative flex flex-col gap-4 overflow-auto px-4 lg:px-6">
-        <div className="overflow-hidden rounded-none border">
-          {renderTable((d) => d.pnl.startsWith("+"), "暂无盈利持仓", `${sortableId}-profit`)}
-        </div>
+        {activeTab === "profit" && (
+          <div className="overflow-hidden rounded-none border">
+            {renderTable((d) => d.pnl.startsWith("+"), "暂无盈利持仓", `${sortableId}-profit`)}
+          </div>
+        )}
       </TabsContent>
 
       <TabsContent value="loss" className="relative flex flex-col gap-4 overflow-auto px-4 lg:px-6">
-        <div className="overflow-hidden rounded-none border">
-          {renderTable((d) => d.pnl.includes("-"), "暂无亏损持仓", `${sortableId}-loss`)}
-        </div>
+        {activeTab === "loss" && (
+          <div className="overflow-hidden rounded-none border">
+            {renderTable((d) => d.pnl.includes("-"), "暂无亏损持仓", `${sortableId}-loss`)}
+          </div>
+        )}
       </TabsContent>
     </Tabs>
   )

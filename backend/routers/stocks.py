@@ -14,7 +14,7 @@ from services.ai_service import ai_chat
 from services.ai_exceptions import AIServiceError
 from services.technical import get_indicators as calc_indicators
 from services.utils import run_curl, get_market, detect_asset_type, get_fund_nav
-from services.futu_ingest_service import get_quote_with_fallback, get_minute_kline_with_fallback
+from services.futu_ingest_service import get_minute_kline_with_fallback
 
 router = APIRouter()
 
@@ -128,13 +128,15 @@ def _fetch_quote_legacy(code: str, market: str | None = None) -> dict:
 
 
 def _fetch_quote_sync(code: str, market: str | None = None) -> dict:
-    """获取单只股票实时行情（港股→新浪，美股→akshare，A股→Futu→腾讯→东方财富）"""
+    """获取单只股票实时行情（港股→新浪，美股→akshare，A股→vendor_router配置驱动）"""
     from services.utils import is_hk_stock, is_us_stock
 
     if is_hk_stock(code) or is_us_stock(code):
         return _fetch_quote_legacy(code, market)
 
-    result = get_quote_with_fallback(code, fallback=lambda: _fetch_quote_legacy(code, market))
+    # A 股：配置驱动的多源 fallback（默认 futu → akshare）
+    from services.vendor_router import route
+    result = route("get_realtime_quote", code=code)
     if result.get("source") == "futu":
         return {
             "code": result["code"],
@@ -146,7 +148,10 @@ def _fetch_quote_sync(code: str, market: str | None = None) -> dict:
             "high": result.get("high_price"),
             "low": result.get("low_price"),
         }
-    return result
+    if "error" not in result:
+        return result
+    # 路由器全部失败，回退旧逻辑
+    return _fetch_quote_legacy(code, market)
 
 
 @router.get("/quote/{code}")
@@ -494,572 +499,29 @@ def get_stock_news(code: str):
     return {"code": code, "news": articles}
 
 
-# ==================== AI 复盘 ====================
-
-class ReviewRequest(BaseModel):
-    provider: str = ""    # 留空从 settings 读取
-    apiKey: str = ""      # 留空从 settings 读取
-    model: str = ""
-    period: str = "all"   # all / month / quarter / year
-
-
-_PERIOD_CONFIG = {
-    "month":   ("本月",   "AND traded_at >= date('now','localtime','start of month')"),
-    "quarter": ("本季度", "AND traded_at >= date('now','localtime','start of year','+' || (cast((strftime('%m','now')-1)/3 as int)*3) || ' months')"),
-    "year":    ("本年",   "AND traded_at >= date('now','localtime','start of year')"),
-    "all":     ("全部",   ""),
-}
-
-
-@router.post("/review")
-async def generate_review(body: ReviewRequest):
-    """AI 复盘：读取交易记录，生成盈亏分析报告（apiKey 留空则使用已保存的配置）"""
-
-    period_label, period_filter = _PERIOD_CONFIG.get(body.period, ("全部", ""))
-
-    txs = query_all(f"SELECT * FROM transactions WHERE user_id = ? {period_filter} ORDER BY traded_at ASC", (get_current_user_id(),))
-    if not txs:
-        return {"review": f"暂无{period_label}交易记录，无法生成复盘报告。"}
-
-    # 按股票分组
-    stock_txs: dict[str, list[dict]] = {}
-    for t in txs:
-        code = t["stock_code"]
-        if code not in stock_txs:
-            stock_txs[code] = []
-        stock_txs[code].append(t)
-
-    # 聚合统计
-    total_buy_amount = 0.0
-    total_sell_amount = 0.0
-    buy_count = 0
-    sell_count = 0
-    stock_summaries = []
-
-    for code, trades in stock_txs.items():
-        name = trades[0]["stock_name"] or code
-        buys = [t for t in trades if t["direction"] == "buy"]
-        sells = [t for t in trades if t["direction"] == "sell"]
-
-        buy_total = sum(t["amount"] for t in buys)
-        sell_total = sum(t["amount"] for t in sells)
-        buy_shares = sum(t["quantity"] for t in buys)
-        sell_shares = sum(t["quantity"] for t in sells)
-
-        # 已卖出部分的盈亏（FIFO 简化）
-        realized_pnl = 0.0
-        if buys and sells:
-            avg_buy_price = buy_total / buy_shares if buy_shares > 0 else 0
-            sold_qty = min(sell_shares, buy_shares)
-            realized_pnl = sum(t["amount"] for t in sells) - sold_qty * avg_buy_price
-
-        remaining = buy_shares - sell_shares
-
-        stock_summaries.append({
-            "name": name,
-            "code": code,
-            "buy_count": len(buys),
-            "sell_count": len(sells),
-            "total_buy": f"{buy_total:.2f}",
-            "total_sell": f"{sell_total:.2f}",
-            "realized_pnl": f"{realized_pnl:+.2f}",
-            "remaining_shares": remaining,
-            "trades": [f"{t['direction']} {t['quantity']}股@{t['price']:.2f} {t['traded_at'][:10]}" for t in trades],
-        })
-
-        total_buy_amount += buy_total
-        total_sell_amount += sell_total
-        buy_count += len(buys)
-        sell_count += len(sells)
-
-    total_pnl = total_sell_amount - total_buy_amount
-
-    # 构造 prompt
-    lines = [
-        f"## {period_label}交易统计",
-        f"- 总买入: {buy_count} 笔，共 {total_buy_amount:.2f} 元",
-        f"- 总卖出: {sell_count} 笔，共 {total_sell_amount:.2f} 元",
-        f"- 已实现盈亏: {total_pnl:+.2f} 元",
-        "",
-        "## 各股票明细",
-    ]
-    for s in stock_summaries:
-        lines.append(f"\n### {s['name']}（{s['code']}）")
-        lines.append(f"- 买入 {s['buy_count']} 笔共 {s['total_buy']} 元，卖出 {s['sell_count']} 笔共 {s['total_sell']} 元")
-        lines.append(f"- 已实现盈亏: {s['realized_pnl']} 元，剩余持仓: {s['remaining_shares']} 股")
-        for t in s["trades"]:
-            lines.append(f"  - {t}")
-
-    data_text = "\n".join(lines)
-
-    prompt = f"""你是专业股票交易复盘分析师。请根据以下交易数据，生成一份复盘报告。
-
-{data_text}
-
-要求：
-1. 先总结总体盈亏情况
-2. 逐只股票分析交易表现
-3. 指出做得好的和可以改进的地方
-4. 给出 2-3 条具体的改进建议
-5. 语言简洁专业，不超过 500 字
-6. 直接输出报告正文，不要加"复盘报告"等标题"""
-
-    try:
-        review = await ai_chat(
-            prompt,
-            function="review",
-            provider=body.provider,
-            api_key=body.apiKey,
-            model=body.model,
-        )
-    except AIServiceError as e:
-        return {"error": str(e), "provider": e.provider_name}
-
-    return {"review": review.strip()}
-
-
-# ==================== 分散度分析 ====================
-
-# 基金官方分类缓存（akshare fund_name_em，24 小时刷新）
-_FUND_TYPE_CACHE: dict[str, str] = {}
-_FUND_TYPE_TS = 0.0
-_FUND_TYPE_TTL = 86400.0
-
-
-def _get_fund_type_map() -> dict[str, str]:
-    """获取全市场基金官方分类映射表（akshare，全局缓存 24 小时）
-    Returns: {code: official_type}  e.g. '指数型-海外股票'
-    """
-    global _FUND_TYPE_CACHE, _FUND_TYPE_TS
-    now = time.time()
-    if _FUND_TYPE_CACHE and (now - _FUND_TYPE_TS) < _FUND_TYPE_TTL:
-        return _FUND_TYPE_CACHE
-
-    try:
-        import akshare as ak
-        df = ak.fund_name_em()
-        if df is not None and "基金代码" in df.columns and "基金类型" in df.columns:
-            for _, row in df.iterrows():
-                code = str(row["基金代码"])
-                ftype = str(row["基金类型"]) if row["基金类型"] else ""
-                _FUND_TYPE_CACHE[code] = ftype
-            _FUND_TYPE_TS = now
-    except Exception:
-        pass
-    return _FUND_TYPE_CACHE
-
-
-def _classify_fund(name: str, code: str) -> tuple[str, str]:
-    """根据基金官方类型 + 名称关键词分类，返回 (分类, 市场区域)
-
-    优先级：akshare 官方类型 > 名称关键词 > 代码规则
-    """
-    n = name or ""
-    c = code or ""
-
-    # 获取官方基金类型（如 "指数型-海外股票"）
-    type_map = _get_fund_type_map()
-    official_type = type_map.get(c, "")
-
-    # ── 关键词子分类（从基金名称提取跟踪指数/主题） ──
-    def _sub_category() -> str:
-        # 跨境/海外
-        if "纳斯达克" in n or "纳指" in n:
-            return "美股科技"
-        if "标普500" in n or "标普" in n:
-            return "美股大盘"
-        if "全球精选" in n or "全球" in n:
-            return "全球股票"
-        if "港股" in n or "恒生" in n or "恒指" in n:
-            return "港股"
-        # 行业/主题 ETF（场内外均适用）
-        if "机器人" in n:
-            return "AI/机器人"
-        if "卫星" in n or "航天" in n or "军工" in n or "国防" in n:
-            return "航天军工"
-        if "电力" in n or "公用" in n or "绿色" in n or "电网" in n or "新能源" in n:
-            return "公用事业/能源"
-        if "通信" in n or "5G" in n or "信息" in n:
-            return "通信/科技"
-        if "化工" in n or "材料" in n or "资源" in n or "有色" in n or "矿产" in n:
-            return "材料/化工"
-        if "医药" in n or "医疗" in n or "生物" in n or "创新药" in n or "中药" in n:
-            return "医药健康"
-        if "消费" in n or "食品" in n or "饮料" in n or "白酒" in n or "家电" in n:
-            return "消费"
-        if "银行" in n or "金融" in n or "证券" in n or "保险" in n or "券商" in n:
-            return "金融"
-        if "地产" in n or "房地产" in n or "基建" in n:
-            return "地产基建"
-        if "汽车" in n or "新能源车" in n or "智能驾驶" in n:
-            return "汽车/新能源"
-        if "芯片" in n or "半导体" in n or "电子" in n or "集成电路" in n:
-            return "芯片/半导体"
-        if "传媒" in n or "游戏" in n or "影视" in n or "娱乐" in n:
-            return "传媒娱乐"
-        # 宽基指数
-        if "A500" in n or "沪深300" in n or "上证50" in n or "中证500" in n or "中证1000" in n or "创业板" in n or "科创" in n:
-            return "A股宽基"
-        # 主动管理
-        if "业绩驱动" in n or "混合" in n or "灵活" in n or "精选" in n or "成长" in n:
-            return "主动混合"
-        # 固收
-        if "债券" in n or "纯债" in n or "利率债" in n or "货币" in n:
-            return "债券/固收"
-        # 另类
-        if "黄金" in n or "石油" in n or "原油" in n or "商品" in n:
-            return "大宗商品"
-
-        # ETF 自动提取行业：名称格式通常是 "{行业}ETF{公司}"
-        if "ETF" in n:
-            # 提取 ETF 前面的关键词作为行业
-            etf_pos = n.index("ETF")
-            if etf_pos > 0:
-                sector = n[:etf_pos].strip()
-                # 去掉常见的连接词和冗余
-                for suffix in ("联接", "指数", "LOF", "龙头"):
-                    if sector.endswith(suffix):
-                        sector = sector[:-len(suffix)].strip()
-                if sector and len(sector) >= 1:
-                    return sector
-        return ""
-
-    # ── 官方类型 → 市场区域映射 ──
-    if official_type:
-        sub = _sub_category()
-        # 海外/跨境
-        if "海外" in official_type or "QDII" in official_type:
-            if sub:
-                return (sub, "海外")
-            return ("海外股票", "海外")
-        # 债券
-        if "债券" in official_type:
-            return (sub or "债券", "A股")
-        # 混合/主动
-        if "混合" in official_type:
-            return (sub or "主动混合", "A股")
-        # 指数/股票 → A股，用子分类
-        if sub:
-            return (sub, "A股")
-        if "指数" in official_type or "股票" in official_type:
-            return ("A股宽基", "A股")
-        # 有类型但无法归类
-        return ("其他基金", "A股")
-
-    # ── 无官方类型 → 回退到关键词匹配 ──
-    sub = _sub_category()
-    if sub:
-        if "美股" in sub or "全球" in sub:
-            return (sub, "海外")
-        return (sub, "A股")
-
-    # ── 代码兜底 ──
-    if c.startswith("0") and len(c) == 6:
-        return ("其他基金", "A股")
-    if c.startswith(("15", "16", "50", "51", "56", "58")) and len(c) == 6:
-        return ("场内ETF", "A股")
-
-    return ("其他", "未知")
-
-@router.get("/diversification")
-def get_diversification():
-    """持仓分散度分析：行业占比、市场占比、集中风险"""
-    holdings = query_all("SELECT * FROM holdings WHERE user_id = ?", (get_current_user_id(),))
-    if not holdings:
-        return {"by_industry": [], "by_market": [], "risk_level": "无持仓", "max_single_pct": 0}
-
-    # 同时获取行情数据（含估值）
-    results = []
-    total_value = 0.0
-    for h in holdings:
-        at = h.get("asset_type", "")
-        mkt = get_market(h["stock_code"])
-        name = h.get("stock_name", "")
-
-        if at in ("fund", "etf"):
-            # 基金/ETF：用天天基金净值（腾讯接口对部分ETF返回假数据）
-            nav_info = get_fund_nav(h["stock_code"])
-            price = (nav_info.get("est_nav") or nav_info.get("nav")) if nav_info else h["cost_price"]
-            cat, region = _classify_fund(name, h["stock_code"])
-            ind_raw = cat
-        else:
-            q = _cached_quote(h["stock_code"], mkt)
-            if q and "error" not in q:
-                price = q.get("price") or h["cost_price"]
-                ind_raw = q.get("industry", "")
-                region = q.get("region", "")
-            else:
-                price = h["cost_price"]
-                ind_raw = ""
-                region = ""
-
-        mv = price * (h.get("shares") or h.get("quantity") or 0)
-        total_value += mv
-        results.append({
-            "code": h["stock_code"],
-            "name": name,
-            "industry": _industry_keyword(ind_raw) if ind_raw and at not in ("fund", "etf") else (cat if at in ("fund", "etf") else ""),
-            "region": region,
-            "market": h.get("market", ""),
-            "market_value": mv,
-        })
-
-    if total_value == 0:
-        return {"by_industry": [], "by_market": [], "risk_level": "无数据", "max_single_pct": 0}
-
-    # 按行业聚合
-    industry_map: dict[str, dict] = {}
-    for r in results:
-        kw = r["industry"] or "未分类"
-        if kw not in industry_map:
-            industry_map[kw] = {"name": kw, "count": 0, "market_value": 0.0}
-        industry_map[kw]["count"] += 1
-        industry_map[kw]["market_value"] += r["market_value"]
-
-    by_industry = sorted(industry_map.values(), key=lambda x: x["market_value"], reverse=True)
-    for item in by_industry:
-        item["pct"] = round(item["market_value"] / total_value * 100, 1)
-        item["market_value"] = round(item["market_value"], 2)
-
-    # 按市场聚合（基金/ETF用分类区域，股票用交易所）
-    market_map: dict[str, dict] = {}
-    for r in results:
-        mkt = r.get("region") or r["market"] or "未知"
-        mkt_label = {"SH": "上海", "SZ": "深圳", "BJ": "北京",
-                     "美股": "美股", "A股": "A股", "全球": "全球"}.get(mkt, mkt)
-        if mkt_label not in market_map:
-            market_map[mkt_label] = {"name": mkt_label, "count": 0, "market_value": 0.0}
-        market_map[mkt_label]["count"] += 1
-        market_map[mkt_label]["market_value"] += r["market_value"]
-
-    by_market = sorted(market_map.values(), key=lambda x: x["market_value"], reverse=True)
-    for item in by_market:
-        item["pct"] = round(item["market_value"] / total_value * 100, 1)
-        item["market_value"] = round(item["market_value"], 2)
-
-    # 风险等级
-    max_single = max(r["market_value"] for r in results) / total_value * 100
-    max_ind_pct = by_industry[0]["pct"] if by_industry else 0
-    if max_ind_pct > 60 or len(holdings) <= 1:
-        risk = "集中"
-    elif max_ind_pct > 40 or len(holdings) <= 2:
-        risk = "适中"
-    else:
-        risk = "分散"
-
-    return {
-        "by_industry": by_industry,
-        "by_market": by_market,
-        "risk_level": risk,
-        "max_single_pct": round(max_single, 1),
-    }
-
-
-# ==================== 大盘对比 ====================
-
-@router.get("/peer-comparison")
-def get_peer_comparison():
-    """持仓 vs 大盘指数对比（仅股票和ETF，基金不参与）"""
-    holdings = query_all("SELECT * FROM holdings WHERE user_id = ? AND asset_type IN ('stock', 'etf', '')", (get_current_user_id(),))
-    if not holdings:
-        return {"items": [], "indices": {}}
-
-    # 获取三大指数行情
-    sh_idx = _cached_quote("000001", "1")
-    sz_idx = _cached_quote("399001", "0")
-    bj_idx = _cached_quote("899050", "0")
-
-    indices = {}
-    for idx, key in [(sh_idx, "sh"), (sz_idx, "sz"), (bj_idx, "bj")]:
-        if idx and "error" not in idx:
-            indices[key] = f"{idx.get('name', '')} {idx.get('change_pct', 0):+.2f}%"
-
-    items = []
-    for h in holdings:
-        mkt = get_market(h["stock_code"])
-        bench = sh_idx if mkt == "1" else sz_idx
-        bench_name = bench.get("name", "上证指数" if mkt == "1" else "深证成指") if bench and "error" not in bench else ("上证指数" if mkt == "1" else "深证成指")
-        bench_pct = bench.get("change_pct", 0) if bench and "error" not in bench else 0
-
-        q = _cached_quote(h["stock_code"], mkt)
-        if q and "error" not in q:
-            my_pct = q.get("change_pct") or 0
-            excess = round(my_pct - bench_pct, 2)
-            items.append({
-                "code": h["stock_code"],
-                "name": h["stock_name"],
-                "my_pct": my_pct,
-                "bench_name": bench_name,
-                "bench_pct": bench_pct,
-                "excess": excess,
-                "tag": "跑赢" if excess > 0 else ("持平" if excess == 0 else "跑输"),
-            })
-
-    return {"items": items, "indices": indices}
-
-
-# ==================== 价格预警 ====================
-
-class AlertBody(BaseModel):
-    stock_code: str
-    alert_type: str      # above / below / pct_change
-    target_value: float
-
-
-@router.get("/alerts")
-def list_alerts():
-    return query_all("SELECT * FROM price_alerts WHERE user_id = ? ORDER BY id DESC", (get_current_user_id(),))
-
-
-@router.post("/alerts")
-def add_alert(body: AlertBody):
-    # 同股同类型去重
-    existing = query_one(
-        "SELECT id FROM price_alerts WHERE user_id = ? AND stock_code = ? AND alert_type = ?",
-        (get_current_user_id(), body.stock_code, body.alert_type),
-    )
-    if existing:
-        execute("DELETE FROM price_alerts WHERE id = ?", (existing["id"],))
-    result = execute(
-        "INSERT INTO price_alerts (user_id, stock_code, alert_type, target_value) VALUES (?, ?, ?, ?)",
-        (get_current_user_id(), body.stock_code, body.alert_type, body.target_value),
-    )
-    return {"id": result["lastrowid"], "message": "预警已设置"}
-
-
-@router.delete("/alerts/{alert_id}")
-def delete_alert(alert_id: int):
-    execute("DELETE FROM price_alerts WHERE id = ? AND user_id = ?", (alert_id, get_current_user_id()))
-    return {"message": "已删除"}
-
-
-# ==================== 股息记录 ====================
-
-class DividendBody(BaseModel):
-    stock_code: str
-    stock_name: str = ""
-    amount_per_share: float
-    ex_date: str
-    total_amount: float
-    note: str = ""
-
-
-@router.get("/dividends")
-def list_dividends():
-    return query_all("SELECT * FROM dividends WHERE user_id = ? ORDER BY ex_date DESC", (get_current_user_id(),))
-
-
-@router.post("/dividends")
-def add_dividend(body: DividendBody):
-    result = execute(
-        """INSERT INTO dividends (user_id, stock_code, stock_name, amount_per_share, ex_date, total_amount, note)
-           VALUES (?, ?, ?, ?, ?, ?, ?)""",
-        (get_current_user_id(), body.stock_code, body.stock_name, body.amount_per_share, body.ex_date, body.total_amount, body.note),
-    )
-    return {"id": result["lastrowid"], "message": "已记录"}
-
-
-@router.delete("/dividends/{div_id}")
-def delete_dividend(div_id: int):
-    execute("DELETE FROM dividends WHERE id = ? AND user_id = ?", (div_id, get_current_user_id()))
-    return {"message": "已删除"}
-
-
-@router.get("/dividends/summary")
-def dividends_summary():
-    """股息汇总：总股息、按股票汇总"""
-    rows = query_all(
-        """SELECT stock_code, stock_name, SUM(total_amount) as total_div
-           FROM dividends WHERE user_id = ?
-           GROUP BY stock_code ORDER BY total_div DESC""",
-        (get_current_user_id(),),
-    )
-    total = sum(r["total_div"] for r in rows)
-    return {"total_dividends": total, "by_stock": rows}
-
-
-# ==================== AI 复盘（结构化） ====================
-
-class StructuredReviewRequest(BaseModel):
-    report_type: str = "daily"   # daily / weekly / monthly
-    user_id: int = 1
-    provider: str = ""           # 留空从 settings 读取
-    api_key: str = ""            # 留空从 settings 读取
-    model: str = ""
-
-
-@router.post("/review/structured")
-async def generate_review_structured(body: StructuredReviewRequest):
-    """生成结构化 AI 复盘报告"""
-    from services.review_service import generate_review_report
-
-    report = await generate_review_report(
-        user_id=body.user_id,
-        provider=body.provider,
-        api_key=body.api_key,
-        model=body.model,
-    )
-    return report
-
-
-@router.get("/reviews")
-def list_reviews(user_id: int = 1, limit: int = 20, offset: int = 0):
-    """返回历史复盘报告列表，最新的在前"""
-    return query_all(
-        """SELECT id, report_type, period_start, period_end, transactions_count,
-                  summary, score_data, created_at
-           FROM review_reports
-           WHERE user_id = ?
-           ORDER BY created_at DESC
-           LIMIT ? OFFSET ?""",
-        (user_id, limit, offset),
-    )
-
-
-@router.get("/reviews/{review_id}")
-def get_review(review_id: int):
-    """返回单条历史复盘报告的完整数据"""
-    import json as _json
-    from database import query_one
-
-    row = query_one(
-        """SELECT id, report_type, period_start, period_end, transactions_count,
-                  score_data, ai_response, summary, created_at
-           FROM review_reports
-           WHERE id = ?""",
-        (review_id,),
-    )
-    if not row:
-        return {"error": "报告不存在"}
-
-    report = {
-        "id": row["id"],
-        "report_type": row["report_type"],
-        "transactions_count": row["transactions_count"],
-        "summary": row["summary"] or "",
-        "created_at": str(row["created_at"]) if row["created_at"] else "",
-    }
-
-    # Parse dimensions and suggestions from stored AI response
-    raw = row["ai_response"] or ""
-    if raw:
-        from services.review_service import parse_review_response
-        parsed = parse_review_response(raw)
-        report["dimensions"] = parsed.get("dimensions", [])
-        report["suggestions"] = parsed.get("suggestions", [])
-    else:
-        report["dimensions"] = []
-        report["suggestions"] = []
-
-    # Parse score_data
-    score_data = row.get("score_data") or "{}"
-    try:
-        scores = _json.loads(score_data) if isinstance(score_data, str) else score_data
-    except (_json.JSONDecodeError, TypeError):
-        scores = {}
-    report["avg_score"] = round(sum(scores.values()) / len(scores)) if scores else 0
-
-    return report
+# ==================== 交易记忆（复盘） ====================
+
+@router.get("/memory/stats")
+def get_memory_stats():
+    """获取交易记忆统计摘要"""
+    from services.review_service import get_memory_stats
+    return get_memory_stats()
+
+
+@router.get("/memory/entries")
+def get_memory_entries(limit: int = 50):
+    """获取交易记忆条目列表（最新在前）"""
+    from services.review_service import get_memory_entries
+    return get_memory_entries(limit=limit)
+
+
+@router.get("/memory/context/{code}")
+def get_memory_context(code: str):
+    """获取某只股票的历史交易上下文（供 AI 分析使用）"""
+    from services.trading_memory import TradingMemoryLog
+    mem = TradingMemoryLog()
+    ctx = mem.get_past_context(code, n_same=5, n_cross=3)
+    return {"code": code, "context": ctx, "has_context": bool(ctx)}
 
 
 # ═══════════════════════════════════════════════════════════

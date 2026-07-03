@@ -102,6 +102,27 @@ def auto_create_journal_entry(user_id: int, stock_code: str, stock_name: str,
          quantity, pnl, pnl_pct, entry_date, date.today().isoformat()),
     )
 
+    # 同步写入交易记忆日志（Phase A：pending 状态，后续 AI 反思）
+    try:
+        from services.trading_memory import TradingMemoryLog
+        mem = TradingMemoryLog()
+        decision_text = (
+            f"买入 {stock_code} {stock_name} 于 {entry_date}，价格 {entry_price}，{quantity}股；"
+            f"卖出于 {date.today().isoformat()}，价格 {exit_price}，"
+            f"盈亏 {pnl:.2f} 元 ({pnl_pct:.2f}%)" if pnl is not None and pnl_pct is not None
+            else f"卖出 {stock_code} {stock_name} 于 {date.today().isoformat()}，价格 {exit_price}"
+        )
+        mem.store_decision(
+            code=stock_code,
+            direction="卖出",
+            date=date.today().isoformat(),
+            decision_text=decision_text,
+            entry_price=entry_price or 0,
+            quantity=quantity,
+        )
+    except Exception:
+        pass  # 记忆记录失败不影响主流程
+
 
 def get_journal(user_id: int = 1, limit: int = 50) -> list[dict]:
     """获取交易日志列表"""
@@ -111,3 +132,132 @@ def get_journal(user_id: int = 1, limit: int = 50) -> list[dict]:
         (user_id, limit),
     )
     return [dict(r) for r in rows]
+
+
+# ═══════════════════════════════════════════════════════════
+#  交易规则
+# ═══════════════════════════════════════════════════════════
+
+RULES_KEY = "trading_rules"
+DEFAULT_RULES = {
+    "require_stop_loss": True,           # 买入前必须设止损
+    "max_position_pct": 30,              # 单票最大仓位百分比
+    "max_total_position_pct": 80,        # 总仓位上限（保留现金）
+    "forbid_chasing_limit_up": True,     # 禁止追涨停板
+    "max_consecutive_losses": 3,         # 连亏 N 笔自动停手
+    "min_hold_days": 1,                  # 最短持仓天数
+    "enabled": True,                     # 规则总开关
+}
+
+
+def get_rules() -> dict:
+    """获取交易规则配置"""
+    row = query_one("SELECT value FROM settings WHERE key = ?", (RULES_KEY,))
+    if not row:
+        return dict(DEFAULT_RULES)
+    import json
+    try:
+        cfg = json.loads(row["value"])
+        for k, v in DEFAULT_RULES.items():
+            cfg.setdefault(k, v)
+        return cfg
+    except Exception:
+        return dict(DEFAULT_RULES)
+
+
+def save_rules(rules: dict):
+    """保存交易规则配置"""
+    import json
+    execute(
+        "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
+        (RULES_KEY, json.dumps(rules, ensure_ascii=False)),
+    )
+
+
+def validate_buy(code: str, price: float, quantity: int, user_id: int = 1,
+                 stop_loss_price: float | None = None) -> dict:
+    """买入前校验——检查所有交易规则
+
+    Returns:
+        {"ok": True} 或 {"ok": False, "violations": ["违规原因1", ...]}
+    """
+    rules = get_rules()
+    if not rules.get("enabled"):
+        return {"ok": True}
+
+    violations = []
+
+    # 1. 检查保护模式
+    protection = check_protection(user_id)
+    if protection["protection_active"]:
+        violations.append(
+            f"保护模式已激活: 连亏 {protection['streak']} 笔 "
+            f"(上限 {protection['max_consecutive']} 笔)。请等待下次交易周期或手动解除。"
+        )
+
+    # 2. 买入前必须设止损
+    if rules.get("require_stop_loss"):
+        if not stop_loss_price or stop_loss_price <= 0:
+            violations.append("必须设置止损价才能买入")
+
+    # 3. 单票仓位检查
+    max_pct = rules.get("max_position_pct", 30)
+    total_value = _get_total_value(user_id)
+    if total_value > 0 and price > 0:
+        position_value = price * quantity
+        position_pct = position_value / total_value * 100
+        if position_pct > max_pct:
+            violations.append(
+                f"单票仓位 {position_pct:.1f}% 超过上限 {max_pct}%"
+            )
+        # 总仓位检查
+        existing_value = _get_current_positions_value(user_id)
+        new_total_pct = (existing_value + position_value) / total_value * 100
+        max_total = rules.get("max_total_position_pct", 80)
+        if new_total_pct > max_total:
+            violations.append(
+                f"总仓位将达到 {new_total_pct:.1f}%，超过上限 {max_total}%"
+            )
+
+    # 4. 禁止追涨停
+    if rules.get("forbid_chasing_limit_up"):
+        try:
+            from services.vendor_router import route
+            quote = route("get_realtime_quote", code=code)
+            if "error" not in quote and quote.get("change_pct"):
+                change = float(quote["change_pct"])
+                if change >= 9.5:
+                    violations.append(f"当前涨幅 {change:.1f}%，禁止追涨停买入")
+        except Exception:
+            pass
+
+    if violations:
+        return {"ok": False, "violations": violations}
+    return {"ok": True}
+
+
+def _get_total_value(user_id: int = 1) -> float:
+    """获取用户总资产"""
+    rows = query_all(
+        "SELECT quantity, cost_price FROM holdings WHERE user_id = ? AND quantity > 0",
+        (user_id,),
+    )
+    return sum(r["quantity"] * r["cost_price"] for r in rows) if rows else 0
+
+
+def _get_current_positions_value(user_id: int = 1) -> float:
+    """获取当前持仓总市值"""
+    total = 0.0
+    rows = query_all(
+        "SELECT stock_code, quantity FROM holdings WHERE user_id = ? AND quantity > 0",
+        (user_id,),
+    )
+    for r in rows:
+        try:
+            from services.vendor_router import route
+            quote = route("get_realtime_quote", code=r["stock_code"])
+            if "error" not in quote and quote.get("price"):
+                total += r["quantity"] * float(quote["price"])
+        except Exception:
+            pass
+    return total

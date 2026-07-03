@@ -28,7 +28,7 @@ JWT_SECRET = _JWT_SECRET
 JWT_EXPIRES = 2 * 3600  # 2 小时（短期令牌）
 
 # AI
-AI_PROVIDER = os.getenv("AI_PROVIDER", "minimax")
+AI_PROVIDER = os.getenv("AI_PROVIDER", "deepseek")
 CLAUDE_API_KEY = os.getenv("CLAUDE_API_KEY", "")
 CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", "claude-opus-4-7")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")

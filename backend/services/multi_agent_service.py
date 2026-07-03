@@ -1,525 +1,460 @@
-"""多 Agent 交叉验证选股服务
+"""多 Agent 深度分析 — TradingAgents 风格的多空辩论
 
-5 个 AI 投资人格从不同维度独立分析候选股池，投票聚合后给出综合评分。
-每个 Agent 的角色定义见 AGENT_ROLES。
+5 个 Agent，3 轮调用:
+  第1轮 (并行): 技术面分析师 + 基本面分析师
+  第2轮 (并行): 多头研究员 + 空头研究员 (基于第1轮报告辩论)
+  第3轮: 裁判 (审阅辩论，给出最终判断)
 
-工作流:
-  1. 接收候选股列表（多因子扫描 Top 50）
-  2. 并行调用 5 个 Agent（asyncio.gather）
-  3. 聚合结果：投票 + 加权评分 + 风险否决
-  4. 返回综合排名 + 各 Agent 独立意见
+用法:
+  from services.multi_agent_service import analyze_stock
+  result = await analyze_stock("600519")
+
+输出:
+  {
+    "code": "600519",
+    "technical_report": "技术面报告...",
+    "fundamentals_report": "基本面报告...",
+    "bull_case": "多头论点...",
+    "bear_case": "空头论点...",
+    "verdict": "买入/持有/卖出",
+    "confidence": 0.75,
+    "reasoning": "最终判断理由...",
+  }
 """
 
-import json
-import re
 import asyncio
 import logging
-from typing import Optional
+from typing import Any
+
+from services.ai_service import ai_chat, get_default_provider
 
 logger = logging.getLogger(__name__)
 
-# ═══════════════════════════════════════════════════════════
-# 5 个 Agent 角色定义
-# ═══════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════
+#  System Prompts
+# ═══════════════════════════════════════════════════════════════
 
-AGENT_ROLES = {
-    "value": {
-        "name": "价值分析师",
-        "icon": "💰",
-        "color": "emerald",
-        "focus": "基本面 + 估值",
-        "system_prompt": """你是资深价值投资者，信奉格雷厄姆和巴菲特的价值投资理念。
-你的分析框架：
-1. PE/PB 估值是否合理（低 PE、低 PB 得分高）
-2. ROE 是否持续高于行业平均
-3. 股息率是否有吸引力
-4. 安全边际是否充足
-5. 现金流和资产负债表健康度
+TECHNICAL_SYSTEM = """你是资深 A 股技术分析师，专注价格行为和量化因子分析。
+分析框架:
+1. K 线趋势（均线排列、支撑阻力、形态）
+2. 技术指标信号（RSI/MACD/KDJ/布林带）
+3. 量价配合关系
+4. 55 因子评分（关注动量/波动率/量价/情绪类因子）
+5. 海龟交易法信号（S1/S2 通道突破）
 
-你倾向于选择被低估的、有安全边际的股票，回避高估值热门股。
-以严格但有建设性的态度给出评估。""",
-        "criteria": ["估值合理", "ROE优秀", "安全边际", "现金流健康"],
-    },
-    "technical": {
-        "name": "技术分析师",
-        "icon": "📈",
-        "color": "blue",
-        "focus": "技术面 + 量价",
-        "system_prompt": """你是资深技术分析师，专注于价格行为和成交量分析。
-你的分析框架：
-1. K 线形态（趋势、支撑阻力、形态突破）
-2. RSI/MACD 等技术指标信号
-3. 量价配合关系（放量突破、缩量回调）
-4. 均线排列（多头/空头排列）
-5. 相对强度（近期涨幅排名）
+输出要求:
+- 给出明确的技术面判断（看多/中性/看空）
+- 列出 3-5 个关键信号，每个附具体数值
+- 控制在 500 字以内
+- 用中文"""
 
-你倾向于选择技术面强势、趋势明确的股票，关注短期动量。
-以图表分析师的视角给出评估。""",
-        "criteria": ["趋势向上", "量价配合", "指标共振", "相对强势"],
-    },
-    "risk": {
-        "name": "风险控制官",
-        "icon": "🛡️",
-        "color": "red",
-        "focus": "风险 + 回撤",
-        "system_prompt": """你是风险控制专家，职责是识别和评估投资风险。你拥有否决权。
-你的分析框架：
-1. 历史波动率和下行风险
-2. 最大回撤幅度和恢复时间
-3. 贝塔系数和系统性风险
-4. 流动性风险（日均成交额）
-5. 行业集中度风险
-6. 杠杆率（融资余额占比）
+FUNDAMENTALS_SYSTEM = """你是资深 A 股基本面分析师，专注公司质地和估值分析。
+分析框架:
+1. 估值水平（PE/PB 相对历史和行业）
+2. 盈利能力（ROE/毛利率/净利率）
+3. 成长性（营收增速/利润增速）
+4. 财务健康度（资产负债率/现金流）
+5. 分红回报（股息率）
 
-你对每只股票给出风险等级（低/中/高），对于高风险股票给出明确的"不建议"标记。
-你是保守主义者，宁愿错过机会也不承担不可控的风险。""",
-        "criteria": ["低波动", "回撤可控", "流动性好", "风险分散"],
-    },
-    "sentiment": {
-        "name": "情绪捕手",
-        "icon": "🔥",
-        "color": "orange",
-        "focus": "社交 + 资金面",
-        "system_prompt": """你是市场情绪分析师，擅长捕捉市场共识和资金流向。
-你的分析框架：
-1. 雪球社区关注度和讨论热度
-2. 微博情绪倾向（看多/看空）
-3. 北向资金流向（外资偏好）
-4. 融资融券数据（杠杆情绪）
-5. 机构持仓变化
-6. 市场热点和题材联动
+输出要求:
+- 给出明确的基本面判断（低估/合理/高估）
+- 列出 3-5 个关键指标，每个附具体数值
+- 指出 1-2 个潜在风险点
+- 控制在 500 字以内
+- 用中文"""
 
-你倾向于选择获得市场共识、资金持续流入的股票。
-但你也能识别"过热"信号，提醒回避过度炒作的标的。""",
-        "criteria": ["社区关注", "资金流入", "情绪正面", "机构增持"],
-    },
-    "macro": {
-        "name": "宏观策略师",
-        "icon": "🌐",
-        "color": "purple",
-        "focus": "行业 + 宏观",
-        "system_prompt": """你是宏观策略分析师，从自上而下的视角评估投资机会。
-你的分析框架：
-1. 行业景气度和政策面
-2. 行业在宏观经济周期中的位置
-3. 产业链地位和竞争格局
-4. 政策扶持方向（国产替代、新能源等）
-5. 行业轮动和风格切换
-6. 全球宏观环境对行业的影响
+BULL_SYSTEM = """你是 A 股多头研究员。你的任务是基于技术面和基本面分析报告，构建看涨论点。
+分析框架:
+1. 找出两份报告中所有正面信号
+2. 将这些信号串联成连贯的看涨逻辑
+3. 提出 3 个核心看涨理由
+4. 估算目标价和上涨空间（用报告中给出的数据）
+5. 说明什么情况下这个看涨逻辑会成立
 
-你倾向于选择处于景气上升期、有政策支持的行业龙头。
-你的分析更多关注行业配置而非个股选择。""",
-        "criteria": ["行业景气", "政策支持", "龙头地位", "周期有利"],
-    },
+输出要求:
+- 必须有具体数据支撑，不能空泛
+- 标注每个理由的置信度（高/中/低）
+- 控制在 400 字以内
+- 用中文"""
+
+BEAR_SYSTEM = """你是 A 股空头研究员。你的任务是基于技术面和基本面分析报告，构建看跌论点。
+分析框架:
+1. 找出两份报告中所有风险信号和负面因素
+2. 将这些信号串联成连贯的看跌逻辑
+3. 提出 3 个核心看跌理由
+4. 估算下行风险和潜在亏损空间
+5. 指出什么情况下应该止损
+
+输出要求:
+- 必须有具体数据支撑，不能空泛
+- 标注每个理由的置信度（高/中/低）
+- 控制在 400 字以内
+- 用中文"""
+
+JUDGE_SYSTEM = """你是资深 A 股投资经理。请审阅以下多空辩论，给出最终判断。
+
+你需要:
+1. 比较多空双方的论据质量和数据支撑
+2. 判断哪一方更有说服力
+3. 给出明确的投资建议
+
+输出格式（严格 JSON）:
+{
+  "verdict": "买入" | "持有" | "卖出",
+  "confidence": 0.0-1.0,
+  "key_reasons": ["理由1", "理由2", "理由3"],
+  "risk_warning": "主要风险提示",
+  "suggested_hold_days": 建议持仓天数,
+  "stop_loss_pct": 建议止损百分比
 }
 
-
-def _build_candidate_text(candidates: list[dict], max_candidates: int = 30) -> str:
-    """构建候选股文本摘要（给 AI 阅读）
-
-    对输入做基础清洗：截断过长字段、过滤特殊字符（防 prompt 注入）。
-    """
-    # 限制 candidates_json 最大输入（防超大 payload）
-    if len(candidates) > 100:
-        candidates = candidates[:100]
-
-    text_parts = []
-    for i, c in enumerate(candidates[:max_candidates]):
-        code = str(c.get("code", ""))[:12].strip()
-        name = str(c.get("name", ""))[:20].strip()
-        # 过滤可能干扰 prompt 结构的字符
-        name = name.translate(str.maketrans("", "", "{}[]\"'`"))
-        industry = str(c.get("industry", "N/A"))[:20].strip()
-        score = c.get("score", 0)
-        price = c.get("price") or "N/A"
-        hit_count = c.get("hit_count", 0)
-
-        # 因子贡献 TOP 3
-        top_factors = c.get("top_factors", [])
-        factor_desc = ""
-        if top_factors:
-            top3 = top_factors[:3]
-            try:
-                factor_desc = " | ".join(
-                    f"{t['factor']}({t['contribution']:+.4f})" for t in top3
-                )
-            except (KeyError, TypeError, ValueError):
-                factor_desc = "(因子数据缺失)"
-
-        text_parts.append(
-            f"{i + 1}. {code} {name} | 行业:{industry} | 现价:{price} | "
-            f"评分:{score:.4f} | 因子数:{hit_count}\n"
-            f"   因子贡献: {factor_desc}"
-        )
-
-    return "\n".join(text_parts)
+要求:
+- verdict 必须是 "买入"、"持有"、"卖出" 之一
+- confidence 0-1，0.7 以上为高置信度
+- 用中文"""
 
 
-def _build_agent_prompt(agent_key: str, candidates: list[dict]) -> str:
-    """为指定 Agent 构建分析 prompt"""
-    role = AGENT_ROLES[agent_key]
-    candidate_text = _build_candidate_text(candidates)
+# ═══════════════════════════════════════════════════════════════
+#  核心编排
+# ═══════════════════════════════════════════════════════════════
 
-    criteria_text = "\n".join(f"  {i + 1}. {c}" for i, c in enumerate(role["criteria"]))
-
-    prompt = f"""你是「{role['name']}」，{role['focus']}专家。
-
-以下是多因子量化模型筛选出的 A 股候选股票池（前 {min(len(candidates), 30)} 只）：
-
-{candidate_text}
-
-请从你的专业视角（{role['focus']}）进行分析，选出你认为最有投资价值的 3-5 只股票，并对每只给出评分和理由。
-
-评估标准（按重要性排序）：
-{criteria_text}
-
-请严格按 JSON 格式输出（不要 markdown 代码块标记）：
-{{
-  "picks": [
-    {{
-      "code": "股票代码",
-      "name": "名称",
-      "score": 0.0-10.0的评分,
-      "confidence": "high/medium/low",
-      "reason": "推荐理由(50字内)",
-      "risk_flag": "如有风险标注，否则null"
-    }}
-  ],
-  "summary": "你的整体分析摘要(80字内)",
-  "top_themes": ["当前最看好的1-3个主题/行业"]
-}}"""
-
-    return prompt
-
-
-async def _run_single_agent(
-    agent_key: str,
-    candidates: list[dict],
+async def analyze_stock(
+    code: str,
     provider: str = "",
-) -> dict | None:
-    """执行单个 Agent 的分析（30s 超时 + refusal 检测）"""
-    role = AGENT_ROLES[agent_key]
-
-    try:
-        from services.ai_service import ai_chat
-        from services.ai_exceptions import AIServiceError
-
-        prompt = _build_agent_prompt(agent_key, candidates)
-
-        # 30 秒超时
-        raw = await asyncio.wait_for(
-            ai_chat(
-                prompt,
-                function="screener",
-                provider=provider,
-                system_prompt=role["system_prompt"],
-            ),
-            timeout=30.0,
-        )
-
-        # 解析 JSON 输出
-        text = raw.strip()
-
-        # Refusal 检测：LLM 拒绝提供投资建议
-        refusal_patterns = [
-            "cannot recommend", "unable to", "i apologize",
-            "i'm unable", "i am unable", "无法提供", "不能提供",
-            "as an ai", "not financial advice",
-        ]
-        text_lower = text.lower()
-        if any(p in text_lower for p in refusal_patterns):
-            return {
-                "agent_key": agent_key,
-                "agent_name": role["name"],
-                "icon": role["icon"],
-                "color": role["color"],
-                "focus": role["focus"],
-                "error": "model_refusal",
-                "raw": raw[:200],
-                "picks": [],
-                "summary": "",
-                "top_themes": [],
-            }
-
-        # 去掉可能的 markdown 代码块
-        if text.startswith("```"):
-            lines = text.split("\n")
-            text = "\n".join(lines[1:]) if len(lines) > 1 else text
-            if text.rstrip().endswith("```"):
-                text = text[: text.rfind("```")].strip()
-
-        try:
-            result = json.loads(text)
-        except json.JSONDecodeError:
-            # 尝试从文本中提取 JSON
-            m = re.search(r"\{.*\}", text, re.DOTALL)
-            if m:
-                result = json.loads(m.group(0))
-            else:
-                return {
-                    "agent_key": agent_key,
-                    "agent_name": role["name"],
-                    "error": "AI 输出无法解析为 JSON",
-                    "raw": raw[:200],
-                    "picks": [],
-                }
-
-        return {
-            "agent_key": agent_key,
-            "agent_name": role["name"],
-            "icon": role["icon"],
-            "color": role["color"],
-            "focus": role["focus"],
-            "picks": result.get("picks", []),
-            "summary": result.get("summary", ""),
-            "top_themes": result.get("top_themes", []),
-        }
-
-    except asyncio.TimeoutError:
-        logger.warning(f"Agent {agent_key} 超时 (30s)")
-        return {
-            "agent_key": agent_key,
-            "agent_name": role["name"],
-            "icon": role["icon"],
-            "color": role["color"],
-            "focus": role["focus"],
-            "error": "timeout: Agent 分析超时 (30s)",
-            "picks": [],
-            "summary": "",
-            "top_themes": [],
-        }
-    except AIServiceError as e:
-        logger.warning(f"Agent {agent_key} AI服务异常: {e} (provider={e.provider_name})")
-        return {
-            "agent_key": agent_key,
-            "agent_name": role["name"],
-            "error": f"AI服务异常: {e}",
-            "picks": [],
-        }
-    except Exception as e:
-        logger.warning(f"Agent {agent_key} 执行失败: {e}")
-        return {
-            "agent_key": agent_key,
-            "agent_name": role["name"],
-            "error": str(e),
-            "picks": [],
-        }
-
-
-def _aggregate_results(
-    agent_results: list[dict],
-    candidates: list[dict],
+    api_key: str = "",
+    model: str = "",
 ) -> dict:
-    """聚合 5 个 Agent 的分析结果
-
-    聚合逻辑：
-    1. 投票计数：统计每只股票被多少个 Agent 推荐
-    2. 加权评分：各 Agent 对该股的评分取均值
-    3. 风险否决：风险控制官标记高危 → 自动降级或剔除
-    4. 共识度：根据投票离散度给出 全票/多数/分歧/少数 标签
-    """
-    if not agent_results:
-        return {"aggregated": [], "agent_count": 0, "consensus_summary": "无 Agent 结果"}
-
-    # 按股票代码聚合
-    code_picks: dict[str, dict] = {}  # code → {votes, scores, reasons, agents}
-
-    for ar in agent_results:
-        if "error" in ar:
-            continue
-        agent_name = ar["agent_name"]
-        agent_color = ar.get("color", "neutral")
-        is_risk = ar["agent_key"] == "risk"
-
-        for pick in ar.get("picks", []):
-            code = pick.get("code", "")
-            if not code:
-                continue
-
-            if code not in code_picks:
-                code_picks[code] = {
-                    "code": code,
-                    "votes": 0,
-                    "total_score": 0.0,
-                    "score_count": 0,
-                    "reasons": [],
-                    "agents": [],
-                    "risk_flags": [],
-                    "risk_veto": False,
-                }
-
-            entry = code_picks[code]
-            entry["votes"] += 1
-            score = pick.get("score", 5)
-            if score is not None:
-                try:
-                    entry["total_score"] += float(score)
-                    entry["score_count"] += 1
-                except (ValueError, TypeError):
-                    logger.warning("multi_agent: 聚合时分数转换失败 code=%s score=%s", code, score)
-            entry["reasons"].append({
-                "agent": agent_name,
-                "color": agent_color,
-                "reason": pick.get("reason", ""),
-                "confidence": pick.get("confidence", "medium"),
-            })
-            entry["agents"].append(agent_name)
-
-            # 风险标注
-            risk_flag = pick.get("risk_flag")
-            if risk_flag:
-                entry["risk_flags"].append({
-                    "agent": agent_name,
-                    "flag": risk_flag,
-                })
-
-            # 风险否决
-            if is_risk and pick.get("confidence") == "low" and (score is None or float(score) < 3):
-                entry["risk_veto"] = True
-
-    # 计算平均分和共识度
-    aggregated = []
-    for code, entry in code_picks.items():
-        # 平均分（归一化到 0-10）
-        avg_score = round(entry["total_score"] / entry["score_count"], 1) if entry["score_count"] > 0 else 0
-
-        # 共识度
-        vote_count = entry["votes"]
-        if vote_count >= 4:
-            consensus = "全票通过"
-            consensus_class = "all"
-        elif vote_count >= 3:
-            consensus = "多数通过"
-            consensus_class = "majority"
-        elif vote_count >= 2:
-            consensus = "分歧较大"
-            consensus_class = "divided"
-        else:
-            consensus = "少数推荐"
-            consensus_class = "minority"
-
-        # 风险否决
-        if entry["risk_veto"]:
-            consensus = "⚠️ 风险否决"
-            consensus_class = "vetoed"
-            avg_score = max(avg_score - 2, 0)
-
-        # 找到原始候选股信息
-        stock_info = {}
-        for c in candidates:
-            if c.get("code") == code:
-                stock_info = {
-                    "name": c.get("name", ""),
-                    "industry": c.get("industry", ""),
-                    "price": c.get("price"),
-                    "quant_score": c.get("score"),
-                }
-                break
-
-        aggregated.append({
-            "code": code,
-            "name": stock_info.get("name", ""),
-            "industry": stock_info.get("industry", ""),
-            "price": stock_info.get("price"),
-            "quant_score": stock_info.get("quant_score"),
-            "agent_score": avg_score,
-            "votes": vote_count,
-            "total_agents": len([a for a in agent_results if "error" not in a]),
-            "consensus": consensus,
-            "consensus_class": consensus_class,
-            "reasons": entry["reasons"],
-            "agents": entry["agents"],
-            "risk_flags": entry["risk_flags"] if entry["risk_flags"] else None,
-            "risk_veto": entry["risk_veto"],
-        })
-
-    # 排序：按得票数 desc → Agent 评分 desc
-    aggregated.sort(key=lambda x: (x["risk_veto"] is False, x["votes"], x["agent_score"]), reverse=True)
-
-    # 生成共识摘要
-    active_agents = [a for a in agent_results if "error" not in a]
-    themes = []
-    for ar in active_agents:
-        themes.extend(ar.get("top_themes", []))
-    # 去重并取前 5
-    theme_counts = {}
-    for t in themes:
-        theme_counts[t] = theme_counts.get(t, 0) + 1
-    top_themes = sorted(theme_counts, key=theme_counts.get, reverse=True)[:5]
-
-    consensus_summary = f"{len(active_agents)} 位 AI 分析师参与交叉验证，" \
-                        f"共推荐 {len(aggregated)} 只股票。" \
-                        f"共识主题: {', '.join(top_themes[:3]) if top_themes else '无明确共识'}"
-
-    return {
-        "aggregated": aggregated,
-        "agent_count": len(active_agents),
-        "error_agents": [a for a in agent_results if "error" in a],
-        "consensus_summary": consensus_summary,
-        "top_themes": top_themes,
-    }
-
-
-async def run_multi_agent_screen(
-    candidates: list[dict],
-    provider: str = "",
-    agent_keys: list[str] = None,
-) -> dict:
-    """主入口：运行多 Agent 交叉验证
-
-    Args:
-        candidates: 候选股列表（来自多因子扫描结果）
-        provider: AI 供应商（为空则用默认）
-        agent_keys: 要运行的 Agent 列表，默认全部 5 个
+    """对单只股票运行多 Agent 深度分析
 
     Returns:
-        {
-            "agent_results": [...],   # 每个 Agent 的完整分析
-            "aggregation": {...},     # 聚合结果
-            "provider": str,
-            "elapsed_ms": int,
-        }
+        {code, technical_report, fundamentals_report, bull_case,
+         bear_case, verdict, confidence, reasoning, key_reasons,
+         risk_warning, suggested_hold_days, stop_loss_pct}
     """
-    import time as _time
+    # ── 获取数据 ──
+    stock_info = _gather_stock_data(code)
+    if "error" in stock_info:
+        return {"code": code, "error": stock_info["error"]}
 
-    if not candidates:
-        return {"error": "候选股列表为空", "agent_results": [], "aggregation": None}
+    # ── 第 1 轮：技术面 + 基本面 并行 ──
+    tech_prompt = _build_technical_prompt(code, stock_info)
+    fund_prompt = _build_fundamentals_prompt(code, stock_info)
 
-    keys = agent_keys or list(AGENT_ROLES.keys())
-    logger.info(
-        "multi_agent_screen start: candidates=%d agents=%d provider=%s",
-        len(candidates), len(keys), provider or "default",
+    tech_task = ai_chat(
+        tech_prompt,
+        system_prompt=TECHNICAL_SYSTEM,
+        provider=provider, api_key=api_key, model=model,
+        function="explain",
+    )
+    fund_task = ai_chat(
+        fund_prompt,
+        system_prompt=FUNDAMENTALS_SYSTEM,
+        provider=provider, api_key=api_key, model=model,
+        function="explain",
     )
 
-    # 过滤未知的 agent_key
-    keys = [k for k in keys if k in AGENT_ROLES]
+    try:
+        tech_report, fund_report = await asyncio.gather(tech_task, fund_task)
+    except Exception as e:
+        return {"code": code, "error": f"AI 调用异常: {e}"}
 
-    if not keys:
-        return {"error": "无有效 Agent", "agent_results": [], "aggregation": None}
+    tech_report = (tech_report or "").strip()
+    fund_report = (fund_report or "").strip()
 
-    t0 = _time.time()
+    # 检查错误格式（ai_chat 返回 "（错误描述）" 而非抛异常）
+    if tech_report.startswith("（") and tech_report.endswith("）"):
+        return {"code": code, "error": f"技术面分析失败: {tech_report[1:-1]}"}
+    if fund_report.startswith("（") and fund_report.endswith("）"):
+        return {"code": code, "error": f"基本面分析失败: {fund_report[1:-1]}"}
+    if not tech_report or not fund_report:
+        return {"code": code, "error": "AI 分析返回为空，请检查 API Key 配置"}
 
-    # 并行执行所有 Agent
-    tasks = [_run_single_agent(k, candidates, provider) for k in keys]
-    agent_results = await asyncio.gather(*tasks)
+    # ── 第 2 轮：多头 + 空头 并行 ──
+    debate_context = f"""## 技术面分析报告
+{tech_report}
 
-    # 聚合
-    aggregation = _aggregate_results(agent_results, candidates)
+## 基本面分析报告
+{fund_report}"""
 
-    elapsed = int((_time.time() - t0) * 1000)
-
-    # 结构化完成日志
-    success_count = len([a for a in agent_results if "error" not in a])
-    error_count = len(agent_results) - success_count
-    top_consensus = aggregation.get("consensus_summary", "")[:80] if aggregation else "N/A"
-    logger.info(
-        "multi_agent_screen done: elapsed=%dms success=%d/%d consensus=%s",
-        elapsed, success_count, len(agent_results), top_consensus,
+    bull_task = ai_chat(
+        debate_context + "\n\n请基于以上两份报告，构建看涨论点。",
+        system_prompt=BULL_SYSTEM,
+        provider=provider, api_key=api_key, model=model,
+        function="explain",
+    )
+    bear_task = ai_chat(
+        debate_context + "\n\n请基于以上两份报告，构建看跌论点。",
+        system_prompt=BEAR_SYSTEM,
+        provider=provider, api_key=api_key, model=model,
+        function="explain",
     )
 
+    try:
+        bull_case, bear_case = await asyncio.gather(bull_task, bear_task)
+    except Exception as e:
+        return {"code": code, "error": f"辩论阶段 AI 调用异常: {e}"}
+    bull_case = (bull_case or "").strip()
+    bear_case = (bear_case or "").strip()
+
+    # ── 第 3 轮：裁判 ──
+    judge_prompt = f"""## 股票: {code} {stock_info.get('name', '')}
+
+## 技术面报告
+{tech_report}
+
+## 基本面报告
+{fund_report}
+
+## 多头论点
+{bull_case}
+
+## 空头论点
+{bear_case}
+
+请给出最终判断。"""
+
+    judge_raw = await ai_chat(
+        judge_prompt,
+        system_prompt=JUDGE_SYSTEM,
+        provider=provider, api_key=api_key, model=model,
+        function="explain",
+    )
+
+    verdict_data = _parse_judge_response(judge_raw) if judge_raw else {}
+
+    # ── 组装结果 ──
     return {
-        "agent_results": agent_results,
-        "aggregation": aggregation,
-        "provider": provider or "default",
-        "elapsed_ms": elapsed,
+        "code": code,
+        "name": stock_info.get("name", ""),
+        "price": stock_info.get("price"),
+        "technical_report": tech_report,
+        "fundamentals_report": fund_report,
+        "bull_case": bull_case,
+        "bear_case": bear_case,
+        "verdict": verdict_data.get("verdict", "持有"),
+        "confidence": verdict_data.get("confidence", 0.5),
+        "key_reasons": verdict_data.get("key_reasons", []),
+        "risk_warning": verdict_data.get("risk_warning", ""),
+        "suggested_hold_days": verdict_data.get("suggested_hold_days"),
+        "stop_loss_pct": verdict_data.get("stop_loss_pct"),
     }
+
+
+# ═══════════════════════════════════════════════════════════════
+#  数据收集
+# ═══════════════════════════════════════════════════════════════
+
+def _gather_stock_data(code: str) -> dict:
+    """收集分析所需数据——优先本地 historical_kline，仅基本面调外部 API"""
+    try:
+        from database import query_all
+        from services.technical import calc_ma, calc_rsi, calc_macd
+
+        # ── 从本地 historical_kline 读 K 线（零外部请求）──
+        rows = query_all(
+            """SELECT trade_date, open, high, low, close, volume
+               FROM historical_kline
+               WHERE stock_code = ? AND trade_date >= date('now','-180 days')
+               ORDER BY trade_date ASC""",
+            (code,),
+        )
+        if not rows or len(rows) < 60:
+            # 回退到外部 K 线
+            from services.technical import fetch_kline
+            from services.utils import get_market
+            kline = fetch_kline(code, get_market(code), days=120)
+            if "error" in kline:
+                return {"error": f"无法获取 K 线数据: {kline['error']}"}
+            closes = kline.get("closes", [])
+            highs = kline.get("highs", [])
+            lows = kline.get("lows", [])
+            volumes = kline.get("volumes", [])
+        else:
+            closes = [float(r["close"]) for r in rows if r["close"] is not None]
+            highs = [float(r["high"]) for r in rows if r["high"] is not None]
+            lows = [float(r["low"]) for r in rows if r["low"] is not None]
+            volumes = [float(r["volume"]) for r in rows if r["volume"] is not None]
+
+        if len(closes) < 60:
+            return {"error": "K 线数据不足（需至少 60 天）"}
+
+        # ── 技术指标计算（纯本地 CPU，不需要网络）──
+        price = closes[-1]
+        prev = closes[-2] if len(closes) >= 2 else price
+        change_pct = round((price - prev) / prev * 100, 2) if prev else 0
+
+        ma = calc_ma(closes, [5, 10, 20, 60])
+        rsi = calc_rsi(closes, 14)
+        macd = calc_macd(closes)
+        atr = _calc_atr(highs, lows, closes, 20)
+        turtle = _calc_turtle(highs, lows, closes)
+
+        vol_ratio = 1.0
+        if volumes and len(volumes) >= 20:
+            valid = [v for v in volumes[-21:-1] if v is not None]
+            vm = sum(valid) / len(valid) if valid else 0
+            vol_ratio = round(volumes[-1] / vm, 2) if vm > 0 and volumes[-1] is not None else 1.0
+
+        ret_5d = round((closes[-1] / closes[-6] - 1) * 100, 2) if len(closes) >= 6 else None
+        ret_20d = round((closes[-1] / closes[-21] - 1) * 100, 2) if len(closes) >= 21 else None
+
+        # ── 股票名称：从本地持仓/自选股表获取 ──
+        name = ""
+        try:
+            nr = query_all("SELECT stock_name FROM holdings WHERE stock_code = ? LIMIT 1", (code,))
+            if nr and nr[0].get("stock_name"):
+                name = nr[0]["stock_name"]
+        except Exception:
+            pass
+        if not name:
+            try:
+                wr = query_all("SELECT stock_name FROM watchlist WHERE stock_code = ? LIMIT 1", (code,))
+                if wr and wr[0].get("stock_name"):
+                    name = wr[0]["stock_name"]
+            except Exception:
+                pass
+
+        # ── 基本面（仅这里调外部 API，AKShare 通常 <1s）──
+        fundamentals = {}
+        try:
+            from services.vendor_router import route
+            fundamentals = route("get_fundamentals", code=code)
+        except Exception:
+            pass
+
+        return {
+            "name": name or code,
+            "price": price,
+            "change_pct": change_pct,
+            "ma5": _latest_ma(ma.get("MA5", [])),
+            "ma10": _latest_ma(ma.get("MA10", [])),
+            "ma20": _latest_ma(ma.get("MA20", [])),
+            "ma60": _latest_ma(ma.get("MA60", [])),
+            "rsi_14": _latest_ma(rsi),
+            "macd_dif": _latest_ma(macd.get("DIF", [])),
+            "macd_dea": _latest_ma(macd.get("DEA", [])),
+            "macd_bar": _latest_ma(macd.get("MACD", [])),
+            "atr_20": atr,
+            "vol_ratio": vol_ratio,
+            "ret_5d": ret_5d, "ret_20d": ret_20d,
+            "turtle_s1_entry": turtle.get("s1_entry"),
+            "turtle_s2_entry": turtle.get("s2_entry"),
+            "turtle_atr": turtle.get("atr"),
+            "turtle_score": turtle.get("score"),
+            "pe": fundamentals.get("pe"), "pb": fundamentals.get("pb"),
+            "roe": fundamentals.get("roe"), "eps": fundamentals.get("eps"),
+            "market_cap_billion": fundamentals.get("market_cap_billion"),
+            "dividend_yield": fundamentals.get("dividend"),
+            "industry": fundamentals.get("industry", ""),
+            "debt_ratio": fundamentals.get("debt_ratio"),
+            "gross_margin": fundamentals.get("gross_margin"),
+            "revenue_growth": fundamentals.get("revenue_growth"),
+        }
+    except Exception as e:
+        logger.warning("multi_agent: data gather failed for %s: %s", code, e)
+        return {"error": f"数据获取失败: {e}"}
+
+
+# ═══════════════════════════════════════════════════════════════
+#  Prompt 构建
+# ═══════════════════════════════════════════════════════════════
+
+def _build_technical_prompt(code: str, d: dict) -> str:
+    return f"""请分析 {code} {d.get('name','')} 的技术面。
+
+基础数据:
+- 最新价: {d['price']} 元, 涨跌幅: {d.get('change_pct','?')}%
+- MA5={d.get('ma5')}, MA10={d.get('ma10')}, MA20={d.get('ma20')}, MA60={d.get('ma60')}
+- RSI(14)={d.get('rsi_14')}
+- MACD: DIF={d.get('macd_dif')}, DEA={d.get('macd_dea')}, BAR={d.get('macd_bar')}
+- ATR(20)={d.get('atr_20')}, 量比={d.get('vol_ratio')}
+- 5日动量={d.get('ret_5d')}%, 20日动量={d.get('ret_20d')}%
+
+海龟通道:
+- S1入场(20日高点)={d.get('turtle_s1_entry')}, S2入场(55日高点)={d.get('turtle_s2_entry')}
+- ATR(N)={d.get('turtle_atr')}, 综合评分={d.get('turtle_score')}/100"""
+
+
+def _build_fundamentals_prompt(code: str, d: dict) -> str:
+    pe_str = f"{d['pe']:.1f}" if d.get('pe') else "无数据"
+    pb_str = f"{d['pb']:.3f}" if d.get('pb') else "无数据"
+    return f"""请分析 {code} {d.get('name','')} 的基本面。
+
+基础数据 (TTM):
+- PE={pe_str}, PB={pb_str}
+- ROE={d.get('roe','无数据')}%, EPS={d.get('eps','无数据')}元
+- 市值={d.get('market_cap_billion','无数据')}亿元
+- 股息率={d.get('dividend_yield','无数据')}%
+- 行业={d.get('industry','未知')}
+- 资产负债率={d.get('debt_ratio','无数据')}%
+- 毛利率={d.get('gross_margin','无数据')}%
+- 营收增速={d.get('revenue_growth','无数据')}%"""
+
+
+# ═══════════════════════════════════════════════════════════════
+#  辅助函数
+# ═══════════════════════════════════════════════════════════════
+
+def _latest_ma(data: list) -> float | None:
+    valid = [v for v in data if v is not None]
+    return round(valid[-1], 2) if valid else None
+
+
+def _calc_atr(highs, lows, closes, period=20):
+    if len(closes) < period + 1:
+        return None
+    trs = [max(highs[i] - lows[i], abs(highs[i] - closes[i - 1]), abs(lows[i] - closes[i - 1]))
+           for i in range(1, len(closes))]
+    return round(sum(trs[-period:]) / period, 4) if len(trs) >= period else None
+
+
+def _calc_turtle(highs, lows, closes):
+    n = len(closes)
+    if n < 60:
+        return {"error": "K线不足60天", "score": 0}
+    price = closes[-1]
+    s1e = round(max(highs[-21:-1]), 2) if n >= 21 else None
+    s2e = round(max(highs[-56:-1]), 2) if n >= 56 else None
+    atr_val = _calc_atr(highs, lows, closes, 20)
+    score = 0
+    if s1e and price > s1e:
+        score += 30
+    elif s1e and price > s1e * 0.97:
+        score += 15
+    if s2e and price > s2e:
+        score += 25
+    elif s2e and price > s2e * 0.95:
+        score += 12
+    if atr_val and price > 0:
+        vol_r = atr_val / price * 100
+        if 1.5 <= vol_r <= 5:
+            score += 20
+    return {"s1_entry": s1e, "s2_entry": s2e, "atr": atr_val, "score": min(100, score)}
+
+
+def _parse_judge_response(raw: str) -> dict:
+    """从 LLM 输出中提取 JSON 判断"""
+    import re
+    import json as _json
+    # 尝试直接解析
+    try:
+        data = _json.loads(raw)
+        return data
+    except (_json.JSONDecodeError, TypeError):
+        pass
+    # 尝试提取代码块中的 JSON
+    m = re.search(r'\{[^{}]*"verdict"[^{}]*\}', raw, re.DOTALL)
+    if m:
+        try:
+            return _json.loads(m.group(0))
+        except (_json.JSONDecodeError, TypeError):
+            pass
+    # 回退：从文本推断
+    result = {"verdict": "持有", "confidence": 0.5, "key_reasons": [], "risk_warning": ""}
+    if "买入" in raw:
+        result["verdict"] = "买入"
+        result["confidence"] = 0.6
+    elif "卖出" in raw:
+        result["verdict"] = "卖出"
+        result["confidence"] = 0.6
+    return result
