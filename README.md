@@ -1,4 +1,4 @@
-# StockAI v3.6 — AI 量化选股 + 投资决策平台
+# StockAI v3.7 — AI 量化选股 + 投资决策平台
 
 > 55 因子多因子选股 · 海龟交易法 · 因子全景面板 · 条件选股四层过滤 · TradingView K 线 · P1 工程 100%
 >
@@ -158,6 +158,7 @@ NOTIFY_ENABLED=true
 
 ## 版本历史
 
+- **v3.7** (2026-07-03): 策略回测引擎 — YAML 策略选股→历史模拟交易→绩效报告完整链路；前端回测 Tab 重写(策略选择+参数配置+净值曲线+月度收益)；Futu 连接优化(共享单实例避免连接爆炸)；沪深300成分股导入(353只, 105K 日线)；基准曲线合成兜底；技术指标摘要修复(仅显示最新值)
 - **v3.6** (2026-07-01): Futu Phase A + P1 — A 股 `quote / minute / daily` 接入 Futu OpenD，新增 `futu_raw_quote` / `futu_raw_kline`，日线同步 `historical_kline`，现有报价 / 日线 / 1m 图表优先走 Futu；新增 `futu_sync_service`、`futu_sync_runs` / `futu_sync_run_items`、`intraday` / `nightly` 批量同步、告警逻辑与调度触发
 - **v3.6** (2026-07-01): P1 工程质量 100% — 认证解耦(ContextVar JWT, 24处硬编码清零) + AI 异常体系(5级层次) + K线 crosshair 标签 + 成交量格式化 + 连接池(busy_timeout) + data-table 拆分(730→4文件) + 全局异常处理 + TypeScript 零 :any
 - **v3.5** (2026-06-26): 条件选股四层过滤(L1-L4) + 因子清理(57→55, 删社交死因子, 修5阈值) + K线三合一修复(对齐+讲解栏+默认精简) + L3两阶段重构(AKShare快筛→Baostock精筛) + Baostock超时保护 + 废弃页面清理(duel/kol/review/skills)
