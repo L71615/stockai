@@ -233,26 +233,31 @@ def run_nightly_fundamentals() -> dict:
     except Exception as e:
         errors.append(str(e))
 
-    # 1. 用 get_market_snapshot 更新已有股票的当日日线（不消耗K线配额）
+    # 1. 用 Tushare MCP 更新全市场日线（1次调用全A股，零K线配额）
     daily_bar_added = 0
     try:
-        daily_bar_added = _update_daily_bars(futu, today)
+        from services.tushare_adapter import sync_daily_kline as tushare_daily
+        result = tushare_daily(today.replace("-", ""))
+        daily_bar_added = result.get("stocks", 0)
     except Exception as e:
-        errors.append(f"日线更新: {e}")
+        # Tushare 不可用时回退到 Futu snapshot
+        try:
+            daily_bar_added = _update_daily_bars(futu, today)
+        except Exception as e2:
+            errors.append(f"日线更新: {e}, fallback: {e2}")
 
-    # 2. 增量下载缺失的日线（消耗K线配额，每天最多100只）
-    kline_added = 0
+    # 2. 用 Tushare 更新全市场基本面（1次调用，无需K线配额）
     try:
-        kline_added = _incremental_kline_sync(futu, max_per_day=100)
-    except Exception as e:
-        errors.append(f"K线增量: {e}")
+        from services.tushare_adapter import sync_daily_basic as tushare_basic
+        tushare_basic(today.replace("-", ""))
+    except Exception:
+        pass  # daily_basic 有频率限制，静默跳过
 
     return {
         "status": "ok" if not errors else "partial",
         "target_count": len(codes),
         "saved": saved,
         "daily_bar_added": daily_bar_added,
-        "kline_added": kline_added,
         "errors": errors[:5],
     }
 
