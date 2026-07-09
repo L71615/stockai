@@ -19,7 +19,9 @@ from database import execute, execute_many
 
 logger = logging.getLogger(__name__)
 
-_MCP_URL = "https://api.tushare.pro/mcp/?token=9d785a25a4987d31bc56b2329dd7894dd31c64bfdc74f3f429b32991"
+import os
+_TUSHARE_TOKEN = os.getenv("TUSHARE_TOKEN", "9d785a25a4987d31bc56b2329dd7894dd31c64bfdc74f3f429b32991")
+_MCP_URL = f"https://api.tushare.pro/mcp/?token={_TUSHARE_TOKEN}"
 
 
 def _call_mcp(tool_name: str, arguments: dict, timeout: int = 60) -> list[dict]:
