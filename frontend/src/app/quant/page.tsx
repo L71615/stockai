@@ -159,7 +159,24 @@ function QuantPageInner() {
   const [insight, setInsight] = useState<StockInsight | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [tab, setTab] = useState("insight")
+  const [tab, setTabState] = useState(params.get("tab") || "insight")
+
+  // 状态同步到 URL 参数 — 切页面再回来不会丢失
+  const setTab = (v: string) => {
+    setTabState(v)
+    const p = new URLSearchParams(window.location.search)
+    if (code) p.set("code", code); else p.delete("code")
+    p.set("tab", v)
+    router.replace(`/quant?${p.toString()}`, { scroll: false })
+  }
+
+  const updateCode = (v: string) => {
+    setCode(v)
+    const p = new URLSearchParams(window.location.search)
+    if (v) p.set("code", v); else p.delete("code")
+    p.set("tab", tab)
+    router.replace(`/quant?${p.toString()}`, { scroll: false })
+  }
 
   // Backtest form
   const [btAmount, setBtAmount] = useState("1000")
@@ -552,7 +569,7 @@ function QuantPageInner() {
                         <button
                           key={h.code}
                           className="w-full text-left px-3 py-1 text-xs hover:bg-muted flex justify-between"
-                          onClick={() => { setCode(h.code); setSelectorOpen(false) }}
+                          onClick={() => { updateCode(h.code); setSelectorOpen(false) }}
                         >
                           <span className="font-mono">{h.code}</span>
                           <span className="text-muted-foreground truncate ml-2">{h.name}</span>
@@ -568,7 +585,7 @@ function QuantPageInner() {
                         <button
                           key={w.code}
                           className="w-full text-left px-3 py-1 text-xs hover:bg-muted flex justify-between"
-                          onClick={() => { setCode(w.code); setSelectorOpen(false) }}
+                          onClick={() => { updateCode(w.code); setSelectorOpen(false) }}
                         >
                           <span className="font-mono">{w.code}</span>
                           <span className="text-muted-foreground truncate ml-2">{w.name}</span>
@@ -597,7 +614,7 @@ function QuantPageInner() {
                       <button
                         key={t.code}
                         className="w-full text-left px-3 py-1 text-xs hover:bg-muted flex justify-between"
-                        onClick={() => { setCode(t.code); setSelectorOpen(false) }}
+                        onClick={() => { updateCode(t.code); setSelectorOpen(false) }}
                       >
                         <span className="font-mono">{t.code}</span>
                         <span className="text-muted-foreground truncate ml-2">{t.name}</span>
