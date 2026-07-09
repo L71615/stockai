@@ -531,6 +531,7 @@ function QuantPageInner() {
   // 统一查询入口：根据当前 tab 分发到对应操作
   const handleQuery = async () => {
     if (!code.trim()) return
+    updateCode(code.trim())  // 同步 URL
     switch (tab) {
       case "insight": await fetchInsight(); break
       case "factors": await fetchFactors(); break
