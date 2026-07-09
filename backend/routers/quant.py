@@ -182,16 +182,24 @@ def stock_insight(code: str, days: int = 120):
     except Exception:
         factors = {}
     finally:
-        # Tushare 兜底：行业+名称
-        if not factors.get("industry") or not factors.get("name"):
+        # 行业兜底：Tushare 优先 → Baostock 缓存
+        if not factors.get("industry") or factors["industry"] == factors.get("name"):
             try:
                 from services.tushare_adapter import get_stock_info
                 info = get_stock_info(code)
-                if info:
-                    if not factors.get("industry") and info.get("industry"):
-                        factors["industry"] = info["industry"]
-                    if not factors.get("name") and info.get("name"):
-                        factors["name"] = info["name"]
+                if info and info.get("industry"):
+                    factors["industry"] = info["industry"]
+            except Exception:
+                pass
+        if not factors.get("industry") or factors["industry"] == factors.get("name"):
+            try:
+                from services.baostock_adapter import _get_industry_map
+                ind_map = _get_industry_map()
+                if code in ind_map:
+                    ind = ind_map[code].get("industry", "")
+                    if ind and ind != factors.get("name"):
+                        factors["industry"] = ind
+                        factors["industry_type"] = ind_map[code].get("industry_type", "")
             except Exception:
                 pass
         if _factors_executor is not None:
@@ -219,6 +227,7 @@ def stock_insight(code: str, days: int = 120):
             "market_cap_billion": factors.get("market_cap_billion"),
             "dividend": factors.get("dividend"),
             "industry": factors.get("industry", ""),
+            "industry_type": factors.get("industry_type", ""),
             "industry_type": factors.get("industry_type", ""),
         },
     }
