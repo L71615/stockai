@@ -119,94 +119,31 @@ def _fill_empty_names(stocks: list[dict]) -> None:
 
 
 def get_all_stock_list(force_refresh: bool = False) -> list[dict]:
-    """获取全A股股票列表（缓存24小时）
+    """获取选股池股票列表（从本地 historical_kline 读，默认主板）
 
     Returns:
-        [{code, name, industry, ipo_date}, ...]
+        [{code, name}, ...]
     """
     global _ALL_STOCKS_CACHE, _all_stocks_ts
     now = time.time()
     if _ALL_STOCKS_CACHE and not force_refresh and (now - _all_stocks_ts) < _ALL_STOCKS_TTL:
         return _ALL_STOCKS_CACHE
 
+    from database import query_all
+    rows = query_all(
+        "SELECT DISTINCT stock_code FROM historical_kline WHERE trade_date = (SELECT MAX(trade_date) FROM historical_kline)"
+    )
     stocks = []
-    index_codes: set[str] = set()
+    for r in rows:
+        code = r["stock_code"]
+        if detect_board(code) in ("main_sh", "main_sz"):
+            stocks.append({"code": code, "name": "", "industry": ""})
 
-    # 1. 沪深300 + 中证500 成分股（akshare，确保核心池优先）
-    try:
-        import akshare as ak
-        for idx_code, idx_name in [("000300", "沪深300"), ("000905", "中证500")]:
-            try:
-                df = ak.index_stock_cons_csindex(idx_code)
-                for _, row in df.iterrows():
-                    code = str(row["成分券代码"])
-                    index_codes.add(code)
-                    name = str(row.get("成分券名称", "") or "")
-                    stocks.append({"code": code, "name": name})
-            except Exception:
-                logger.warning(f"{idx_name} 成分股获取失败")
-    except Exception as e:
-        logger.warning(f"Akshare 不可用: {e}")
-
-    # 2. Baostock 全A股补充（去重，不含已纳入的指数成分股）
-    # 用线程超时包装，避免 Baostock 挂起阻塞整个扫描
-    try:
-        from services.baostock_adapter import _ensure_login, _bs_lock
-        from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
-
-        def _fetch_baostock():
-            """Baostock 全 A 股 + 行业分类（在线程中执行，可被超时中断）"""
-            new_stocks = []
-            ind_map: dict[str, dict] = {}
-            with _bs_lock:
-                if not _ensure_login():
-                    return new_stocks, ind_map
-                rs = bs.query_stock_basic()
-                if rs.error_code == "0":
-                    while rs.next():
-                        row = rs.get_row_data()
-                        code = row[0].replace("sh.", "").replace("sz.", "")
-                        if row[3] == "1" and row[4] == "1":
-                            if code not in index_codes:
-                                new_stocks.append({
-                                    "code": code,
-                                    "name": row[1],
-                                    "ipo_date": row[2],
-                                })
-                # 行业分类
-                rs_ind = bs.query_stock_industry()
-                if rs_ind.error_code == "0":
-                    while rs_ind.next():
-                        row = rs_ind.get_row_data()
-                        c = row[1].replace("sh.", "").replace("sz.", "")
-                        ind_map[c] = {"industry": row[2] if len(row) > 2 else "",
-                                      "industry_type": row[3] if len(row) > 3 else ""}
-            return new_stocks, ind_map
-
-        with ThreadPoolExecutor(max_workers=1) as _executor:
-            _future = _executor.submit(_fetch_baostock)
-            try:
-                _baostock_stocks, _ind_map = _future.result(timeout=8)
-                stocks.extend(_baostock_stocks)
-                for s in stocks:
-                    if s["code"] in _ind_map and "industry" not in s:
-                        s.update(_ind_map[s["code"]])
-            except FutureTimeoutError:
-                logger.warning("Baostock 股票列表获取超时(8s)，跳过，仅用指数成分股")
-    except Exception as e:
-        logger.warning(f"Baostock 股票列表获取失败: {e}")
-
-    # 1.5 补全空名称：对没有名字的股票，从 Baostock 或行情缓存中查找
-    _fill_empty_names(stocks)
-
-    # 3. 兜底：Baostock 和 Akshare 都挂了
-    if len(stocks) < 100:
-        logger.error(f"股票池不足100只({len(stocks)})，选股结果不可靠")
-
-    if stocks:
-        _ALL_STOCKS_CACHE = stocks
-        _all_stocks_ts = now
+    logger.info("get_all_stock_list: %d 只 (来自本地 historical_kline)", len(stocks))
+    _ALL_STOCKS_CACHE = stocks
+    _all_stocks_ts = now
     return stocks
+
 
 
 # ═══════════════════════════════════════════════════════════
@@ -378,50 +315,56 @@ def score_stock(factors: dict[str, Optional[float]],
 
 
 def _process_single_stock(code: str) -> Optional[dict]:
-    """处理单只股票：取K线 → 算因子 → 返回"""
+    """处理单只股票：从本地 historical_kline 取K线 → 算因子 → 返回"""
     try:
-        mkt = get_market(code)
-        kline = fetch_kline(code, mkt, days=120)
-        if "error" in kline or not kline.get("closes") or len(kline["closes"]) < 60:
+        # 从本地 historical_kline 读取 K 线（零外部调用）
+        from database import query_all
+        rows = query_all(
+            "SELECT trade_date, open, high, low, close, volume FROM historical_kline WHERE stock_code = ? ORDER BY trade_date DESC LIMIT 120",
+            (code,),
+        )
+        if len(rows) < 60:
             return None
 
-        # 获取基本面
-        price = kline["closes"][-1] if kline["closes"] else None
+        rows_rev = list(reversed(rows))
+        kline = {
+            "dates": [r["trade_date"] for r in rows_rev],
+            "opens": [r["open"] for r in rows_rev],
+            "highs": [r["high"] for r in rows_rev],
+            "lows": [r["low"] for r in rows_rev],
+            "closes": [r["close"] for r in rows_rev],
+            "volumes": [r["volume"] for r in rows_rev],
+        }
 
-        # 获取基本面：优先 akshare HTTP（无锁，真并发），失败回退 Baostock
-        fund = {}
+        price = kline["closes"][-1]
+
+        # 从本地 local_fundamentals 获取基本面
+        fund = {"price": price}
         try:
-            from services.akshare_adapter import get_stock_factors_http
-            http = get_stock_factors_http(code)
-            if http:
-                # akshare 成功 — 只用 HTTP 数据，缺失 total_shares/dividend 仅
-                # 影响 turnover_rate 和 dividend_yield 两个低权因子，不调 Baostock
-                fund = http
-                if price and fund.get("bvps") and fund["bvps"] > 0:
-                    fund["pb"] = round(price / fund["bvps"], 4)
-                if price and fund.get("eps") and fund["eps"] > 0:
-                    fund["pe"] = round(price / fund["eps"], 2)
-                if price:
-                    fund["price"] = price
-                # 行业从全局缓存取（已在 baostock 侧缓存，这里直接查）
-                try:
-                    from services.baostock_adapter import _get_industry_map
-                    ind_map = _get_industry_map()
-                    if code in ind_map:
-                        fund.update(ind_map[code])
-                except Exception:
-                    logger.warning("screener_service: industry map lookup failed for %s", code, exc_info=True)
-            else:
-                # akshare 失败 — 完整走 Baostock
-                try:
-                    from services.baostock_adapter import get_stock_factors as _bs_factors
-                    bs = _bs_factors(code)
-                    if isinstance(bs, dict) and "error" not in bs:
-                        fund = bs
-                except Exception:
-                    logger.warning("screener_service: Baostock factors fallback failed for %s", code, exc_info=True)
+            frow = query_all(
+                "SELECT pe_ttm, pb, market_cap, turnover_rate, roe, dividend_yield FROM local_fundamentals WHERE stock_code = ? ORDER BY trade_date DESC LIMIT 1",
+                (code,),
+            )
+            if frow:
+                f = frow[0]
+                fund["pe"] = f["pe_ttm"]
+                fund["pb"] = f["pb"]
+                fund["market_cap"] = f["market_cap"]
+                fund["turnover_rate"] = f["turnover_rate"]
+                fund["roe"] = f["roe"]
+                fund["dividend_yield"] = f["dividend_yield"]
         except Exception:
-            logger.warning("screener_service: fundamentals fetch failed for %s", code, exc_info=True)
+            pass
+
+        # 行业分类（尝试 Baostock 缓存，失败为空）
+        fund.setdefault("industry", "")
+        try:
+            from services.baostock_adapter import _get_industry_map
+            ind_map = _get_industry_map()
+            if code in ind_map:
+                fund["industry"] = ind_map[code].get("industry", "")
+        except Exception:
+            pass
 
         # 注入雪球社交数据（已在 run_screener 预热缓存）
         try:
