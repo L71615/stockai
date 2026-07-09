@@ -491,7 +491,18 @@ def run_screener(
         }
     """
     if stock_list is None:
-        stock_list = get_all_stock_list()
+        from database import query_all
+        stock_list = [
+            {"code": r["stock_code"], "name": ""}
+            for r in query_all(
+                "SELECT DISTINCT stock_code FROM historical_kline WHERE trade_date = (SELECT MAX(trade_date) FROM historical_kline)"
+            )
+        ]
+        # 板块过滤：应用 allowed_boards
+        if allowed_boards:
+            stock_list = [s for s in stock_list if detect_board(s["code"]) in allowed_boards]
+        else:
+            stock_list = [s for s in stock_list if detect_board(s["code"]) in _DEFAULT_ALLOWED_BOARDS]
 
     if not stock_list:
         return {"error": "无法获取股票列表", "total_stocks": 0, "scanned": 0, "candidates": []}
