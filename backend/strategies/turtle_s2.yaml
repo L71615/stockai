@@ -4,6 +4,9 @@ name: 海龟 S2 入场
 description: >
   当收盘价突破过去 55 日最高价时买入。比 S1 更保守，信号更少但质量更高。
   适合确认中长期趋势反转或加速。
+source: "Richard Dennis 海龟交易法则 (1983)"
+source_url: ""
+tags: [趋势跟踪, 突破, 中长线, 保守]
 market_state: [bull, range]
 recommended_position: "50-70%"
 conditions:
@@ -18,3 +21,17 @@ conditions:
     value: [1.0, 6]
 sort_by: atr_pct
 sort_order: asc
+params:
+  - name: avg_amount_20d
+    label: 日均成交额门槛
+    type: number
+    default: 50000000
+    range: [10000000, 200000000]
+    step: 10000000
+    description: "过滤流动性差的股票。S2信号少，可适当降低门槛增多样本"
+  - name: atr_pct
+    label: ATR波动率范围(%)
+    type: range
+    default: [1.0, 6]
+    range: [[0.5, 0.5], [5, 15]]
+    description: "S2比S1更宽的波动率容忍度，接纳更多中期趋势信号"

@@ -82,7 +82,8 @@ export default function ScreenerPage() {
   const [multiAgentResult, setMultiAgentResult] = useState<MultiAgentResult | null>(null)
   const [multiAgentError, setMultiAgentError] = useState<string | null>(null)
   const [statusText, setStatusText] = useState("")
-  const [stockPool, setStockPool] = useState(500) // 默认沪深300+中证500
+  const [stockPool, setStockPool] = useState(500)
+  const [includeGem, setIncludeGem] = useState(false)   // 是否包含创业板
 
   const POOL_OPTIONS = [
     { value: 30, label: "快速测试 (30只)" },
@@ -129,7 +130,9 @@ export default function ScreenerPage() {
   const startScan = async () => {
     setScanning(true); setProgress(0)
     setStatusText("")
-    await apiPost("/api/screener/run", { stock_count: stockPool, max_workers: 4, industry_neutral: true })
+    const boards = ["main_sh", "main_sz"]
+    if (includeGem) boards.push("gem")
+    await apiPost("/api/screener/run", { stock_count: stockPool, max_workers: 4, industry_neutral: true, allowed_boards: boards })
     pollScan()
   }
 
@@ -205,6 +208,16 @@ export default function ScreenerPage() {
                 ))}
               </SelectContent>
             </Select>
+            <button
+              onClick={() => setIncludeGem(!includeGem)}
+              disabled={scanning}
+              className={cn(
+                "inline-flex items-center gap-1 px-2 py-1 text-[11px] border transition-colors",
+                includeGem ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground"
+              )}
+            >
+              创业板{includeGem ? " ✓" : ""}
+            </button>
             <Button size="sm" onClick={startScan} disabled={scanning}>
               <IconSearch className="size-3.5 mr-1" />
               {scanning ? `扫描中 ${progress}%` : "开始扫描"}

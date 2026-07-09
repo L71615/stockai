@@ -5,6 +5,9 @@ description: >
   当股价触及布林带下轨且成交量萎缩时买入，等待回归中轨。
   震荡市中极为有效，利用价格在布林带内的均值回归特性。
   注意区分"震荡"和"单边下跌"——必须确认不是趋势性破位。
+source: "John Bollinger 布林带交易系统 (Bollinger on Bollinger Bands)"
+source_url: ""
+tags: [均值回归, 震荡市, 布林带, 低吸]
 market_state: [range]
 recommended_position: "30-50%"
 conditions:
@@ -25,3 +28,39 @@ conditions:
     value: 20000000
 sort_by: boll_position
 sort_order: asc
+params:
+  - name: boll_position
+    label: 布林带下轨位置阈值
+    type: number
+    default: 0.15
+    range: [0, 0.3]
+    step: 0.05
+    description: "0=下轨，1=上轨。越小越接近下轨。设0.2以上信号更多但假信号也多"
+  - name: vol_ratio
+    label: 量比上限
+    type: number
+    default: 0.85
+    range: [0.5, 1.0]
+    step: 0.05
+    description: "缩量确认抛压减弱。设1.0=不要求缩量"
+  - name: rsi_14
+    label: RSI上限
+    type: number
+    default: 40
+    range: [20, 50]
+    step: 1
+    description: "偏弱但不是崩溃。设更低=更安全但信号少"
+  - name: ret_20d
+    label: 20日跌幅下限(%)
+    type: number
+    default: -15
+    range: [-30, -5]
+    step: 1
+    description: "跌太多可能是趋势性破位，不是震荡。注意输入负值"
+  - name: avg_amount_20d
+    label: 日均成交额门槛
+    type: number
+    default: 20000000
+    range: [10000000, 200000000]
+    step: 10000000
+    description: "震荡策略也需要流动性"

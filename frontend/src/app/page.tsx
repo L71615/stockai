@@ -3,6 +3,8 @@
 import { useState } from "react"
 import { useRouter } from "next/navigation"
 import { SiteHeader } from "@/components/site-header"
+import { HotPanel } from "@/components/hot-panel"
+import { PortfolioRiskCards } from "@/components/portfolio-risk-cards"
 import { ChartAreaInteractive } from "@/components/chart-area-interactive"
 import { DataTable } from "@/components/data-table"
 import { Card, CardAction, CardContent, CardFooter, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
@@ -42,6 +44,8 @@ export default function Home() {
     : []
   const summary = portfolio?.summary ?? null
   const { data: disciplineData } = useSWR("/api/discipline/dashboard", (url: string) => apiGet(url), { refreshInterval: 60000 })
+  const { data: protectionData } = useSWR("/api/discipline/loss-streak", (url: string) => apiGet(url), { refreshInterval: 120000 })
+  const { data: riskData } = useSWR("/api/quant/portfolio-risk", (url: string) => apiGet(url), { refreshInterval: 300000 })
   const aiHeadline = Array.isArray(reviewData) && reviewData[0]?.ai_headline ? reviewData[0].ai_headline : ""
   const history = historyData?.data ?? []
   const portfolioErrorMessage = portfolioError instanceof Error
@@ -110,6 +114,9 @@ export default function Home() {
   return (
     <>
       <SiteHeader title="持仓概览" />
+      <div className="px-4 lg:px-6 pt-2">
+        <HotPanel />
+      </div>
       <div className="flex flex-1 flex-col">
         <div className="@container/main flex flex-1 flex-col gap-2">
           <div className="flex flex-col gap-4 py-4 md:gap-6 md:py-6">
@@ -221,6 +228,9 @@ export default function Home() {
               </div>
             )}
 
+            {/* 组合风险指标 */}
+            <PortfolioRiskCards data={riskData as { sharpe?: number | null; max_drawdown?: number | null; volatility?: number | null; beta?: number | null } | null | undefined} />
+
             {aiHeadline && (
               <div className="px-4 lg:px-6">
                 <Card className="border-l-[3px] border-l-purple-400">
@@ -231,6 +241,43 @@ export default function Home() {
                     <p className="text-sm italic text-muted-foreground">
                       &ldquo;{aiHeadline}&rdquo;
                     </p>
+                  </CardContent>
+                </Card>
+              </div>
+            )}
+
+            {/* Protection Warning */}
+            {protectionData && (protectionData as Record<string, unknown>).streak > 0 && (
+              <div className="px-4 lg:px-6">
+                <Card className={cn(
+                  "border-l-[3px]",
+                  (protectionData as Record<string, unknown>).warning_level === "danger"
+                    ? "border-l-red-500 bg-red-500/5"
+                    : "border-l-yellow-400 bg-yellow-500/5"
+                )}>
+                  <CardContent className="py-3">
+                    <p className={cn(
+                      "mb-1 text-xs font-medium",
+                      (protectionData as Record<string, unknown>).warning_level === "danger"
+                        ? "text-red-400"
+                        : "text-yellow-400"
+                    )}>
+                      {(protectionData as Record<string, unknown>).warning_level === "danger" ? "🛑 保护模式" : "⚠️ 连亏警告"}
+                      {" "}（连亏 {(protectionData as Record<string, unknown>).streak as number} 笔）
+                    </p>
+                    <p className="text-xs text-muted-foreground leading-relaxed">
+                      {(protectionData as Record<string, unknown>).advice as string}
+                    </p>
+                    {((protectionData as Record<string, unknown>).recent_losses as Array<Record<string, unknown>>)?.length > 0 && (
+                      <div className="mt-1.5 flex flex-wrap gap-2">
+                        {((protectionData as Record<string, unknown>).recent_losses as Array<Record<string, unknown>>).map((l, i) => (
+                          <span key={i} className="text-[10px] text-muted-foreground font-mono">
+                            {l.code as string} {l.name as string} ¥{l.pnl as number}
+                            {l.pnl_pct != null && ` (${(l.pnl_pct as number) >= 0 ? "+" : ""}${(l.pnl_pct as number).toFixed(1)}%)`}
+                          </span>
+                        ))}
+                      </div>
+                    )}
                   </CardContent>
                 </Card>
               </div>

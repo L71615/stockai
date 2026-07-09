@@ -652,3 +652,25 @@ def get_kline_data(code: str, period: str = "1m"):
         "ma10": ma10,
         "ma20": ma20,
     }
+
+
+# ═══════════════════════════════════════════════════════════════
+#  市场热点
+# ═══════════════════════════════════════════════════════════════
+
+@router.get("/market-heatmap")
+def market_heatmap():
+    """综合市场热点数据：板块资金流向 + 涨停统计 + 北向资金排名
+
+    一次请求返回前端热点面板所需的全部数据。
+    数据有 5 分钟缓存，避免频繁调 AKShare。
+    """
+    from services.akshare_adapter import get_market_heatmap
+    return get_market_heatmap()
+
+
+@router.get("/hot-sectors")
+def hot_sectors():
+    """板块资金流向排名（单独调用）"""
+    from services.akshare_adapter import get_sector_fund_flow
+    return get_sector_fund_flow()

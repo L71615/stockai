@@ -5,6 +5,9 @@ description: >
   连续下跌后RSI极度超卖，今日放量止跌收阳。
   超短线1-2天持有，抓情绪修复的快速反弹。
   必须严格止损：跌破今日最低价或-5%无条件走。
+source: "Larry Connors 短线反转策略"
+source_url: ""
+tags: [超跌反弹, 短线, 情绪修复, 高风险, 超短]
 market_state: [bear, range]
 recommended_position: "30-40%"
 conditions:
@@ -25,3 +28,32 @@ conditions:
     value: 20000000
 sort_by: rsi_14
 sort_order: asc
+params:
+  - name: ret_5d
+    label: 5日跌幅门槛(%)
+    type: number
+    default: -5
+    range: [-15, -2]
+    step: 1
+    description: "跌幅触发阈值。连跌越深反弹力度越大但风险也越大。注意输入负值"
+  - name: rsi_14
+    label: RSI上限
+    type: number
+    default: 35
+    range: [20, 45]
+    step: 1
+    description: "比oversold_bounce的25更宽松，抓更早期的反弹信号"
+  - name: vol_ratio
+    label: 量比门槛
+    type: number
+    default: 1.2
+    range: [0.8, 3.0]
+    step: 0.1
+    description: "必须放量止跌。缩量反弹不可信"
+  - name: avg_amount_20d
+    label: 日均成交额门槛
+    type: number
+    default: 20000000
+    range: [10000000, 200000000]
+    step: 10000000
+    description: "短线进出需要足够活跃"

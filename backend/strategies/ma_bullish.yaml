@@ -4,6 +4,9 @@ name: 均线多头排列
 description: >
   短期均线在中期均线之上，中期均线在长期均线之上，且三条均线方向均向上。
   这是趋势交易中最经典的做多信号。适合牛市中的顺势而为。
+source: "经典均线趋势跟踪系统"
+source_url: ""
+tags: [趋势跟踪, 均线, 牛市, 顺势, 经典]
 market_state: [bull]
 recommended_position: "70-90%"
 conditions:
@@ -24,3 +27,17 @@ conditions:
     value: 30000000
 sort_by: strength_20d
 sort_order: desc
+params:
+  - name: rsi_14
+    label: RSI范围
+    type: range
+    default: [45, 80]
+    range: [[35, 40], [70, 90]]
+    description: "均线多头时RSI通常偏强。放宽下限可接纳更多标的"
+  - name: avg_amount_20d
+    label: 日均成交额门槛
+    type: number
+    default: 30000000
+    range: [10000000, 200000000]
+    step: 10000000
+    description: "多头排列通常伴随放量，量越大信号越可靠"

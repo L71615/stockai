@@ -4,6 +4,9 @@ name: 动量领涨
 description: >
   选出近期涨幅最强且有成交量支撑的股票。动量因子在A股市场有效性显著，
   强者恒强。适合市场整体向上时使用，需注意追高风险。
+source: "Jegadeesh & Titman 动量效应 (1993)"
+source_url: "https://doi.org/10.1111/j.1540-6261.1993.tb04702.x"
+tags: [动量, 追涨, 强势股, 牛市, 学术验证]
 market_state: [bull]
 recommended_position: "50-70%"
 conditions:
@@ -24,3 +27,38 @@ conditions:
     value: 50000000
 sort_by: ret_20d
 sort_order: desc
+params:
+  - name: ret_20d
+    label: 20日涨幅门槛(%)
+    type: number
+    default: 5
+    range: [0, 30]
+    step: 1
+    description: "最低20日涨幅。牛市可设高(8-10)，震荡市设低(3-5)"
+  - name: ret_5d
+    label: 5日涨幅门槛(%)
+    type: number
+    default: 0
+    range: [-5, 15]
+    step: 1
+    description: "最近一周不能跌。设正值要求更强动量，设负值允许小幅回调"
+  - name: rsi_14
+    label: RSI范围
+    type: range
+    default: [55, 85]
+    range: [[40, 50], [70, 95]]
+    description: "太弱没动量，太强已超买。标准范围55-85"
+  - name: vol_ratio
+    label: 量比门槛
+    type: number
+    default: 1.2
+    range: [0.8, 3.0]
+    step: 0.1
+    description: "放量确认动量。设1.0=不要求放量，设2.0=只抓爆量"
+  - name: avg_amount_20d
+    label: 日均成交额门槛
+    type: number
+    default: 50000000
+    range: [10000000, 200000000]
+    step: 10000000
+    description: "保证能进出。强势股通常成交活跃，可适当降低"

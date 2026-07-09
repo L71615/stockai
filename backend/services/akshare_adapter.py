@@ -818,3 +818,155 @@ def get_us_kline(code: str, days: int = 120) -> dict:
     except Exception as e:
         logger.warning(f"get_us_kline({code}): {e}")
         return {"error": f"获取美股K线失败: {e}", "code": code}
+
+
+# ═══════════════════════════════════════════════════════════════
+#  市场热点 — 板块资金流向 + 涨停统计 + 北向排名
+# ═══════════════════════════════════════════════════════════════
+
+from datetime import datetime
+
+
+def _safe_float(val) -> float:
+    """安全转 float，失败返回 0"""
+    try:
+        return float(val)
+    except (ValueError, TypeError):
+        return 0.0
+
+
+_SECTOR_FLOW_CACHE: dict[str, tuple[float, dict]] = {}
+_NORTH_FLOW_RANK_CACHE: dict[str, tuple[float, dict]] = {}
+
+
+def get_sector_fund_flow() -> dict:
+    """获取行业板块资金流向排名（东方财富）
+
+    缓存5分钟，避免频繁请求外部API。
+
+    Returns:
+        {
+            "sectors": [{name, net_flow_wan, change_pct, top_stock}, ...],
+            "update_time": "2026-07-08 14:30"
+        }
+    """
+    cache_key = "sector_flow"
+    now = time.time()
+    if cache_key in _SECTOR_FLOW_CACHE:
+        ts, cached = _SECTOR_FLOW_CACHE[cache_key]
+        if now - ts < 300:  # 5分钟缓存
+            return cached
+
+    try:
+        import akshare as ak
+        # stock_sector_fund_flow_rank 在新版 akshare 中参数名可能不同，逐个尝试
+        try:
+            df = ak.stock_sector_fund_flow_rank(ind="行业板块", days="5")
+        except TypeError:
+            try:
+                df = ak.stock_sector_fund_flow_rank(industry="行业板块", period="5")
+            except TypeError:
+                df = ak.stock_sector_fund_flow_rank()
+
+        if df is None or df.empty:
+            return {"sectors": [], "update_time": "", "error": "无数据"}
+
+        cols = list(df.columns)
+        name_col = cols[0] if len(cols) > 0 else ""
+        pct_col = cols[1] if len(cols) > 1 else ""
+
+        sectors = []
+        for _, row in df.head(20).iterrows():
+            try:
+                sectors.append({
+                    "name": str(row[name_col]) if name_col else "",
+                    "change_pct": _safe_float(row[pct_col]) if pct_col else 0,
+                })
+            except Exception:
+                continue
+
+        result = {
+            "sectors": sectors,
+            "update_time": datetime.now().strftime("%Y-%m-%d %H:%M"),
+        }
+        _SECTOR_FLOW_CACHE[cache_key] = (now, result)
+        return result
+
+    except Exception as e:
+        logger.warning(f"get_sector_fund_flow: {e}")
+        return {"sectors": [], "update_time": "", "error": str(e)}
+
+
+def get_north_flow_ranking(top_n: int = 20) -> dict:
+    """获取北向资金持股排名（按持股市值排序）
+
+    使用 stock_hsgt_hold_stock_em 获取沪深港通持仓数据。
+
+    缓存5分钟。
+    """
+    cache_key = f"north_rank_{top_n}"
+    now = time.time()
+    if cache_key in _NORTH_FLOW_RANK_CACHE:
+        ts, cached = _NORTH_FLOW_RANK_CACHE[cache_key]
+        if now - ts < 300:
+            return cached
+
+    try:
+        import akshare as ak
+        df = ak.stock_hsgt_hold_stock_em(market="沪股通")
+        df_sz = ak.stock_hsgt_hold_stock_em(market="深股通")
+        # 合并沪深
+        import pandas as pd
+        df = pd.concat([df, df_sz], ignore_index=True)
+        if df is None or df.empty:
+            return {"top_inflow": [], "top_outflow": [], "update_time": ""}
+
+        cols = list(df.columns)
+        code_col = cols[0] if len(cols) > 0 else ""
+        name_col = cols[1] if len(cols) > 1 else ""
+        hold_val_col = cols[4] if len(cols) > 4 else ""  # 持股市值列
+
+        records = []
+        for _, row in df.iterrows():
+            try:
+                code = str(row[code_col]) if code_col else ""
+                name = str(row[name_col]) if name_col else ""
+                hold_val = _safe_float(row[hold_val_col]) if hold_val_col else 0
+                # 只取有效的A股代码
+                if len(code) == 6 and code.isdigit():
+                    records.append({
+                        "code": code, "name": name,
+                        "hold_value_wan": round(hold_val / 1e4, 2),  # 元→万元
+                    })
+            except Exception:
+                continue
+
+        inflow = sorted(records, key=lambda x: x["hold_value_wan"], reverse=True)[:top_n]
+
+        result = {
+            "top_inflow": inflow,
+            "top_outflow": [],  # 持股数据无净卖出排名
+            "update_time": datetime.now().strftime("%Y-%m-%d %H:%M"),
+        }
+        _NORTH_FLOW_RANK_CACHE[cache_key] = (now, result)
+        return result
+
+    except Exception as e:
+        logger.warning(f"get_north_flow_ranking: {e}")
+        return {"top_inflow": [], "top_outflow": [], "update_time": "", "error": str(e)}
+
+
+def get_market_heatmap() -> dict:
+    """综合热点数据 — 板块资金流向 + 北向资金持股
+
+    用于前端热点面板，减少请求次数。
+    """
+    sectors = get_sector_fund_flow()
+    north = get_north_flow_ranking(top_n=10)
+
+    return {
+        "sectors": sectors.get("sectors", []),
+        "north_inflow": north.get("top_inflow", []),
+        "north_outflow": north.get("top_outflow", []),
+        "update_time": sectors.get("update_time", "") or north.get("update_time", ""),
+    }

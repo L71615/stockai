@@ -1,6 +1,92 @@
 # StockAI 项目日志
 
-> StockAI 从 0 到 v3.7 的完整演进记录。按时间倒序。总计 23 次重大更新。
+> StockAI 从 0 到 v3.8 的完整演进记录。按时间倒序。总计 24 次重大更新。
+
+---
+
+## 2026-07-09 — v3.8 策略系统升级 + 选股增强 + 体验优化
+
+### 策略模板系统
+
+**12 个 YAML 策略升级为 13 个：**
+- 每个策略新增 `source`（来源）、`tags`（标签）、`market_state`（适用市场）、`recommended_position`（推荐仓位）元信息
+- 每个策略的数值条件暴露为 `params` 可调参数——含范围、步长、中文说明
+- 新增策略 `trend_continuation` — 趋势中途介入（Stan Weinstein 阶段分析法，"半山腰埋伏"）
+- 前端策略选择器展示来源、标签、适用市场、可调参数编辑器
+
+### 参数优化器
+
+- 新增 `POST /api/quant/strategy-optimize` — 网格搜索最优参数组合
+- 自动生成参数候选值（number 类型均匀采样、range 类型生成典型组合），上限 300 组
+- 排序逻辑：最大回撤升序 → 夏普降序 → 胜率降序（优先控制回撤）
+- 前端展示排名表（🥇🥈🥉）+ 默认 vs 最优对比 + 一键应用参数
+- 回测引擎新增 `param_overrides` 参数支持，可在运行时覆盖 YAML 默认值
+
+### 策略对比
+
+- 新增 `POST /api/quant/strategy-compare` — 多策略独立回测并排比较
+- 前端选 ≥2 策略时显示"对比策略"按钮，结果排名表展示交易数/胜率/夏普/回撤/总收益
+
+### 回测引擎增强
+
+- **手续费自动计入**：佣金万分之三(最低5元) + 印花税千分之一(仅卖出) + 过户费十万分之一。买入卖出均扣费。`include_fees=True` 默认开启
+- **过拟合警告**：0 笔交易→提示策略条件未触发+排查建议；<10 笔→统计不足；夏普>4→异常警告；回撤<2%→条件过宽警告
+- **买卖点标注**：净值曲线新增绿色圆点(买入)/红色圆点(卖出)，hover 显示价格和盈亏
+- **信号附带理由**：每笔交易自动附带触发策略名 + 该策略在此股票上的历史胜率
+
+### 月报系统
+
+- 新增 `POST /api/quant/monthly-report` — AI 驱动月报生成
+- 聚合当月交易数据 + 交易记忆反思 → AI 写结构化报告（总成绩/赚最多/亏最多/策略PK/改进建议/评分）
+- 幂等缓存：已生成月份直接返回
+- 新增 `GET /api/quant/monthly-compare` — 上月对比诊断（胜率变化/盈亏变化/趋势判定：进步/退步/持平）
+- 前端月报 Tab：月份选择器 + 生成按钮 + 上月对比按钮 + 报告卡片
+
+### 交易记忆 → 策略维度
+
+- `TradingMemoryLog.store_decision()` 新增 `strategy_id` 参数——记录每笔交易由哪个策略触发
+- `_parse_entry()` 兼容新旧 tag 格式（含/不含 strategy_id）
+- 新增 `get_strategy_context()` — 按策略维度查询历史表现
+- `multi_agent_service.analyze_stock()` 裁判阶段自动注入：股票历史交易教训 + 策略在该股上的历史胜率
+- 新增 `build_signal_reason()` — 选股信号解释生成器
+
+### 连亏保护增强
+
+- 新增 `get_protection_advice()` — 3 级警告（safe/warning/danger）+ 亏损明细 + 针对性行动建议
+- 首页连亏 >0 时自动显示警告卡片，含最近亏损股票列表
+- `/api/discipline/loss-streak` 端点切换到增强版
+
+### 市场热点面板
+
+- 新增 `frontend/src/components/hot-panel.tsx` — 首页顶部热点面板
+- 两栏布局：板块资金流向 TOP5 + 北向资金持股 TOP5
+- SWR 5 分钟自动刷新
+- 后端数据源：`stock_sector_fund_flow_rank` + `stock_hsgt_hold_stock_em`
+- API：`GET /api/stocks/market-heatmap` 一次返回全部数据
+
+### 组合风险指标搬家
+
+- 量化页"组合风险"Tab（Sharpe/最大回撤/波动率/Beta）移到首页第二排 KPI 卡片
+- 新增 `frontend/src/components/portfolio-risk-cards.tsx`
+- 页面打开自动加载，无需手动点按钮
+
+### 选股板块过滤
+
+- 新增 `detect_board()` — 根据代码前缀识别沪深主板/创业板/科创板/北交所/三板
+- `run_screener()` 新增 `allowed_boards` 参数，默认只用沪深主板（散户买不了的科创板/北交所/创业板自动排除）
+- 前端新增「创业板」开关按钮，手动开启后纳入 300 开头股票
+- 解决 AI 选股选出科创板/北交所等买不了的股票的问题
+
+### Bug 修复
+
+- `multi_agent_service.run_multi_agent_screen` 函数缺失 → 已实现，选股页"多 Agent 交叉验证"恢复正常
+- 北向资金数据显示异常（日期当代码）→ 改用 `stock_hsgt_hold_stock_em` API
+- 涨停数据显示异常（代码当板块名）→ 删除该板块（用户不需要）
+- 0 笔回测交易时提示"结果不可靠" → 改为"策略条件未触发"并给出排查建议
+
+### 文件变更
+- **新增**: `frontend/src/components/hot-panel.tsx`, `frontend/src/components/portfolio-risk-cards.tsx`, `backend/strategies/trend_continuation.yaml`
+- **修改**: 22 个文件（详见 diff），总计约 2000 行新增代码，8 个新 API 端点
 
 ---
 

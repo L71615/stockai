@@ -907,11 +907,162 @@ def strategy_backtest(req: StrategyBacktestRequest):
     return result
 
 
+class StrategyOptimizeRequest(BaseModel):
+    """策略参数优化请求 — 网格搜索最优参数组合"""
+    strategy_id: str = "turtle_s1"             # 要优化的策略 ID
+    stock_codes: list[str] = []                 # 股票池，空=默认池
+    start_date: str = "2025-01-01"
+    end_date: str = "2026-06-01"
+    initial_cash: float = 100000
+    hold_days: int = 5
+    rebalance_freq: str = "daily"
+    max_positions: int = 10
+    position_size_pct: float = 0.1
+    top_n: int = 20                             # 返回前几名结果
+
+
+@router.post("/strategy-optimize")
+def strategy_optimize(req: StrategyOptimizeRequest):
+    """策略参数网格搜索优化
+
+    对指定策略的所有可调参数做网格搜索，自动跑回测对比，
+    按最大回撤升序 → 夏普降序 返回最优参数组合。
+
+    耗时取决于参数组合数（通常 20-300 次回测），
+    前端应设置较长超时（2分钟）并显示进度。
+    """
+    from services.strategy_backtest_service import optimize_strategy_params
+
+    if req.hold_days < 1:
+        raise HTTPException(400, "持仓天数至少为 1")
+    if req.max_positions < 1:
+        raise HTTPException(400, "最大持仓数至少为 1")
+    if req.position_size_pct <= 0 or req.position_size_pct > 1:
+        raise HTTPException(400, "单票仓位比例需在 0.01 ~ 1.00 之间")
+    if req.top_n < 1 or req.top_n > 100:
+        raise HTTPException(400, "top_n 需在 1 ~ 100 之间")
+
+    result = optimize_strategy_params(
+        strategy_id=req.strategy_id,
+        stock_codes=req.stock_codes if req.stock_codes else [],
+        start_date=req.start_date,
+        end_date=req.end_date,
+        initial_cash=req.initial_cash,
+        hold_days=req.hold_days,
+        rebalance_freq=req.rebalance_freq,
+        max_positions=req.max_positions,
+        position_size_pct=req.position_size_pct,
+        top_n=req.top_n,
+    )
+
+    if "error" in result:
+        raise HTTPException(400, result["error"])
+
+    return result
+
+
 @router.get("/strategies")
 def list_backtest_strategies():
     """返回所有可用于回测的策略列表（YAML + 内置）"""
     from services.strategy_backtest_service import _list_available_strategies
     return _list_available_strategies()
+
+
+class StrategyCompareRequest(BaseModel):
+    """策略对比请求 — 多个策略独立回测并排比较"""
+    strategy_ids: list[str] = ["turtle_s1", "momentum_leader"]
+    stock_codes: list[str] = []
+    start_date: str = "2025-01-01"
+    end_date: str = "2026-06-01"
+    initial_cash: float = 100000
+    hold_days: int = 5
+    rebalance_freq: str = "daily"
+    max_positions: int = 10
+    position_size_pct: float = 0.1
+
+
+@router.post("/strategy-compare")
+def strategy_compare(req: StrategyCompareRequest):
+    """策略对比：每个策略独立回测，返回并排比较结果"""
+    from services.strategy_backtest_service import compare_strategies
+
+    if len(req.strategy_ids) < 2:
+        raise HTTPException(400, "至少选择 2 个策略进行比较")
+    if req.hold_days < 1:
+        raise HTTPException(400, "持仓天数至少为 1")
+
+    result = compare_strategies(
+        strategy_ids=req.strategy_ids,
+        stock_codes=req.stock_codes if req.stock_codes else [],
+        start_date=req.start_date, end_date=req.end_date,
+        initial_cash=req.initial_cash, hold_days=req.hold_days,
+        rebalance_freq=req.rebalance_freq, max_positions=req.max_positions,
+        position_size_pct=req.position_size_pct,
+    )
+
+    if "error" in result:
+        raise HTTPException(400, result["error"])
+    return result
+
+
+class MonthlyReportRequest(BaseModel):
+    """月报生成请求"""
+    year_month: str = ""  # "2026-07"，为空则用当前月
+
+
+@router.post("/monthly-report")
+def generate_monthly_report(req: MonthlyReportRequest):
+    """生成指定月份的 AI 投资月报
+
+    自动聚合当月交易数据 + 交易记忆反思 + AI 总结，
+    输出结构化月报（总成绩/赚最多/亏最多/策略PK/改进建议）。
+
+    月报生成后缓存到 review_reports 表，重复请求直接返回缓存。
+    """
+    from services.review_service import generate_monthly_report as _gen_report
+    from datetime import datetime
+
+    ym = req.year_month or datetime.now().strftime("%Y-%m")
+    # 验证格式
+    try:
+        datetime.strptime(ym, "%Y-%m")
+    except ValueError:
+        raise HTTPException(400, "year_month 格式错误，需为 YYYY-MM")
+
+    result = _gen_report(ym)
+    return result
+
+
+@router.get("/monthly-report")
+def get_monthly_report(month: str = ""):
+    """查询已有的月报（不重新生成）"""
+    from database import query_one
+    import json
+    from datetime import datetime
+
+    ym = month or datetime.now().strftime("%Y-%m")
+    existing = query_one(
+        """SELECT ai_response FROM review_reports
+           WHERE user_id = 1 AND report_type = 'monthly'
+           AND period_start = ? LIMIT 1""",
+        (f"{ym}-01",),
+    )
+    if existing and existing.get("ai_response"):
+        try:
+            return json.loads(existing["ai_response"])
+        except Exception:
+            pass
+    return {"year_month": ym, "summary": None, "message": "月报不存在，请先 POST 生成"}
+
+
+@router.get("/monthly-compare")
+def compare_monthly(month: str = ""):
+    """对比当前月与上月的交易表现，给出健康诊断"""
+    from services.review_service import compare_monthly_reports
+    from datetime import datetime
+
+    ym = month or datetime.now().strftime("%Y-%m")
+    return compare_monthly_reports(ym)
 
 
 # ═══════════════════════════════════════════════════════════════

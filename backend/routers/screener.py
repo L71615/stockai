@@ -30,6 +30,7 @@ class ScreenerRequest(BaseModel):
     stock_count: int = 500          # 扫描股票数量：500=沪深300+中证500, 0=全A股
     max_workers: int = 3            # 并发线程数（不宜过高，Baostock 有全局锁）
     industry_neutral: bool = True   # 是否行业中性化
+    allowed_boards: list[str] = []  # 允许的板块，空=默认沪深主板。可选: main_sh, main_sz, gem, star, bse
 
 
 class BacktestSingleRequest(BaseModel):
@@ -97,7 +98,8 @@ def run_screener(body: ScreenerRequest):
             _screen_status["progress"] = current
             _screen_status["total"] = total
 
-        result = _run_screener(stock_list, max_workers=body.max_workers, progress_callback=progress_cb)
+        boards = set(body.allowed_boards) if body.allowed_boards else None
+        result = _run_screener(stock_list, max_workers=body.max_workers, progress_callback=progress_cb, allowed_boards=boards)
 
         if body.industry_neutral and "error" not in result:
             result["candidates"] = industry_neutralize(result["candidates"])

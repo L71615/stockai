@@ -5,6 +5,9 @@ description: >
   当 RSI 进入超卖区域（< 30）且出现止跌企稳迹象时买入。
   捕捉短期超跌后的技术性反弹。关键是要等 RSI 拐头确认，不接飞刀。
   适合震荡市和熊市中的短线操作。
+source: "J. Welles Wilder RSI 交易系统 (New Concepts in Technical Trading Systems, 1978)"
+source_url: ""
+tags: [RSI, 超卖, 短线, 技术反弹, 逆势]
 market_state: [range, bear]
 recommended_position: "20-40%"
 conditions:
@@ -22,3 +25,24 @@ conditions:
     value: 20000000
 sort_by: rsi_14
 sort_order: asc
+params:
+  - name: rsi_14
+    label: RSI范围
+    type: range
+    default: [20, 35]
+    range: [[10, 15], [30, 45]]
+    description: "RSI越低越安全但信号越少。Wilder原始定义<30为超卖"
+  - name: ret_5d
+    label: 5日涨幅上限(%)
+    type: number
+    default: 0
+    range: [-10, 5]
+    step: 1
+    description: "不能已经开始涨了。设0=要求还没涨，设正=接受小幅反弹"
+  - name: avg_amount_20d
+    label: 日均成交额门槛
+    type: number
+    default: 20000000
+    range: [10000000, 200000000]
+    step: 10000000
+    description: "超卖反弹需要量能配合确认"

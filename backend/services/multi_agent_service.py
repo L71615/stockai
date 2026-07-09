@@ -123,8 +123,14 @@ async def analyze_stock(
     provider: str = "",
     api_key: str = "",
     model: str = "",
+    strategy_id: str = "",
 ) -> dict:
     """对单只股票运行多 Agent 深度分析
+
+    Args:
+        code: 股票代码
+        provider/api_key/model: AI 供应商配置
+        strategy_id: 可选，触发分析的策略 ID，用于注入历史交易记忆
 
     Returns:
         {code, technical_report, fundamentals_report, bull_case,
@@ -197,6 +203,23 @@ async def analyze_stock(
     bear_case = (bear_case or "").strip()
 
     # ── 第 3 轮：裁判 ──
+    # 注入交易记忆上下文
+    memory_context = ""
+    try:
+        from services.trading_memory import TradingMemoryLog
+        mem = TradingMemoryLog()
+        # 获取同股票历史交易教训
+        past = mem.get_past_context(code, n_same=3, n_cross=2)
+        if past:
+            memory_context += f"\n\n## 历史交易参考（你的真实交易记录）\n{past}"
+        # 获取策略维度历史表现
+        if strategy_id:
+            strat_ctx = mem.get_strategy_context(strategy_id, code=code, n=3)
+            if strat_ctx:
+                memory_context += f"\n\n{strat_ctx}"
+    except Exception:
+        pass  # 记忆注入失败不影响主流程
+
     judge_prompt = f"""## 股票: {code} {stock_info.get('name', '')}
 
 ## 技术面报告
@@ -210,6 +233,7 @@ async def analyze_stock(
 
 ## 空头论点
 {bear_case}
+{memory_context}
 
 请给出最终判断。"""
 
@@ -458,3 +482,124 @@ def _parse_judge_response(raw: str) -> dict:
         result["verdict"] = "卖出"
         result["confidence"] = 0.6
     return result
+
+
+# ═══════════════════════════════════════════════════════════════
+#  批量多 Agent 选股（screener 调用）
+# ═══════════════════════════════════════════════════════════════
+
+async def run_multi_agent_screen(
+    candidates: list[dict],
+    provider: str = "",
+    agent_keys: list[str] | None = None,
+) -> dict:
+    """对候选股票池逐只运行多 Agent 深度分析，返回排名结果
+
+    这是 screener.py 中「多 Agent 交叉验证」的入口函数。
+
+    Args:
+        candidates: [{code, name, ...}] — 候选股票列表
+        provider: AI 供应商
+        agent_keys: 要使用的 Agent 列表（保留参数，当前总是用 5 Agent 全流程）
+
+    Returns:
+        {
+            "results": [{rank, code, name, verdict, confidence, score, ...}],
+            "summary": {total, buy_count, hold_count, sell_count, avg_confidence},
+            "top_picks": [...],
+        }
+    """
+    import asyncio
+
+    if not candidates:
+        return {"error": "候选池为空", "results": [], "summary": {}}
+
+    # 限制并发数
+    sem = asyncio.Semaphore(3)
+
+    async def analyze_one(c: dict) -> dict:
+        async with sem:
+            code = c.get("code", "")
+            name = c.get("name", "")
+            stock_info = c
+            try:
+                result = await analyze_stock(
+                    code=code,
+                    provider=provider,
+                )
+                # 添加原始候选信息
+                result["candidate"] = stock_info
+                return result
+            except Exception as e:
+                logger = __import__("logging").getLogger(__name__)
+                logger.warning(f"multi_agent_screen: failed to analyze {code}: {e}")
+                return {
+                    "code": code,
+                    "name": name,
+                    "error": str(e),
+                    "verdict": "持有",
+                    "confidence": 0,
+                }
+
+    # 并行分析所有候选（最多3并发）
+    tasks = [analyze_one(c) for c in candidates[:30]]
+    raw_results = await asyncio.gather(*tasks)
+    results = list(raw_results)
+
+    # 评分排序
+    def _score(r: dict) -> float:
+        if r.get("error"):
+            return -1
+        verdict = r.get("verdict", "持有")
+        confidence = r.get("confidence", 0.5)
+        base = 0.5
+        if verdict == "买入":
+            base = 1.0
+        elif verdict == "卖出":
+            base = 0.0
+        return base * confidence
+
+    results.sort(key=_score, reverse=True)
+
+    # 统计
+    buy_count = sum(1 for r in results if r.get("verdict") == "买入")
+    hold_count = sum(1 for r in results if r.get("verdict") == "持有")
+    sell_count = sum(1 for r in results if r.get("verdict") == "卖出")
+    confidences = [r.get("confidence", 0) for r in results if not r.get("error")]
+
+    # Top picks
+    top_picks = [r for r in results if r.get("verdict") == "买入"][:5]
+
+    return {
+        "results": [
+            {
+                "rank": i + 1,
+                "code": r.get("code"),
+                "name": r.get("name"),
+                "verdict": r.get("verdict"),
+                "confidence": r.get("confidence"),
+                "score": round(_score(r), 3),
+                "key_reasons": r.get("key_reasons", []),
+                "risk_warning": r.get("risk_warning", ""),
+                "technical_report": r.get("technical_report", "")[:200] if r.get("technical_report") else "",
+            }
+            for i, r in enumerate(results)
+        ],
+        "summary": {
+            "total": len(results),
+            "buy_count": buy_count,
+            "hold_count": hold_count,
+            "sell_count": sell_count,
+            "avg_confidence": round(sum(confidences) / len(confidences), 2) if confidences else 0,
+        },
+        "top_picks": [
+            {
+                "code": r.get("code"),
+                "name": r.get("name"),
+                "verdict": r.get("verdict"),
+                "confidence": r.get("confidence"),
+                "key_reasons": r.get("key_reasons", []),
+            }
+            for r in top_picks
+        ],
+    }

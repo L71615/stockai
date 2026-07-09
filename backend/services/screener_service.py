@@ -25,6 +25,55 @@ from services.utils import get_market
 
 logger = logging.getLogger(__name__)
 
+# ═══════════════════════════════════════════════════════════════
+#  板块分类 — 过滤买不了的股票（科创板/北交所/创业板需权限）
+# ═══════════════════════════════════════════════════════════════
+
+import re
+
+_BOARD_RULES: dict[str, dict] = {
+    "main_sh":   {"pattern": r"^60[0-9]{4}$",      "label": "上海主板", "need_permission": False},
+    "main_sz":   {"pattern": r"^00[0-39][0-9]{3}$", "label": "深圳主板", "need_permission": False},
+    "gem":       {"pattern": r"^30[0-9]{4}$",       "label": "创业板",   "need_permission": True,  "permission_desc": "需2年交易经验+10万资产"},
+    "star":      {"pattern": r"^68[0-9]{4}$",       "label": "科创板",   "need_permission": True,  "permission_desc": "需50万资产"},
+    "bse":       {"pattern": r"^8[0-9]{5}$",        "label": "北交所",   "need_permission": True,  "permission_desc": "需50万资产+2年经验"},
+    "nq":        {"pattern": r"^4[0-9]{5}$",        "label": "三板",     "need_permission": True,  "permission_desc": "需特殊权限"},
+}
+
+_DEFAULT_ALLOWED_BOARDS = {"main_sh", "main_sz"}
+
+
+def detect_board(code: str) -> str:
+    """根据股票代码检测所属板块"""
+    for board_id, rule in _BOARD_RULES.items():
+        if re.match(rule["pattern"], code):
+            return board_id
+    return "other"
+
+
+def filter_by_board(stocks: list[dict], allowed_boards: set[str] | None = None) -> list[dict]:
+    """按板块过滤股票列表。allowed_boards=None 时默认只用沪深主板"""
+    if allowed_boards is None:
+        allowed_boards = _DEFAULT_ALLOWED_BOARDS
+    result = []
+    for s in stocks:
+        code = s.get("code", "")
+        board = detect_board(code)
+        if board in allowed_boards or board == "other":
+            s["board"] = board
+            result.append(s)
+    return result
+
+
+def get_board_summary(stocks: list[dict]) -> dict:
+    """获取股票池板块分布统计"""
+    counts: dict[str, int] = {}
+    for s in stocks:
+        code = s.get("code", "")
+        board = detect_board(code)
+        counts[board] = counts.get(board, 0) + 1
+    return {b: {"count": c, "label": _BOARD_RULES.get(b, {}).get("label", b)} for b, c in counts.items()}
+
 # ═══════════════════════════════════════════════════════════
 # 股票池
 # ═══════════════════════════════════════════════════════════
@@ -420,21 +469,25 @@ def run_screener(
     stock_list: list[dict] = None,
     max_workers: int = 3,
     progress_callback=None,
+    allowed_boards: set[str] | None = None,
 ) -> dict:
     """全市场多因子筛选
 
     Args:
         stock_list: 股票列表，默认自动获取全A股
         max_workers: 并发线程数
-        progress_callback: 可选，进度回调 (current, total) → None
+        progress_callback: 可选，进度回调 (current, total) -> None
+        allowed_boards: 允许的板块集合，None=默认（沪深主板）。可选: main_sh, main_sz, gem, star, bse, nq
 
     Returns:
         {
             "total_stocks": int,
             "scanned": int,
-            "candidates": [{code, name, score, factors, ...}, ...],  # Top 50
+            "candidates": [{code, name, score, factors, ...}, ...],
             "factor_weights": {name: weight},
             "market_state": str,
+            "board_summary": {...},
+            "board_filter": [...],
         }
     """
     if stock_list is None:
@@ -442,6 +495,12 @@ def run_screener(
 
     if not stock_list:
         return {"error": "无法获取股票列表", "total_stocks": 0, "scanned": 0, "candidates": []}
+
+    # 板块过滤
+    if allowed_boards is None:
+        allowed_boards = _DEFAULT_ALLOWED_BOARDS
+    board_summary_before = get_board_summary(stock_list)
+    stock_list = filter_by_board(stock_list, allowed_boards)
 
     total = len(stock_list)
 
@@ -535,6 +594,8 @@ def run_screener(
         "candidates": top50,
         "factor_weights": weights,
         "market_state": market_state,
+        "board_summary": board_summary_before,
+        "board_filter": list(allowed_boards),
     }
 
 

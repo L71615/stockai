@@ -216,9 +216,9 @@ class ProtectionToggleBody(BaseModel):
 
 @router.get("/loss-streak")
 def get_loss_streak():
-    """获取当前连亏状态和保护模式"""
-    from services.discipline_service import check_protection
-    return check_protection(get_current_user_id())
+    """获取连亏状态 + 保护建议（增强版：含行动建议+最近亏损明细）"""
+    from services.discipline_service import get_protection_advice
+    return get_protection_advice(get_current_user_id())
 
 
 @router.post("/protection/toggle")

@@ -30,6 +30,8 @@ interface BacktestMetrics {
   total_pnl: number
   avg_win: number
   avg_loss: number
+  overfit_warning?: string | null
+  fees_included?: boolean
 }
 
 interface Trade {
@@ -162,7 +164,21 @@ export function BacktestResults({ metrics, equity_curve, trades, monthly_returns
         <span className="text-[10px]">
           均盈 {fmtMoney(metrics.avg_win)} / 均亏 {fmtMoney(Math.abs(metrics.avg_loss))}
         </span>
+        {metrics.fees_included && (
+          <Badge variant="outline" className="text-[9px] px-1 py-0 h-4 text-muted-foreground">
+            含手续费
+          </Badge>
+        )}
       </div>
+
+      {/* 过拟合警告 */}
+      {metrics.overfit_warning && (
+        <Card className="border-yellow-500/30 bg-yellow-500/5">
+          <CardContent className="py-2">
+            <p className="text-xs text-yellow-400">⚠️ {metrics.overfit_warning}</p>
+          </CardContent>
+        </Card>
+      )}
 
       {/* 净值曲线 */}
       <Card>
@@ -170,7 +186,17 @@ export function BacktestResults({ metrics, equity_curve, trades, monthly_returns
           <CardTitle className="text-xs">净值曲线</CardTitle>
         </CardHeader>
         <CardContent>
-          <ChartEquityCurve data={equity_curve} className="h-[260px]" />
+          <ChartEquityCurve
+            data={equity_curve}
+            trades={trades.map((t) => ({
+              id: t.id,
+              date: t.date,
+              direction: t.direction,
+              price: t.price,
+              pnl: t.pnl,
+            }))}
+            className="h-[260px]"
+          />
         </CardContent>
       </Card>
 

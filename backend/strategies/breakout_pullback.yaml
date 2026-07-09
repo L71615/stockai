@@ -5,6 +5,9 @@ description: >
   放量突破20日新高，RSI偏强但不极端，量能放大。
   做趋势跟随的波段机会，2-3天持有。
   牛市或震荡市可用。止损设在突破前一日收盘价下方2%。
+source: "William O'Neil CANSLIM 突破买入法"
+source_url: ""
+tags: [突破, 回踩, 波段, 趋势跟随, 中短线]
 market_state: [bull, range]
 recommended_position: "40-60%"
 conditions:
@@ -25,3 +28,30 @@ conditions:
     value: 30000000
 sort_by: strength_20d
 sort_order: desc
+params:
+  - name: rsi_14
+    label: RSI范围
+    type: range
+    default: [50, 75]
+    range: [[40, 45], [65, 85]]
+    description: "趋势刚启动但不过热。牛市可放宽上限，震荡市收紧"
+  - name: vol_ratio
+    label: 量比门槛
+    type: number
+    default: 1.3
+    range: [0.8, 3.0]
+    step: 0.1
+    description: "确认突破有效。低于1.0=假突破概率大"
+  - name: ret_5d
+    label: 5日涨幅范围(%)
+    type: range
+    default: [2, 10]
+    range: [[-5, 0], [5, 20]]
+    description: "涨太少没动量，涨太多追高风险大"
+  - name: avg_amount_20d
+    label: 日均成交额门槛
+    type: number
+    default: 30000000
+    range: [10000000, 200000000]
+    step: 10000000
+    description: "突破需要量能配合"

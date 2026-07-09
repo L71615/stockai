@@ -1,0 +1,77 @@
+# 趋势中途介入 — 趋势确认后的"半山腰"入场
+id: trend_continuation
+name: 趋势中途介入
+description: >
+  不等回调到底，在趋势确认后中途上车。适合已经启动但未过热的股票。
+  核心逻辑：MA多头排列 + 近期有合理涨幅 + RSI偏强但未超买 + 放量确认。
+  3-5天波段持有，止损设在MA20下方2%。
+source: "趋势跟踪中途介入策略 (Stan Weinstein 阶段分析法)"
+source_url: ""
+tags: [趋势跟踪, 中途介入, 波段, 半山腰, 动量]
+market_state: [bull, range]
+recommended_position: "40-60%"
+conditions:
+  # ── 均线确认趋势 ──
+  - field: ma5
+    operator: ">"
+    compare_field: ma20
+  - field: ma20
+    operator: ">"
+    compare_field: ma60
+  - field: close
+    operator: ">"
+    compare_field: ma20
+  # ── 已有涨幅但不过热 ──
+  - field: ret_20d
+    operator: "between"
+    value: [3, 20]
+  - field: ret_5d
+    operator: "between"
+    value: [-3, 10]
+  # ── RSI: 偏强但未超买 ──
+  - field: rsi_14
+    operator: "between"
+    value: [50, 72]
+  # ── 放量确认趋势有效 ──
+  - field: vol_ratio
+    operator: ">="
+    value: 1.1
+  # ── 流动性 ──
+  - field: avg_amount_20d
+    operator: ">="
+    value: 30000000
+sort_by: strength_20d
+sort_order: desc
+params:
+  - name: ret_20d
+    label: 20日涨幅范围(%)
+    type: range
+    default: [3, 20]
+    range: [[0, 0], [15, 40]]
+    description: "下限=趋势已确认，上限=不过热。若设[5,15]更严格，设[0,30]更宽松"
+  - name: ret_5d
+    label: 5日涨幅范围(%)
+    type: range
+    default: [-3, 10]
+    range: [[-8, -5], [5, 20]]
+    description: "允许小幅回调(-3)或温和上涨(10)。负值=买入回调，正值=追涨"
+  - name: rsi_14
+    label: RSI范围
+    type: range
+    default: [50, 72]
+    range: [[40, 45], [65, 80]]
+    description: "50-72=趋势中段。放宽到75接纳更强趋势，收紧到65更保守"
+  - name: vol_ratio
+    label: 量比门槛
+    type: number
+    default: 1.1
+    range: [0.8, 3.0]
+    step: 0.1
+    description: "高于1.0确认不是缩量假突破。设0.8几乎不要求放量"
+  - name: avg_amount_20d
+    label: 日均成交额门槛
+    type: number
+    default: 30000000
+    range: [10000000, 200000000]
+    step: 10000000
+    description: "趋势股要有足够的流动性进出"

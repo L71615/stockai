@@ -29,6 +29,13 @@ _DEFAULT_POOL = [
 ]
 
 
+# A股交易成本
+_COMMISSION_RATE = 0.0003    # 佣金 万分之三
+_COMMISSION_MIN = 5.0         # 最低佣金 5元
+_STAMP_TAX_RATE = 0.001       # 印花税 千分之一（仅卖出）
+_TRANSFER_FEE_RATE = 0.00001  # 过户费 十万分之一
+
+
 def run_strategy_backtest(
     strategy_ids: list[str] | None = None,
     stock_codes: list[str] | None = None,
@@ -40,6 +47,8 @@ def run_strategy_backtest(
     max_positions: int = 10,
     position_size_pct: float = 0.1,
     benchmark: str = "000300",
+    param_overrides: dict[str, dict[str, any]] | None = None,
+    include_fees: bool = True,
 ) -> dict:
     """策略回测主函数
 
@@ -71,8 +80,8 @@ def run_strategy_backtest(
     if stock_codes is None or len(stock_codes) == 0:
         stock_codes = list(_DEFAULT_POOL)
 
-    # 加载策略条件树
-    condition_tree = _load_strategy_conditions(strategy_ids)
+    # 加载策略条件树（支持参数覆盖）
+    condition_tree = _load_strategy_conditions(strategy_ids, param_overrides)
     if condition_tree is None:
         return {"error": f"无法加载策略: {strategy_ids}",
                 "available": _list_available_strategies()}
@@ -129,10 +138,12 @@ def run_strategy_backtest(
 
             proceeds = sell_price * p["shares"]
             cost = p["entry_price"] * p["shares"]
-            pnl = round(proceeds - cost, 2)
+            # 卖出手续费（佣金+印花税）
+            sell_fee = _calc_fee(proceeds, is_buy=False) if include_fees else 0
+            pnl = round(proceeds - cost - sell_fee, 2)
             pnl_pct = round((sell_price - p["entry_price"]) / p["entry_price"] * 100, 2)
 
-            cash += proceeds
+            cash += (proceeds - sell_fee)
             trade_id_counter += 1
             trades.append({
                 "id": trade_id_counter,
@@ -181,6 +192,11 @@ def run_strategy_backtest(
                     continue
 
             cost = buy_price * shares
+            # 买入手续费（佣金）
+            if include_fees:
+                buy_fee = _calc_fee(cost, is_buy=True)
+                cost += buy_fee
+
             if cost > cash:
                 shares = int(cash / buy_price)
                 if shares == 0:
@@ -207,7 +223,7 @@ def run_strategy_backtest(
                 "shares": shares,
                 "pnl": None,
                 "pnl_pct": None,
-                "reason": f"策略选股: {', '.join(strategy_ids)}",
+                "reason": _build_trade_reason(c["code"], strategy_ids),
             })
 
         # ── Step D: 记录当日净值 ──
@@ -288,6 +304,7 @@ def run_strategy_backtest(
             "max_positions": max_positions,
             "position_size_pct": position_size_pct,
             "benchmark": benchmark,
+            "param_overrides": param_overrides,
         },
         "metrics": metrics,
         "equity_curve": equity_curve,
@@ -302,13 +319,20 @@ def run_strategy_backtest(
 #  策略加载
 # ═══════════════════════════════════════════════════════════════
 
-def _load_strategy_conditions(strategy_ids: list[str]) -> dict | None:
-    """加载 YAML 策略并合并条件树（OR 逻辑：任一策略满足即买入）"""
+def _load_strategy_conditions(strategy_ids: list[str], param_overrides: dict | None = None) -> dict | None:
+    """加载 YAML 策略并合并条件树（OR 逻辑：任一策略满足即买入）
+
+    Args:
+        strategy_ids: 策略 ID 列表
+        param_overrides: 参数覆盖，格式 {strategy_id: {field_name: new_value}}
+                         例如 {"turtle_s1": {"avg_amount_20d": 30000000, "atr_pct": [1.5, 4]}}
+    """
     import os
     import yaml
 
     strategies_dir = os.path.join(os.path.dirname(__file__), "..", "strategies")
     all_conditions = []
+    overrides = param_overrides or {}
 
     for sid in strategy_ids:
         yaml_path = os.path.join(strategies_dir, f"{sid}.yaml")
@@ -319,6 +343,12 @@ def _load_strategy_conditions(strategy_ids: list[str]) -> dict | None:
             with open(yaml_path, "r", encoding="utf-8") as f:
                 data = yaml.safe_load(f)
             conds = data.get("conditions", [])
+
+            # 应用参数覆盖
+            sid_overrides = overrides.get(sid, {})
+            if sid_overrides and conds:
+                conds = _apply_param_overrides(conds, sid_overrides)
+
             if conds:
                 all_conditions.append({"logic": "AND", "conditions": conds})
         except Exception:
@@ -333,8 +363,23 @@ def _load_strategy_conditions(strategy_ids: list[str]) -> dict | None:
         return {"logic": "OR", "conditions": all_conditions}
 
 
+def _apply_param_overrides(conditions: list[dict], overrides: dict[str, any]) -> list[dict]:
+    """将参数覆盖应用到条件列表，返回新的条件列表（不修改原始数据）"""
+    import copy
+    result = copy.deepcopy(conditions)
+    for cond in result:
+        field = cond.get("field", "")
+        if field in overrides:
+            new_val = overrides[field]
+            if "value" in cond:
+                cond["value"] = new_val
+            # 对于 compare_field 类型的条件，如果覆盖的是 compare_field 的值，需要特殊处理
+            # 目前主要用于覆盖 value 类型的条件
+    return result
+
+
 def _list_available_strategies() -> list[dict]:
-    """列出所有可用策略"""
+    """列出所有可用策略（包含来源、标签、可调参数等元信息）"""
     import os
     import yaml
 
@@ -353,6 +398,12 @@ def _list_available_strategies() -> list[dict]:
                 "id": data.get("id", fname.replace(".yaml", "")),
                 "name": data.get("name", ""),
                 "description": data.get("description", ""),
+                "source": data.get("source", ""),
+                "source_url": data.get("source_url", ""),
+                "tags": data.get("tags", []),
+                "params": data.get("params", []),
+                "market_state": data.get("market_state", []),
+                "recommended_position": data.get("recommended_position", ""),
                 "conditions_count": len(data.get("conditions", [])),
             })
         except Exception:
@@ -365,11 +416,58 @@ def _list_available_strategies() -> list[dict]:
             "id": sid,
             "name": info["name"],
             "description": "内置技术指标策略",
+            "source": "",
+            "source_url": "",
+            "tags": [],
+            "params": [],
+            "market_state": [],
+            "recommended_position": "",
             "conditions_count": 1,
             "builtin": True,
         })
 
     return result
+
+
+def _build_trade_reason(code: str, strategy_ids: list[str]) -> str:
+    """为交易构建信号解释文本"""
+    if not strategy_ids:
+        return "策略选股"
+    sid = strategy_ids[0]  # 取第一个策略
+    try:
+        from services.discipline_service import build_signal_reason
+        return build_signal_reason(code, sid)
+    except Exception:
+        return f"策略选股: {sid}"
+
+
+def _calc_fee(amount: float, is_buy: bool = True) -> float:
+    """计算A股单笔交易手续费
+
+    买入: 佣金(万分之三, 最低5元) + 过户费(十万分之一)
+    卖出: 佣金(万分之三, 最低5元) + 印花税(千分之一) + 过户费(十万分之一)
+    """
+    commission = max(amount * _COMMISSION_RATE, _COMMISSION_MIN)
+    transfer = amount * _TRANSFER_FEE_RATE
+    stamp = 0 if is_buy else amount * _STAMP_TAX_RATE
+    return round(commission + stamp + transfer, 2)
+
+
+def _overfit_warning(num_trades: int, max_dd: float, sharpe: float) -> str | None:
+    """检测过拟合风险，返回警告字符串或 None"""
+    warnings = []
+    if num_trades == 0:
+        warnings.append("回测期间无符合条件的交易——策略条件未触发。可检查：①回测日期范围是否够长 ②策略参数是否过于严格 ③股票是否处于策略适用的市场环境")
+    elif num_trades < 10:
+        warnings.append(f"交易次数仅{num_trades}笔，统计显著性不足，建议用更长时间范围验证")
+    elif num_trades < 30:
+        warnings.append(f"交易次数{num_trades}笔偏少，建议用更长时间范围验证")
+    if num_trades > 0:
+        if sharpe > 4:
+            warnings.append("夏普比率异常高(>4)，可能存在未来信息泄露或过拟合")
+        if abs(max_dd) < 0.02:
+            warnings.append("最大回撤极低(<2%)，请确认回测条件是否过于宽松")
+    return "；".join(warnings) if warnings else None
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -747,6 +845,9 @@ def _calculate_metrics(
         "total_pnl": round(sum(t["pnl"] for t in sell_trades), 2),
         "avg_win": round(sum(t["pnl"] for t in sell_trades if t["pnl"] > 0) / wins, 2) if wins > 0 else 0,
         "avg_loss": round(sum(t["pnl"] for t in sell_trades if t["pnl"] < 0) / losses, 2) if losses > 0 else 0,
+        # 过拟合风险警告
+        "overfit_warning": _overfit_warning(num_trades, max_dd, sharpe),
+        "fees_included": True,
     }
 
 
@@ -784,3 +885,261 @@ def _calculate_monthly_returns(equity_curve: list[dict], benchmark_curve: list[d
         })
 
     return result
+
+
+# ═══════════════════════════════════════════════════════════════
+#  参数优化器 — 网格搜索最优参数组合
+# ═══════════════════════════════════════════════════════════════
+
+def optimize_strategy_params(
+    strategy_id: str,
+    stock_codes: list[str] | None = None,
+    start_date: str = "2025-01-01",
+    end_date: str = "2026-06-01",
+    initial_cash: float = 100000,
+    hold_days: int = 5,
+    rebalance_freq: str = "daily",
+    max_positions: int = 10,
+    position_size_pct: float = 0.1,
+    top_n: int = 20,
+) -> dict:
+    """对策略参数做网格搜索，返回按最大回撤→夏普排序的最优组合
+
+    工作流:
+      1. 加载策略 YAML，提取 params 定义
+      2. 为每个参数生成候选值列表（按 range/step 生成）
+      3. 笛卡尔积 → 所有参数组合（上限 300 组，超出则随机采样）
+      4. 对每个组合跑 run_strategy_backtest()（通过 param_overrides 传入）
+      5. 按 max_drawdown 升序 → sharpe 降序 排名
+      6. 返回 top_n 个结果
+
+    Returns:
+        {
+            "strategy_id": str,
+            "strategy_name": str,
+            "params_definition": [...],
+            "total_combinations": int,
+            "evaluated": int,
+            "top_results": [{rank, params, metrics}, ...],
+            "default_params": {field: default_value, ...},
+            "default_metrics": {...},
+        }
+    """
+    import os
+    import yaml
+    import itertools
+    import random
+
+    # 1. 加载策略
+    strategies_dir = os.path.join(os.path.dirname(__file__), "..", "strategies")
+    yaml_path = os.path.join(strategies_dir, f"{strategy_id}.yaml")
+    if not os.path.exists(yaml_path):
+        return {"error": f"策略文件不存在: {strategy_id}.yaml"}
+
+    with open(yaml_path, "r", encoding="utf-8") as f:
+        data = yaml.safe_load(f)
+
+    params_def = data.get("params", [])
+    if not params_def:
+        return {"error": f"策略 '{strategy_id}' 没有定义可调参数"}
+
+    strategy_name = data.get("name", strategy_id)
+
+    # 2. 为每个参数生成候选值
+    param_candidates: dict[str, list] = {}
+    default_params: dict[str, any] = {}
+
+    for p in params_def:
+        name = p["name"]
+        ptype = p.get("type", "number")
+        default = p.get("default")
+        prange = p.get("range", [])
+        step = p.get("step", 1)
+
+        default_params[name] = default
+
+        if ptype == "range":
+            candidates = _generate_range_candidates(default, prange)
+        elif ptype == "number" and isinstance(prange, list) and len(prange) == 2:
+            candidates = _generate_number_candidates(prange[0], prange[1], step)
+        else:
+            candidates = [default]
+
+        param_candidates[name] = candidates
+
+    # 3. 笛卡尔积
+    param_names = list(param_candidates.keys())
+    combinations = list(itertools.product(*[param_candidates[n] for n in param_names]))
+
+    total = len(combinations)
+    max_combos = 300
+
+    if total > max_combos:
+        random.seed(42)
+        combinations = random.sample(combinations, max_combos)
+
+    evaluated = len(combinations)
+
+    # 4. 对每个组合跑回测
+    results = []
+    for combo in combinations:
+        overrides = {strategy_id: dict(zip(param_names, combo))}
+        bt = run_strategy_backtest(
+            strategy_ids=[strategy_id],
+            stock_codes=stock_codes,
+            start_date=start_date,
+            end_date=end_date,
+            initial_cash=initial_cash,
+            hold_days=hold_days,
+            rebalance_freq=rebalance_freq,
+            max_positions=max_positions,
+            position_size_pct=position_size_pct,
+            param_overrides=overrides,
+        )
+
+        if "error" in bt:
+            continue
+
+        metrics = bt.get("metrics", {})
+        results.append({
+            "params": overrides[strategy_id],
+            "metrics": metrics,
+        })
+
+    # 5. 排序: max_drawdown ASC (回撤越小越好) → sharpe DESC → win_rate DESC
+    results.sort(key=lambda r: (
+        abs(r["metrics"].get("max_drawdown", -1)),
+        -(r["metrics"].get("sharpe", -999)),
+        -(r["metrics"].get("win_rate", 0)),
+    ))
+
+    # 6. 跑默认参数的基准回测
+    default_bt = run_strategy_backtest(
+        strategy_ids=[strategy_id],
+        stock_codes=stock_codes,
+        start_date=start_date,
+        end_date=end_date,
+        initial_cash=initial_cash,
+        hold_days=hold_days,
+        rebalance_freq=rebalance_freq,
+        max_positions=max_positions,
+        position_size_pct=position_size_pct,
+    )
+
+    return {
+        "strategy_id": strategy_id,
+        "strategy_name": strategy_name,
+        "params_definition": params_def,
+        "total_combinations": total,
+        "evaluated": evaluated,
+        "top_results": [
+            {
+                "rank": i + 1,
+                "params": r["params"],
+                "metrics": r["metrics"],
+            }
+            for i, r in enumerate(results[:top_n])
+        ],
+        "default_params": default_params,
+        "default_metrics": default_bt.get("metrics", {}),
+    }
+
+
+def compare_strategies(
+    strategy_ids: list[str],
+    stock_codes: list[str] | None = None,
+    start_date: str = "2025-01-01",
+    end_date: str = "2026-06-01",
+    initial_cash: float = 100000,
+    hold_days: int = 5,
+    rebalance_freq: str = "daily",
+    max_positions: int = 10,
+    position_size_pct: float = 0.1,
+) -> dict:
+    """并行跑多个策略，返回每个策略独立回测结果用于并排对比"""
+    import yaml, os
+
+    if not strategy_ids:
+        return {"error": "至少选择一个策略", "strategies": []}
+
+    if stock_codes is None or len(stock_codes) == 0:
+        stock_codes = list(_DEFAULT_POOL)
+
+    strategies_dir = os.path.join(os.path.dirname(__file__), "..", "strategies")
+    results = []
+
+    for sid in strategy_ids:
+        strategy_name = sid
+        yaml_path = os.path.join(strategies_dir, f"{sid}.yaml")
+        if os.path.exists(yaml_path):
+            try:
+                with open(yaml_path, "r", encoding="utf-8") as f:
+                    strategy_name = yaml.safe_load(f).get("name", sid)
+            except Exception:
+                pass
+
+        bt = run_strategy_backtest(
+            strategy_ids=[sid],
+            stock_codes=list(stock_codes),
+            start_date=start_date, end_date=end_date,
+            initial_cash=initial_cash, hold_days=hold_days,
+            rebalance_freq=rebalance_freq, max_positions=max_positions,
+            position_size_pct=position_size_pct, include_fees=True,
+        )
+
+        if "error" not in bt:
+            results.append({
+                "strategy_id": sid, "strategy_name": strategy_name,
+                "metrics": bt.get("metrics", {}),
+                "equity_curve": bt.get("equity_curve", []),
+                "trades": bt.get("trades", []),
+            })
+
+    ranking = sorted([
+        {"strategy_id": r["strategy_id"], "strategy_name": r["strategy_name"],
+         "total_return": r["metrics"].get("total_return", 0),
+         "sharpe": r["metrics"].get("sharpe", 0),
+         "max_drawdown": r["metrics"].get("max_drawdown", 0),
+         "win_rate": r["metrics"].get("win_rate", 0),
+         "num_trades": r["metrics"].get("num_trades", 0)}
+        for r in results
+    ], key=lambda x: (abs(x["max_drawdown"]), -x["sharpe"]))
+
+    return {"strategies": results, "ranking": ranking}
+
+
+def _generate_number_candidates(low: float, high: float, step: float) -> list:
+    """生成 number 类型参数的候选值列表（最多8个均匀采样点）"""
+    candidates = []
+    val = low
+    while val <= high + 0.0001:
+        candidates.append(round(val, 4) if isinstance(step, float) else val)
+        val += step
+    if len(candidates) > 8:
+        n = min(8, len(candidates))
+        indices = [int(i * (len(candidates) - 1) / (n - 1)) for i in range(n)]
+        candidates = [candidates[i] for i in indices]
+    return candidates
+
+
+def _generate_range_candidates(default_val: list, prange: list) -> list:
+    """生成 range 类型参数的候选组合（3-5 组典型范围）"""
+    candidates = [tuple(default_val)]
+    if not prange or not isinstance(prange, list) or len(prange) < 2:
+        return candidates
+
+    low_range = prange[0]
+    high_range = prange[1]
+
+    mid_low = round((low_range[0] + default_val[0]) / 2, 2)
+    mid_high = round((default_val[1] + high_range[1]) / 2, 2)
+
+    for alt in [
+        (low_range[0], mid_high),
+        (mid_low, high_range[1]),
+        (low_range[0], high_range[1]),
+    ]:
+        if alt != tuple(default_val):
+            candidates.append(alt)
+
+    return candidates

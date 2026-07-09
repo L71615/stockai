@@ -17,7 +17,7 @@ import type { KlineResponse } from "@/lib/api-types"
 import { Area, AreaChart, CartesianGrid, XAxis, BarChart, Bar, Cell } from "recharts"
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from "@/components/ui/chart"
 import { KlineChart } from "@/components/KlineChart"
-import { IconBrain, IconRadar2, IconPlayerPlay, IconPlus, IconX } from "@tabler/icons-react"
+import { IconBrain, IconRadar2, IconPlayerPlay, IconPlus, IconSparkles, IconX } from "@tabler/icons-react"
 import { BacktestResults } from "@/components/backtest-results"
 import { MultiAgentAnalysis } from "@/components/multi-agent-analysis"
 
@@ -85,12 +85,6 @@ interface StockInsight {
   turtle?: TurtleData
 }
 
-interface RiskKPI {
-  sharpe?: number; max_drawdown?: number; volatility?: number; beta?: number
-}
-
-interface CorrelationItem { code1: string; code2: string; value: number }
-
 interface BacktestResult {
   total_invested?: number; final_value?: number; total_return?: number
   lump_sum_return?: number; conclusion?: string
@@ -113,9 +107,17 @@ interface MCResult {
 }
 
 // Strategy backtest types
+interface StrategyParam {
+  name: string; label: string; type: string
+  default: number | [number, number]
+  range: [number, number] | [[number, number], [number, number]]
+  step: number; description: string
+}
 interface StrategyInfo {
   id: string; name: string; description: string
-  conditions_count: number; builtin?: boolean
+  source: string; source_url: string; tags: string[]
+  params: StrategyParam[]; market_state: string[]
+  recommended_position: string; conditions_count: number; builtin?: boolean
 }
 
 interface StrategyBacktestMetrics {
@@ -155,8 +157,6 @@ function QuantPageInner() {
   const [code, setCode] = useState(params.get("code") || "")
   const [days, setDays] = useState("60")
   const [insight, setInsight] = useState<StockInsight | null>(null)
-  const [risk, setRisk] = useState<RiskKPI | null>(null)
-  const [correlations, setCorrelations] = useState<CorrelationItem[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [tab, setTab] = useState("insight")
@@ -208,6 +208,37 @@ function QuantPageInner() {
   const [btBenchmark, setBtBenchmark] = useState("000300")
   const [btRunning, setBtRunning] = useState(false)
   const [btStrategyResult, setBtStrategyResult] = useState<StrategyBacktestResult | null>(null)
+  const [btParamOverrides, setBtParamOverrides] = useState<Record<string, Record<string, number | [number, number]>>>({})
+  const [btOptimizing, setBtOptimizing] = useState(false)
+  const [btOptimizeResult, setBtOptimizeResult] = useState<Record<string, unknown> | null>(null)
+  const [btComparing, setBtComparing] = useState(false)
+  const [btCompareResult, setBtCompareResult] = useState<Record<string, unknown> | null>(null)
+
+  // Monthly report
+  const [reportMonth, setReportMonth] = useState(() => {
+    const d = new Date()
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`
+  })
+  const [reportData, setReportData] = useState<Record<string, unknown> | null>(null)
+  const [reportCompare, setReportCompare] = useState<Record<string, unknown> | null>(null)
+  const [reportLoading, setReportLoading] = useState(false)
+
+  const fetchMonthlyReport = async (gen = false) => {
+    setReportLoading(true)
+    try {
+      if (gen) {
+        const data = await apiPost<Record<string, unknown>>("/api/quant/monthly-report", { year_month: reportMonth })
+        setReportData(data)
+      } else {
+        const data = await apiGet<Record<string, unknown>>(`/api/quant/monthly-report?month=${reportMonth}`)
+        setReportData(data)
+      }
+    } catch {
+      // 不存在时静默
+    } finally {
+      setReportLoading(false)
+    }
+  }
 
   // Load strategies on mount
   useEffect(() => {
@@ -248,6 +279,7 @@ function QuantPageInner() {
         max_positions: Number(btMaxPos) || 10,
         position_size_pct: Number(btPosSize) || 0.1,
         benchmark: btBenchmark,
+        param_overrides: Object.keys(btParamOverrides).length > 0 ? btParamOverrides : null,
       })
       setBtStrategyResult(data)
     } catch (err) {
@@ -255,6 +287,69 @@ function QuantPageInner() {
     } finally {
       setBtRunning(false)
     }
+  }
+
+  const runOptimize = async () => {
+    if (selectedStrategies.length === 0) return
+    const sid = selectedStrategies[0] // 一次优化一个策略
+    setBtOptimizing(true)
+    setBtOptimizeResult(null)
+    try {
+      const stockCodes = btStockCodes
+        .split(/[,，\s]+/)
+        .map((s) => s.trim())
+        .filter(Boolean)
+      const data = await apiPost<Record<string, unknown>>("/api/quant/strategy-optimize", {
+        strategy_id: sid,
+        stock_codes: stockCodes,
+        start_date: btStartDate,
+        end_date: btEndDate,
+        initial_cash: 100000,
+        hold_days: Number(btHoldDays) || 5,
+        rebalance_freq: btRebalanceFreq,
+        max_positions: Number(btMaxPos) || 10,
+        position_size_pct: Number(btPosSize) || 0.1,
+        top_n: 20,
+      })
+      setBtOptimizeResult(data)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "参数优化失败")
+    } finally {
+      setBtOptimizing(false)
+    }
+  }
+
+  const runStrategyCompare = async () => {
+    if (selectedStrategies.length < 2) return
+    setBtComparing(true)
+    setBtCompareResult(null)
+    try {
+      const stockCodes = btStockCodes.split(/[,，\s]+/).map((s) => s.trim()).filter(Boolean)
+      const data = await apiPost<Record<string, unknown>>("/api/quant/strategy-compare", {
+        strategy_ids: selectedStrategies,
+        stock_codes: stockCodes,
+        start_date: btStartDate,
+        end_date: btEndDate,
+        initial_cash: 100000,
+        hold_days: Number(btHoldDays) || 5,
+        rebalance_freq: btRebalanceFreq,
+        max_positions: Number(btMaxPos) || 10,
+        position_size_pct: Number(btPosSize) || 0.1,
+      })
+      setBtCompareResult(data)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "对比失败")
+    } finally { setBtComparing(false) }
+  }
+
+  const applyOptimizedParams = (params: Record<string, number | [number, number]>) => {
+    const sid = selectedStrategies[0]
+    // Convert array params from tuple-as-array format
+    const normalized: Record<string, number | [number, number]> = {}
+    for (const [k, v] of Object.entries(params)) {
+      normalized[k] = v
+    }
+    setBtParamOverrides((prev) => ({ ...prev, [sid]: normalized }))
   }
 
   // Factor AI explain
@@ -305,17 +400,6 @@ function QuantPageInner() {
       setInsight(data)
     } catch (err) { setError(err instanceof Error ? err.message : "加载失败") }
     finally { setLoading(false) }
-  }
-
-  const fetchRisk = async () => {
-    try {
-      const [r, corrs] = await Promise.all([
-        apiGet<RiskKPI>("/api/quant/portfolio-risk"),
-        apiGet<CorrelationItem[]>("/api/stocks/diversification?format=correlation").catch(() => []),
-      ])
-      setRisk(r)
-      setCorrelations(Array.isArray(corrs) ? corrs : [])
-    } catch { /* */ }
   }
 
   const runBacktest = async () => {
@@ -435,7 +519,6 @@ function QuantPageInner() {
       case "factors": await fetchFactors(); break
       case "backtest": await runStrategyBacktest(); break
       case "mc": await runMC(); break
-      case "risk": await fetchRisk(); break
       case "review": await fetchMemory(); break
     }
   }
@@ -553,15 +636,15 @@ function QuantPageInner() {
 
         {error && <p className="text-xs text-red-500">{error}</p>}
 
-        <Tabs value={tab} onValueChange={(v) => { setTab(v); if (v === "risk") fetchRisk() }}>
+        <Tabs value={tab} onValueChange={(v) => { setTab(v) }}>
           <TabsList className="overflow-x-auto flex-nowrap">
             <TabsTrigger value="insight" className="text-xs">个股透视</TabsTrigger>
-            <TabsTrigger value="risk" className="text-xs">组合风险</TabsTrigger>
             <TabsTrigger value="backtest" className="text-xs">策略回测</TabsTrigger>
             <TabsTrigger value="mc" className="text-xs">蒙特卡洛</TabsTrigger>
             <TabsTrigger value="agents" className="text-xs">AI 分析</TabsTrigger>
             <TabsTrigger value="factors" className="text-xs">因子分析</TabsTrigger>
             <TabsTrigger value="review" className="text-xs">交易记忆</TabsTrigger>
+            <TabsTrigger value="monthly" className="text-xs">月报</TabsTrigger>
           </TabsList>
 
           {/* Tab 1: Stock Insight */}
@@ -830,43 +913,6 @@ function QuantPageInner() {
           </TabsContent>
 
           {/* Tab 2: Risk */}
-          <TabsContent value="risk" className="space-y-4">
-            {risk ? (
-              <>
-                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
-                  <KpiCard label="Sharpe 比率" value={risk.sharpe?.toFixed(2) || "--"} />
-                  <KpiCard label="最大回撤" value={risk.max_drawdown != null ? `${(risk.max_drawdown * 100).toFixed(1)}%` : "--"}
-                    className="text-emerald-500" />
-                  <KpiCard label="年化波动率" value={risk.volatility != null ? `${(risk.volatility * 100).toFixed(1)}%` : "--"} />
-                  <KpiCard label="Beta (沪深300)" value={risk.beta?.toFixed(2) || "--"} />
-                </div>
-                {correlations.length > 0 && (
-                  <Card>
-                    <CardHeader className="pb-2"><CardTitle className="text-sm">持仓相关性</CardTitle></CardHeader>
-                    <CardContent>
-                      <div className="flex flex-wrap gap-1">
-                        {correlations.map((c, i) => (
-                          <Badge key={i} variant="outline" className={cn("text-xs",
-                            c.value > 0.7 ? "text-red-500 border-red-500/20" :
-                            c.value < -0.3 ? "text-emerald-500 border-emerald-500/20" : ""
-                          )}>
-                            {c.code1}↔{c.code2}: {c.value.toFixed(2)}
-                          </Badge>
-                        ))}
-                      </div>
-                    </CardContent>
-                  </Card>
-                )}
-              </>
-            ) : (
-              <Card>
-                <CardContent className="py-12 text-center">
-                  <p className="text-sm text-muted-foreground">点击"组合风险"按钮加载</p>
-                </CardContent>
-              </Card>
-            )}
-          </TabsContent>
-
           {/* Tab 3: Strategy Backtest */}
           <TabsContent value="backtest" className="space-y-4">
             {/* 策略选择 */}
@@ -898,14 +944,128 @@ function QuantPageInner() {
                     })
                   )}
                 </div>
-                {selectedStrategies.length > 0 && (
-                  <p className="text-[10px] text-muted-foreground mt-1.5">
-                    已选: {selectedStrategies.map((sid) => {
-                      const s = strategies.find((st) => st.id === sid)
-                      return s?.name || sid
-                    }).join(", ")}
-                  </p>
-                )}
+
+                {/* 已选策略详情 */}
+                {selectedStrategies.map((sid) => {
+                  const s = strategies.find((st) => st.id === sid)
+                  if (!s) return null
+                  return (
+                    <div key={sid} className="mt-3 pt-3 border-t border-border space-y-2">
+                      {/* 来源和标签 */}
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span className="text-xs font-medium">{s.name}</span>
+                        {s.source && (
+                          <Badge variant="secondary" className="text-[9px] px-1.5 py-0 h-4" title={s.source}>
+                            {s.source.length > 25 ? s.source.slice(0, 25) + "…" : s.source}
+                          </Badge>
+                        )}
+                        {s.recommended_position && (
+                          <span className="text-[9px] text-muted-foreground">
+                            仓位: {s.recommended_position}
+                          </span>
+                        )}
+                      </div>
+                      {s.tags.length > 0 && (
+                        <div className="flex flex-wrap gap-1">
+                          {s.tags.map((t) => (
+                            <Badge key={t} variant="outline" className="text-[9px] px-1 py-0 h-4">{t}</Badge>
+                          ))}
+                          {s.market_state.map((m) => (
+                            <Badge key={m} variant="outline" className={cn(
+                              "text-[9px] px-1 py-0 h-4",
+                              m === "bull" ? "text-red-400 border-red-500/20" :
+                              m === "bear" ? "text-emerald-400 border-emerald-500/20" :
+                              "text-muted-foreground"
+                            )}>
+                              {m === "bull" ? "牛市" : m === "bear" ? "熊市" : m === "range" ? "震荡" : m}
+                            </Badge>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* 可调参数 */}
+                      {s.params.length > 0 && (
+                        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                          {s.params.map((p) => {
+                            const overrideVal = btParamOverrides[sid]?.[p.name]
+                            const currentVal = overrideVal !== undefined ? overrideVal : p.default
+                            return (
+                              <div key={p.name} className="space-y-0.5" title={p.description}>
+                                <Label className="text-[9px] text-muted-foreground flex items-center gap-1">
+                                  {p.label}
+                                  {overrideVal !== undefined && (
+                                    <span className="text-primary">*</span>
+                                  )}
+                                </Label>
+                                {p.type === "range" ? (
+                                  <div className="flex items-center gap-1">
+                                    <Input
+                                      className="h-6 w-14 text-[10px] font-mono"
+                                      value={Array.isArray(currentVal) ? currentVal[0] : ""}
+                                      onChange={(e) => {
+                                        const newVal: [number, number] = [
+                                          Number(e.target.value),
+                                          Array.isArray(currentVal) ? currentVal[1] : 5,
+                                        ]
+                                        setBtParamOverrides((prev) => ({
+                                          ...prev, [sid]: { ...prev[sid], [p.name]: newVal }
+                                        }))
+                                      }}
+                                      type="number"
+                                    />
+                                    <span className="text-[9px] text-muted-foreground">-</span>
+                                    <Input
+                                      className="h-6 w-14 text-[10px] font-mono"
+                                      value={Array.isArray(currentVal) ? currentVal[1] : ""}
+                                      onChange={(e) => {
+                                        const newVal: [number, number] = [
+                                          Array.isArray(currentVal) ? currentVal[0] : 0,
+                                          Number(e.target.value),
+                                        ]
+                                        setBtParamOverrides((prev) => ({
+                                          ...prev, [sid]: { ...prev[sid], [p.name]: newVal }
+                                        }))
+                                      }}
+                                      type="number"
+                                    />
+                                  </div>
+                                ) : (
+                                  <Input
+                                    className="h-6 text-[10px] font-mono"
+                                    value={typeof currentVal === "number" ? currentVal : ""}
+                                    onChange={(e) => {
+                                      setBtParamOverrides((prev) => ({
+                                        ...prev, [sid]: { ...prev[sid], [p.name]: Number(e.target.value) }
+                                      }))
+                                    }}
+                                    type="number"
+                                    step={p.step}
+                                  />
+                                )}
+                              </div>
+                            )
+                          })}
+                        </div>
+                      )}
+
+                      {/* 重置参数 */}
+                      {btParamOverrides[sid] && Object.keys(btParamOverrides[sid]).length > 0 && (
+                        <button
+                          className="text-[9px] text-muted-foreground hover:text-foreground transition-colors"
+                          onClick={() => {
+                            setBtParamOverrides((prev) => {
+                              const next = { ...prev }
+                              delete next[sid]
+                              return next
+                            })
+                          }}
+                        >
+                          重置为默认参数
+                        </button>
+                      )}
+                    </div>
+                  )
+                })}
               </CardContent>
             </Card>
 
@@ -982,17 +1142,188 @@ function QuantPageInner() {
                     </Select>
                   </div>
                 </div>
-                <Button
-                  size="sm"
-                  className="mt-3"
-                  onClick={runStrategyBacktest}
-                  disabled={btRunning || selectedStrategies.length === 0}
-                >
-                  <IconPlayerPlay className="size-3.5" />
-                  {btRunning ? "回测中..." : "开始回测"}
-                </Button>
+                <div className="flex items-center gap-2 mt-3">
+                  <Button
+                    size="sm"
+                    onClick={runStrategyBacktest}
+                    disabled={btRunning || selectedStrategies.length === 0}
+                  >
+                    <IconPlayerPlay className="size-3.5" />
+                    {btRunning ? "回测中..." : "开始回测"}
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={runOptimize}
+                    disabled={btOptimizing || selectedStrategies.length !== 1}
+                    title={selectedStrategies.length !== 1 ? "参数优化需选择恰好1个策略" : "网格搜索最优参数"}
+                  >
+                    <IconSparkles className="size-3.5" />
+                    {btOptimizing ? "优化中..." : "参数优化"}
+                  </Button>
+                  {selectedStrategies.length !== 1 && (
+                    <span className="text-[10px] text-muted-foreground">选1个策略可优化</span>
+                  )}
+                  {selectedStrategies.length >= 2 && (
+                    <Button
+                      size="sm" variant="outline"
+                      onClick={runStrategyCompare}
+                      disabled={btComparing}
+                    >
+                      <IconPlayerPlay className="size-3.5" />
+                      {btComparing ? "对比中..." : "对比策略"}
+                    </Button>
+                  )}
+                </div>
               </CardContent>
             </Card>
+
+            {/* 策略对比结果 */}
+            {btCompareResult && !("error" in btCompareResult) && (
+              <Card>
+                <CardHeader className="pb-2"><CardTitle className="text-xs">策略对比</CardTitle></CardHeader>
+                <CardContent>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-[10px]">
+                      <thead>
+                        <tr className="border-b border-border text-muted-foreground">
+                          <td className="py-1 pr-2">策略</td>
+                          <td className="py-1 pr-2 text-right">交易数</td>
+                          <td className="py-1 pr-2 text-right">胜率</td>
+                          <td className="py-1 pr-2 text-right">夏普</td>
+                          <td className="py-1 pr-2 text-right">最大回撤</td>
+                          <td className="py-1 text-right">总收益</td>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {(btCompareResult.ranking as Array<Record<string, string | number>>)?.map((r, i) => (
+                          <tr key={i} className={cn("border-b border-border/50", i === 0 && "bg-primary/5")}>
+                            <td className="py-1 pr-2 font-medium">
+                              {i === 0 && "🥇"}{i === 1 && "🥈"}{i === 2 && "🥉"}
+                              {" "}{r.strategy_name as string}
+                            </td>
+                            <td className="py-1 pr-2 font-mono text-right">{Number(r.num_trades)}</td>
+                            <td className="py-1 pr-2 font-mono text-right">{(Number(r.win_rate) * 100).toFixed(0)}%</td>
+                            <td className="py-1 pr-2 font-mono text-right">{Number(r.sharpe).toFixed(2)}</td>
+                            <td className={cn("py-1 pr-2 font-mono text-right", Number(r.max_drawdown) > -0.1 ? "text-emerald-400" : "text-red-400")}>
+                              {(Number(r.max_drawdown) * 100).toFixed(1)}%
+                            </td>
+                            <td className={cn("py-1 font-mono text-right", Number(r.total_return) >= 0 ? "text-red-400" : "text-emerald-400")}>
+                              {Number(r.total_return) >= 0 ? "+" : ""}{(Number(r.total_return) * 100).toFixed(1)}%
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* 参数优化结果 */}
+            {btOptimizeResult && !("error" in btOptimizeResult) && (
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-xs">
+                    参数优化结果 — {btOptimizeResult.strategy_name as string}
+                    <span className="text-[10px] text-muted-foreground ml-2">
+                      ({btOptimizeResult.evaluated as number}/{btOptimizeResult.total_combinations as number} 组合)
+                    </span>
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="overflow-x-auto max-h-[400px] overflow-y-auto">
+                    <table className="w-full text-[10px]">
+                      <thead className="sticky top-0 bg-card">
+                        <tr className="border-b border-border">
+                          <td className="py-1 pr-2 font-medium text-muted-foreground">排名</td>
+                          {((btOptimizeResult.params_definition as StrategyParam[]) || []).map((p) => (
+                            <td key={p.name} className="py-1 pr-2 font-medium text-muted-foreground" title={p.description}>
+                              {p.label}
+                            </td>
+                          ))}
+                          <td className="py-1 pr-2 font-medium text-muted-foreground text-right">最大回撤</td>
+                          <td className="py-1 pr-2 font-medium text-muted-foreground text-right">夏普</td>
+                          <td className="py-1 pr-2 font-medium text-muted-foreground text-right">胜率</td>
+                          <td className="py-1 font-medium text-muted-foreground text-center">操作</td>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {(btOptimizeResult.top_results as Array<{
+                          rank: number
+                          params: Record<string, number | [number, number]>
+                          metrics: { max_drawdown: number; sharpe: number; win_rate: number }
+                        }>)?.map((r) => (
+                          <tr key={r.rank} className={cn(
+                            "border-b border-border/50",
+                            r.rank === 1 && "bg-primary/5"
+                          )}>
+                            <td className="py-1 pr-2 font-mono">
+                              {r.rank === 1 && "🥇"}
+                              {r.rank === 2 && "🥈"}
+                              {r.rank === 3 && "🥉"}
+                              {r.rank > 3 && `#${r.rank}`}
+                            </td>
+                            {(btOptimizeResult.params_definition as StrategyParam[]).map((p) => (
+                              <td key={p.name} className="py-1 pr-2 font-mono">
+                                {(() => {
+                                  const val = r.params[p.name]
+                                  if (p.type === "range" && Array.isArray(val)) {
+                                    return `${val[0]}~${val[1]}`
+                                  }
+                                  return String(val)
+                                })()}
+                              </td>
+                            ))}
+                            <td className={cn(
+                              "py-1 pr-2 font-mono text-right tabular-nums",
+                              r.metrics.max_drawdown > -0.1 ? "text-emerald-400" : "text-red-400"
+                            )}>
+                              {(r.metrics.max_drawdown * 100).toFixed(1)}%
+                            </td>
+                            <td className="py-1 pr-2 font-mono text-right tabular-nums">
+                              {r.metrics.sharpe.toFixed(2)}
+                            </td>
+                            <td className="py-1 pr-2 font-mono text-right tabular-nums">
+                              {(r.metrics.win_rate * 100).toFixed(0)}%
+                            </td>
+                            <td className="py-1 text-center">
+                              <button
+                                className="text-[10px] text-primary hover:underline"
+                                onClick={() => applyOptimizedParams(r.params)}
+                              >
+                                应用
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {/* 默认 vs 最优对比 */}
+                  {(btOptimizeResult.default_metrics as object | null) != null && (
+                    <div className="mt-3 flex items-center gap-3 text-[10px] text-muted-foreground">
+                      <span>
+                        默认回撤: {Number(((btOptimizeResult.default_metrics as Record<string, number>).max_drawdown ?? 0) * 100).toFixed(1)}%
+                      </span>
+                      <span className="text-primary">→</span>
+                      <span className="text-emerald-400">
+                        最优回撤: {Number(((btOptimizeResult.top_results as Array<{ metrics: Record<string, number> }>)[0]?.metrics?.max_drawdown ?? 0) * 100).toFixed(1)}%
+                      </span>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            )}
+
+            {btOptimizeResult && "error" in btOptimizeResult && (
+              <Card className="border-red-500/30 bg-red-500/5">
+                <CardContent className="py-3">
+                  <p className="text-xs text-red-400">{btOptimizeResult.error as string}</p>
+                </CardContent>
+              </Card>
+            )}
 
             {/* 回测结果 */}
             {btStrategyResult?.error && (
@@ -1353,6 +1684,218 @@ function QuantPageInner() {
                 ))}
               </div>
             )}
+          </TabsContent>
+
+          {/* Tab 8: Monthly Report */}
+          <TabsContent value="monthly" className="space-y-4">
+            <Card>
+              <CardHeader className="pb-2"><CardTitle className="text-xs">月度投资报告</CardTitle></CardHeader>
+              <CardContent className="space-y-3">
+                <div className="flex items-center gap-2">
+                  <Input
+                    value={reportMonth}
+                    onChange={(e) => setReportMonth(e.target.value)}
+                    className="h-7 w-28 text-xs font-mono"
+                    placeholder="2026-07"
+                    type="month"
+                  />
+                  <Button size="sm" variant="outline" onClick={() => fetchMonthlyReport(false)} disabled={reportLoading}>
+                    {reportLoading ? "..." : "查询"}
+                  </Button>
+                  <Button size="sm" onClick={() => fetchMonthlyReport(true)} disabled={reportLoading}>
+                    <IconBrain className="size-3.5" />
+                    {reportLoading ? "生成中..." : "生成月报"}
+                  </Button>
+                  <Button
+                    size="sm" variant="outline"
+                    onClick={async () => {
+                      setReportLoading(true)
+                      try {
+                        const data = await apiGet<Record<string, unknown>>(`/api/quant/monthly-compare?month=${reportMonth}`)
+                        setReportCompare(data)
+                      } catch { setReportCompare(null) }
+                      finally { setReportLoading(false) }
+                    }}
+                    disabled={reportLoading}
+                  >
+                    上月对比
+                  </Button>
+                </div>
+
+                {/* 月报对比 */}
+                {reportCompare && !("error" in reportCompare) && (
+                  <Card className="border-l-[3px] border-l-blue-400">
+                    <CardContent className="py-2 space-y-1.5">
+                      <p className="text-[10px] font-medium text-blue-400">
+                        {reportCompare.current_month as string} vs {reportCompare.previous_month as string}
+                        <Badge variant="outline" className={cn(
+                          "ml-1.5 text-[9px] px-1 py-0 h-4",
+                          reportCompare.trend === "improving" ? "text-green-400" :
+                          reportCompare.trend === "declining" ? "text-red-400" : "text-muted-foreground"
+                        )}>
+                          {reportCompare.trend === "improving" ? "📈 进步" :
+                           reportCompare.trend === "declining" ? "📉 退步" : "➡ 持平"}
+                        </Badge>
+                      </p>
+                      <p className="text-xs text-muted-foreground">{reportCompare.diagnosis as string}</p>
+                      {(reportCompare.delta as object | null) != null && (
+                        <div className="flex gap-3 text-[10px] text-muted-foreground">
+                          <span>胜率: {(reportCompare.delta as Record<string,number>).win_rate >= 0 ? "+" : ""}{(reportCompare.delta as Record<string,number>).win_rate.toFixed(1)}%</span>
+                          <span>净盈亏: {(reportCompare.delta as Record<string,number>).total_pnl >= 0 ? "+" : ""}¥{(reportCompare.delta as Record<string,number>).total_pnl.toFixed(0)}</span>
+                          <span>交易: {(reportCompare.delta as Record<string,number>).num_trades >= 0 ? "+" : ""}{(reportCompare.delta as Record<string,number>).num_trades}</span>
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
+                )}
+
+                {reportData && (reportData.summary as object | null) != null && (
+                  <>
+                    {/* 一句话概要 */}
+                    {reportData.one_liner && (
+                      <Card className="border-l-[3px] border-l-purple-400">
+                        <CardContent className="py-2">
+                          <p className="text-xs italic text-muted-foreground">
+                            &ldquo;{reportData.one_liner as string}&rdquo;
+                          </p>
+                          {reportData.ai_score != null && (
+                            <Badge variant="outline" className="mt-1 text-[10px]">
+                              综合评分: {reportData.ai_score as number}/10
+                            </Badge>
+                          )}
+                        </CardContent>
+                      </Card>
+                    )}
+
+                    {/* 总成绩 */}
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                      {(() => {
+                        const summary = reportData.summary as Record<string, number>
+                        return (
+                          <>
+                            <Card><CardContent className="py-2 text-center">
+                              <p className="text-[10px] text-muted-foreground">总交易</p>
+                              <p className="text-sm font-mono font-semibold">{summary.total_trades ?? 0}</p>
+                            </CardContent></Card>
+                            <Card><CardContent className="py-2 text-center">
+                              <p className="text-[10px] text-muted-foreground">胜率</p>
+                              <p className="text-sm font-mono font-semibold">{(summary.win_rate ?? 0)}%</p>
+                            </CardContent></Card>
+                            <Card><CardContent className="py-2 text-center">
+                              <p className="text-[10px] text-muted-foreground">净盈亏</p>
+                              <p className={cn("text-sm font-mono font-semibold", (summary.total_pnl ?? 0) >= 0 ? "text-red-400" : "text-emerald-400")}>
+                                {(summary.total_pnl ?? 0) >= 0 ? "+" : ""}¥{(summary.total_pnl ?? 0).toFixed(0)}
+                              </p>
+                            </CardContent></Card>
+                            <Card><CardContent className="py-2 text-center">
+                              <p className="text-[10px] text-muted-foreground">均持有时长</p>
+                              <p className="text-sm font-mono font-semibold">{summary.avg_hold_days ?? 0}天</p>
+                            </CardContent></Card>
+                          </>
+                        )
+                      })()}
+                    </div>
+
+                    {/* 赚最多 / 亏最多 */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      <Card>
+                        <CardContent className="py-2">
+                          <p className="text-[10px] font-medium text-red-400 mb-1">赚最多</p>
+                          {((reportData.top_gainers as Array<Record<string, unknown>>) || []).length === 0 ? (
+                            <p className="text-[10px] text-muted-foreground">无</p>
+                          ) : (
+                            (reportData.top_gainers as Array<Record<string, unknown>>).map((t, i) => (
+                              <div key={i} className="flex items-center justify-between text-xs">
+                                <span className="font-mono">{t.code as string} {t.name as string}</span>
+                                <span className="text-red-400 font-mono">+¥{(t.pnl as number)?.toFixed(0)}</span>
+                              </div>
+                            ))
+                          )}
+                        </CardContent>
+                      </Card>
+                      <Card>
+                        <CardContent className="py-2">
+                          <p className="text-[10px] font-medium text-emerald-400 mb-1">亏最多</p>
+                          {((reportData.top_losers as Array<Record<string, unknown>>) || []).length === 0 ? (
+                            <p className="text-[10px] text-muted-foreground">无</p>
+                          ) : (
+                            (reportData.top_losers as Array<Record<string, unknown>>).map((t, i) => (
+                              <div key={i} className="flex items-center justify-between text-xs">
+                                <span className="font-mono">{t.code as string} {t.name as string}</span>
+                                <span className="text-emerald-400 font-mono">¥{(t.pnl as number)?.toFixed(0)}</span>
+                              </div>
+                            ))
+                          )}
+                        </CardContent>
+                      </Card>
+                    </div>
+
+                    {/* 策略排名 */}
+                    {(reportData.strategy_ranking as Array<Record<string, unknown>>)?.length > 0 && (
+                      <Card>
+                        <CardContent className="py-2">
+                          <p className="text-[10px] font-medium mb-1">策略表现</p>
+                          <table className="w-full text-[10px]">
+                            <thead>
+                              <tr className="border-b border-border text-muted-foreground">
+                                <td className="py-1">策略</td>
+                                <td className="py-1 text-right">笔数</td>
+                                <td className="py-1 text-right">胜率</td>
+                                <td className="py-1 text-right">盈亏</td>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {(reportData.strategy_ranking as Array<Record<string, unknown>>).map((s, i) => (
+                                <tr key={i} className="border-b border-border/50">
+                                  <td className="py-1 font-mono">{s.strategy_id as string}</td>
+                                  <td className="py-1 font-mono text-right">{s.trades as number}</td>
+                                  <td className="py-1 font-mono text-right">{s.win_rate as number}%</td>
+                                  <td className={cn("py-1 font-mono text-right", (s.total_pnl as number) >= 0 ? "text-red-400" : "text-emerald-400")}>
+                                    {(s.total_pnl as number) >= 0 ? "+" : ""}¥{(s.total_pnl as number)?.toFixed(0)}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </CardContent>
+                      </Card>
+                    )}
+
+                    {/* AI 建议 */}
+                    {reportData.ai_advice && (
+                      <Card className="border-l-[3px] border-l-blue-400">
+                        <CardContent className="py-2">
+                          <p className="text-[10px] font-medium text-blue-400 mb-1">AI 建议</p>
+                          <p className="text-xs text-muted-foreground">{reportData.ai_advice as string}</p>
+                          {(reportData.ai_good as string[])?.length > 0 && (
+                            <div className="mt-1 space-y-0.5">
+                              <p className="text-[9px] text-green-400">做得好:</p>
+                              {(reportData.ai_good as string[]).map((g, i) => (
+                                <p key={i} className="text-[9px] text-muted-foreground">✓ {g}</p>
+                              ))}
+                            </div>
+                          )}
+                          {(reportData.ai_bad as string[])?.length > 0 && (
+                            <div className="mt-1 space-y-0.5">
+                              <p className="text-[9px] text-red-400">需改进:</p>
+                              {(reportData.ai_bad as string[]).map((b, i) => (
+                                <p key={i} className="text-[9px] text-muted-foreground">✗ {b}</p>
+                              ))}
+                            </div>
+                          )}
+                        </CardContent>
+                      </Card>
+                    )}
+                  </>
+                )}
+
+                {reportData && (reportData.summary as object | null) == null && (
+                  <p className="text-xs text-muted-foreground">
+                    {(reportData as Record<string, unknown>).message as string || "本月暂无交易数据，无法生成月报"}
+                  </p>
+                )}
+              </CardContent>
+            </Card>
           </TabsContent>
 
         </Tabs>

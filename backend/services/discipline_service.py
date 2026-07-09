@@ -261,3 +261,132 @@ def _get_current_positions_value(user_id: int = 1) -> float:
         except Exception:
             pass
     return total
+
+
+# ═══════════════════════════════════════════════════════════════
+#  连亏保护增强 — 建议 + 信号解释
+# ═══════════════════════════════════════════════════════════════
+
+def get_protection_advice(user_id: int = 1) -> dict:
+    """获取保护模式建议——不仅报告连亏状态，还给出具体行动建议
+
+    Returns:
+        {
+            "streak": int,          # 当前连亏次数
+            "threshold": int,        # 触发保护的阈值
+            "active": bool,          # 是否已激活保护
+            "warning_level": "safe" | "warning" | "danger",
+            "advice": str,           # 针对性的行动建议
+            "recent_losses": [...],  # 最近亏损的交易
+        }
+    """
+    cfg = get_protection_config()
+    streak = get_consecutive_losses(user_id)
+    threshold = cfg.get("max_consecutive", 3)
+
+    # 判定警告级别
+    if streak == 0:
+        level = "safe"
+    elif streak < threshold:
+        level = "warning"
+    else:
+        level = "danger"
+
+    # 获取最近亏损交易
+    rows = query_all(
+        """SELECT stock_code, stock_name, pnl, pnl_pct, exit_date
+           FROM trade_journal WHERE user_id = ? AND pnl IS NOT NULL
+           ORDER BY exit_date DESC LIMIT 10""",
+        (user_id,),
+    )
+    recent_losses = []
+    for r in rows:
+        if r["pnl"] < 0:
+            recent_losses.append(dict(r))
+        if len(recent_losses) >= streak:
+            break
+
+    # 生成建议
+    total_loss = sum(abs(r["pnl"]) for r in recent_losses)
+
+    if level == "safe":
+        advice = "当前无连亏，可正常交易。"
+    elif level == "warning":
+        advice = (
+            f"已连亏 {streak} 笔（累计 ¥{total_loss:.0f}），距保护触发还差 {threshold - streak} 笔。"
+            f"建议：降低单票仓位至正常水平的 50%、确认每笔交易设好止损、"
+            f"暂停追涨类策略（动量领涨/突破回踩），优先做低估值防御策略。"
+        )
+    else:
+        advice = (
+            f"⚠️ 已连亏 {streak} 笔（累计 ¥{total_loss:.0f}），保护模式激活。"
+            f"强烈建议：暂停新开仓 1-3 天、复盘最近亏损的共同原因、"
+            f"如果还在持仓中，检查现有仓位的止损设置。"
+            f"不要急于翻本——连亏后急于交易是散户最容易犯的错误。"
+        )
+
+    return {
+        "streak": streak,
+        "threshold": threshold,
+        "active": level == "danger",
+        "warning_level": level,
+        "advice": advice,
+        "recent_losses": [
+            {
+                "code": r["stock_code"],
+                "name": r.get("stock_name", ""),
+                "pnl": r["pnl"],
+                "pnl_pct": r.get("pnl_pct"),
+                "date": r.get("exit_date", ""),
+            }
+            for r in recent_losses
+        ],
+    }
+
+
+def build_signal_reason(code: str, strategy_id: str, matched_conditions: list[str] | None = None) -> str:
+    """为选股信号构建解释文本——说明为什么触发以及在历史上类似形态胜率
+
+    Args:
+        code: 股票代码
+        strategy_id: 触发策略 ID
+        matched_conditions: 满足的具体条件列表
+
+    Returns:
+        "该股满足海龟S1入场的3个条件: 突破20日高点, ATR在1.5-5%范围, 日均成交>5000万。
+         策略turtle_s1在该股历史胜率67%(2/3)，均盈亏+¥520。"
+    """
+    parts = []
+
+    # 策略+条件解释
+    if strategy_id:
+        from services.strategy_backtest_service import _list_available_strategies
+        strategies = {s["id"]: s for s in _list_available_strategies()}
+        s_info = strategies.get(strategy_id, {})
+        s_name = s_info.get("name", strategy_id)
+        parts.append(f"触发策略: {s_name}")
+
+    if matched_conditions:
+        parts.append(f"满足 {len(matched_conditions)} 个条件")
+
+    # 从交易记忆获取策略在该股票上的历史表现
+    try:
+        from services.trading_memory import TradingMemoryLog
+        mem = TradingMemoryLog()
+        entries = [
+            e for e in mem.load_entries()
+            if not e.get("pending") and e.get("strategy_id") == strategy_id and e.get("code") == code
+        ]
+        if entries:
+            wins = sum(1 for e in entries if float(e.get("raw", 0) or 0) > 0)
+            total = len(entries)
+            pnls = [float(e.get("raw", 0) or 0) for e in entries]
+            avg_pnl = sum(pnls) / len(pnls) if pnls else 0
+            parts.append(
+                f"策略在该股历史胜率 {wins}/{total}({round(wins/total*100)}%)，"
+                f"均盈亏 ¥{avg_pnl:+.0f}"
+            )
+    except Exception:
+        pass
+
+    return "。".join(parts) + "。" if parts else ""

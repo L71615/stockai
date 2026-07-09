@@ -4,6 +4,9 @@ name: 海龟 S1 入场
 description: >
   当收盘价突破过去 20 日最高价时买入。这是经典的趋势跟踪入场信号，
   适合牛市和震荡市。需要配合成交量确认和 ATR 波动率过滤。
+source: "Richard Dennis 海龟交易法则 (1983)"
+source_url: ""
+tags: [趋势跟踪, 突破, 中长线, 经典]
 market_state: [bull, range]
 recommended_position: "60-80%"
 conditions:
@@ -18,3 +21,17 @@ conditions:
     value: [1.5, 5]
 sort_by: atr_pct
 sort_order: asc
+params:
+  - name: avg_amount_20d
+    label: 日均成交额门槛
+    type: number
+    default: 50000000
+    range: [10000000, 200000000]
+    step: 10000000
+    description: "过滤流动性差的股票。A股建议不低于3000万，小盘股可适当降低"
+  - name: atr_pct
+    label: ATR波动率范围(%)
+    type: range
+    default: [1.5, 5]
+    range: [[0.5, 1], [5, 15]]
+    description: "太低=横盘没机会，太高=风险过大。S1标准设为1.5-5%"

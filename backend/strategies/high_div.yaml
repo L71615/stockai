@@ -5,6 +5,9 @@ description: >
   精选股息率高、估值低、波动小的防守型标的。在下跌或震荡市中提供
   稳定的股息收益和下行保护。重点关注银行、电力、煤炭、高速、
   消费等现金流稳定的行业。
+source: "股息增长投资策略 (Dividend Growth Investing)"
+source_url: ""
+tags: [高股息, 防御型, 低波动, 现金牛, 价值]
 market_state: [range, bear]
 recommended_position: "30-60%"
 conditions:
@@ -25,3 +28,37 @@ conditions:
     value: 20000000
 sort_by: dividend_yield
 sort_order: desc
+params:
+  - name: dividend_yield
+    label: 股息率门槛(%)
+    type: number
+    default: 3
+    range: [1, 8]
+    step: 0.5
+    description: "最低股息率。A股3%以上算高股息。降息周期可降低到2%"
+  - name: pe
+    label: PE范围
+    type: range
+    default: [0, 20]
+    range: [[0, 0], [15, 50]]
+    description: "高股息股通常PE偏低。PE>30的'高股息'需要怀疑"
+  - name: pb
+    label: PB范围
+    type: range
+    default: [0.1, 2.5]
+    range: [[0.1, 0.1], [2, 5]]
+    description: "侧重低PB。银行/电力PB<1很常见"
+  - name: roe
+    label: ROE门槛(%)
+    type: number
+    default: 5
+    range: [0, 20]
+    step: 1
+    description: "防守型不需要高ROE，但要能持续盈利"
+  - name: avg_amount_20d
+    label: 日均成交额门槛
+    type: number
+    default: 20000000
+    range: [10000000, 200000000]
+    step: 10000000
+    description: "高股息大盘股流动性好，可适当降低"

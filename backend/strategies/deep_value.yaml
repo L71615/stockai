@@ -5,6 +5,9 @@ description: >
   低PE、低PB、高ROE的经典价值选股。不择时、不追涨，
   只买便宜的好公司。适合任何市场环境，但需要有长期持有的耐心。
   可以作为底仓策略，配合其他策略使用。
+source: "Benjamin Graham 价值投资理论 (The Intelligent Investor, 1949)"
+source_url: ""
+tags: [价值投资, 基本面, 低估值, 底仓, 长期持有]
 market_state: [bull, range, bear]
 recommended_position: "40-60%"
 conditions:
@@ -25,3 +28,37 @@ conditions:
     value: 20000000
 sort_by: pe
 sort_order: asc
+params:
+  - name: pe
+    label: PE范围
+    type: range
+    default: [0, 25]
+    range: [[0, 0], [15, 100]]
+    description: "市盈率越低越便宜。上限25=传统价值标准，熊市可放宽到30-40"
+  - name: pb
+    label: PB范围
+    type: range
+    default: [0.1, 3]
+    range: [[0.1, 0.1], [2, 10]]
+    description: "市净率。银行股通常PB<1，成长股PB>5属于正常"
+  - name: roe
+    label: ROE门槛(%)
+    type: number
+    default: 10
+    range: [5, 25]
+    step: 1
+    description: "净资产收益率。>10%才值得长期持有，>15%优秀"
+  - name: debt_ratio
+    label: 资产负债率上限(%)
+    type: number
+    default: 60
+    range: [30, 80]
+    step: 5
+    description: "负债率越低越安全。银行/地产天然高负债，可放宽"
+  - name: avg_amount_20d
+    label: 日均成交额门槛
+    type: number
+    default: 20000000
+    range: [10000000, 200000000]
+    step: 10000000
+    description: "价值股流动性通常偏低，可适当降低门槛"

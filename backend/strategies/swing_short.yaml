@@ -7,6 +7,9 @@ description: >
   筛选价格<25元（一手<2500元）的低位放量股。
   条件：股价在MA20附近获支撑 + 成交量放大 + RSI从低位回升 + PE合理。
   适合开盘买入、短线持有1-3天。严格止损3%。
+source: "A股短线交易实战经验"
+source_url: ""
+tags: [短线, 波段, 低位放量, 均线支撑, 小资金]
 market_state: [neutral, bull]
 recommended_position: "10-20%（单票）"
 conditions:
@@ -51,3 +54,43 @@ conditions:
     value: 60
 sort_by: ret_5d
 sort_order: asc
+params:
+  - name: price
+    label: 股价范围
+    type: range
+    default: [3, 25]
+    range: [[2, 1], [15, 100]]
+    description: "一手成本控制。上限25=一手<2500元。资金充裕可调高"
+  - name: vol_ratio
+    label: 量比门槛
+    type: number
+    default: 1.2
+    range: [0.8, 3.0]
+    step: 0.1
+    description: "放量确认资金关注。短线核心指标"
+  - name: rsi_14
+    label: RSI范围
+    type: range
+    default: [30, 65]
+    range: [[20, 25], [55, 75]]
+    description: "不要太弱也不要太强。中间位置进场最安全"
+  - name: ret_5d
+    label: 5日涨幅范围(%)
+    type: range
+    default: [-5, 15]
+    range: [[-10, -5], [10, 30]]
+    description: "微调中上涨，不是暴涨暴跌"
+  - name: pe
+    label: PE上限
+    type: number
+    default: 60
+    range: [20, 200]
+    step: 5
+    description: "短线也要看估值。设太高可能接到泡沫股"
+  - name: avg_amount_20d
+    label: 日均成交额门槛
+    type: number
+    default: 20000000
+    range: [10000000, 200000000]
+    step: 10000000
+    description: "短线必须能快速进出"

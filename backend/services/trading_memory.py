@@ -56,16 +56,36 @@ class TradingMemoryLog:
         decision_text: str = "",
         entry_price: float = 0,
         quantity: int = 0,
+        strategy_id: str = "",
     ) -> None:
-        """在交易发生后写入 pending 条目"""
-        # 幂等检查：同一天同一只股票不重复写
+        """在交易发生后写入 pending 条目
+
+        Args:
+            code: 股票代码
+            direction: 买入/卖出
+            date: 交易日期
+            decision_text: 决策理由
+            entry_price: 买入价
+            quantity: 数量
+            strategy_id: 触发策略 ID（如 turtle_s1），用于策略维度复盘
+        """
+        # 幂等检查：同一天同一只股票同一策略不重复写
         if self._log_path.exists():
             raw = self._log_path.read_text(encoding="utf-8")
-            prefix = f"[{date} | {code} | {direction}"
-            if prefix in raw and "| pending]" in raw[raw.index(prefix):raw.index(prefix)+200]:
-                return
+            prefix = f"[{date} | {code} | "
+            sid_suffix = f" | {strategy_id}]" if strategy_id else "]"
+            if prefix in raw:
+                # 简单检查：已存在同日期同代码的 pending 条目
+                idx = raw.index(prefix)
+                snippet = raw[idx:idx+200]
+                if "| pending]" in snippet:
+                    return
 
-        tag = f"[{date} | {code} | {direction} | pending]"
+        tag = f"[{date} | {code} | {direction}"
+        if strategy_id:
+            tag += f" | {strategy_id}"
+        tag += " | pending]"
+
         body = (
             f"买入价: {entry_price}, 数量: {quantity}\n\n"
             if entry_price and quantity
@@ -246,6 +266,75 @@ class TradingMemoryLog:
 
         return "\n\n".join(parts)
 
+    # ── Phase D: 策略维度上下文 ──
+
+    def get_strategy_context(self, strategy_id: str, code: str = "", n: int = 5) -> str:
+        """获取指定策略的历史表现上下文，用于注入 AI 选股 prompt
+
+        Args:
+            strategy_id: 策略 ID（如 turtle_s1）
+            code: 可选，指定股票代码时可获得该策略在这只股票上的历史
+            n: 最多返回条数
+
+        Returns:
+            格式化的策略历史上下文字符串
+        """
+        entries = [
+            e for e in self.load_entries()
+            if not e.get("pending") and e.get("strategy_id") == strategy_id
+        ]
+        if not entries:
+            return ""
+
+        # 按日期排序
+        entries.sort(key=lambda e: e["date"], reverse=True)
+
+        # 过滤
+        if code:
+            same_code = [e for e in entries if e["code"] == code][:n]
+            entries = same_code
+        else:
+            entries = entries[:n]
+
+        if not entries:
+            return ""
+
+        # 统计
+        wins = []
+        losses = []
+        for e in entries:
+            try:
+                raw = float(e.get("raw", 0) or 0)
+                (wins if raw > 0 else losses).append(raw)
+            except (ValueError, TypeError):
+                pass
+
+        total = len(wins) + len(losses)
+        win_rate = round(len(wins) / total * 100, 1) if total > 0 else 0
+        avg_win = round(sum(wins) / len(wins), 2) if wins else 0
+        avg_loss = round(sum(losses) / len(losses), 2) if losses else 0
+
+        lines = [
+            f"## 策略 {strategy_id} 历史表现",
+            f"- 最近 {total} 笔: 胜率 {win_rate}%, "
+            f"均盈 ¥{avg_win:.0f}, 均亏 ¥{avg_loss:.0f}",
+        ]
+
+        if code:
+            lines[0] += f" 在 {code} 上"
+            lines.append(f"- {code} 的交易记录:")
+            for e in entries:
+                raw = e.get("raw", "?")
+                refl = e.get("reflection", "")
+                lines.append(f"  [{e['date']}] 盈亏 {raw}: {refl[:80]}")
+        else:
+            lines.append("- 最近交易:")
+            for e in entries[:n]:
+                raw = e.get("raw", "?")
+                lines.append(f"  [{e['date']}] {e['code']} 盈亏 {raw}")
+
+        return "\n".join(lines)
+
     # ── 解析辅助 ──
 
     def _parse_entry(self, raw: str) -> dict | None:
@@ -256,17 +345,39 @@ class TradingMemoryLog:
         if not (tag_line.startswith("[") and tag_line.endswith("]")):
             return None
         fields = [f.strip() for f in tag_line[1:-1].split("|")]
+        # 格式:
+        #   旧: [date | code | direction | pending]               — 4 fields
+        #   旧已结算: [date | code | direction | pnl | pnl_pct | exit_date] — 5-6 fields
+        #   新: [date | code | direction | strategy_id | pending]  — 5 fields (strategy)
+        #   新已结算: [date | code | direction | strategy_id | pnl | pnl_pct | exit_date] — 6-7 fields
         if len(fields) < 4:
             return None
+
+        has_strategy = len(fields) >= 5 and fields[4] == "pending" and fields[3] not in ("pending",)
+
         entry = {
             "date": fields[0],
             "code": fields[1],
             "direction": fields[2],
-            "pending": fields[3] == "pending",
-            "raw": fields[3] if fields[3] != "pending" else None,
-            "pnl_pct": fields[4] if len(fields) > 4 else None,
-            "exit_date": fields[5] if len(fields) > 5 else None,
         }
+
+        if has_strategy:
+            # [date | code | direction | strategy_id | pending] 或 [date | code | direction | strategy_id | pnl | pnl_pct | exit_date]
+            entry["strategy_id"] = fields[3]
+            pending_field = fields[4]
+            entry["pending"] = pending_field == "pending"
+            entry["raw"] = pending_field if pending_field != "pending" else None
+            entry["pnl_pct"] = fields[5] if len(fields) > 5 else None
+            entry["exit_date"] = fields[6] if len(fields) > 6 else None
+        else:
+            # [date | code | direction | pending] 或 [date | code | direction | pnl | pnl_pct | exit_date]
+            entry["strategy_id"] = ""
+            pending_field = fields[3]
+            entry["pending"] = pending_field == "pending"
+            entry["raw"] = pending_field if pending_field != "pending" else None
+            entry["pnl_pct"] = fields[4] if len(fields) > 4 else None
+            entry["exit_date"] = fields[5] if len(fields) > 5 else None
+
         body = "\n".join(lines[1:]).strip()
         dm = _DECISION_RE.search(body)
         rm = _REFLECTION_RE.search(body)
