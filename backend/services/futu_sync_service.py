@@ -233,7 +233,14 @@ def run_nightly_fundamentals() -> dict:
     except Exception as e:
         errors.append(str(e))
 
-    # 增量下载缺失的日线（每天最多100只，配额限制）
+    # 1. 用 get_market_snapshot 更新已有股票的当日日线（不消耗K线配额）
+    daily_bar_added = 0
+    try:
+        daily_bar_added = _update_daily_bars(futu, today)
+    except Exception as e:
+        errors.append(f"日线更新: {e}")
+
+    # 2. 增量下载缺失的日线（消耗K线配额，每天最多100只）
     kline_added = 0
     try:
         kline_added = _incremental_kline_sync(futu, max_per_day=100)
@@ -244,6 +251,7 @@ def run_nightly_fundamentals() -> dict:
         "status": "ok" if not errors else "partial",
         "target_count": len(codes),
         "saved": saved,
+        "daily_bar_added": daily_bar_added,
         "kline_added": kline_added,
         "errors": errors[:5],
     }
@@ -271,6 +279,48 @@ def _incremental_kline_sync(futu: FutuClient, max_per_day: int = 100) -> int:
         except Exception:
             pass
         time.sleep(0.5)  # 避免频率限制
+
+    return added
+
+
+def _update_daily_bars(futu: FutuClient, trade_date: str) -> int:
+    """用 get_market_snapshot 更新已有股票的当日日线 bar（不消耗K线配额）
+
+    get_market_snapshot 一次可拉 300 只，644 只 = 3 次调用。
+    仅在盘后（15:30+）调用时数据才是收盘价。
+    """
+    targets = _load_sync_targets("watchlist+holdings")
+    all_codes = [t["code"] for t in targets if t["code"]]
+    if not all_codes:
+        return 0
+
+    batch_size = 300
+    added = 0
+
+    for i in range(0, len(all_codes), batch_size):
+        batch = all_codes[i:i + batch_size]
+        try:
+            snapshots = futu.get_snapshot(batch)
+            for s in snapshots:
+                if "error" in s:
+                    continue
+                price = s.get("price")
+                if price is None or price <= 0:
+                    continue
+                execute(
+                    """INSERT OR REPLACE INTO historical_kline
+                       (stock_code, trade_date, open, high, low, close, volume)
+                       VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        s["code"], trade_date,
+                        s.get("open_price"), s.get("high_price"),
+                        s.get("low_price"), price,
+                        int(s.get("volume") or 0),
+                    ),
+                )
+                added += 1
+        except Exception:
+            pass
 
     return added
 
