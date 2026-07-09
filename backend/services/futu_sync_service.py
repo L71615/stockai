@@ -195,7 +195,7 @@ def run_nightly_fundamentals() -> dict:
     today = date.today().isoformat()
 
     targets = _load_sync_targets("watchlist+holdings")
-    codes = list(targets.keys())
+    codes = [t["code"] for t in targets]
     if not codes:
         return {"status": "skipped", "message": "无同步目标"}
 

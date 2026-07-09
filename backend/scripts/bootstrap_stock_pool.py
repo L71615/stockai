@@ -42,10 +42,10 @@ def main(init_kline: bool = False):
     # 1. 检查 Futu 连通性
     hc = futu.healthcheck()
     if not hc["ok"]:
-        print(f"❌ Futu OpenD 不可用: {hc.get('message')}")
+        print(f"[FAIL] Futu OpenD 不可用: {hc.get('message')}")
         print("  请先启动 Futu OpenD，默认地址 127.0.0.1:11111")
         return
-    print("🟢 Futu OpenD 已连接")
+    print("[OK] Futu OpenD 已连接")
 
     # 2. 拉取沪深300 + 中证500成分股
     all_codes: set[str] = set()
@@ -120,7 +120,7 @@ def main(init_kline: bool = False):
             )
             inserted += 1
 
-    print(f"\n✅ 写入 watchlist: {inserted} 只新股票")
+    print(f"\n[OK] 写入 watchlist: {inserted} 只新股票")
     total = query_all("SELECT COUNT(*) as n FROM watchlist WHERE user_id = 1")
     print(f"   自选股总数: {total[0]['n']} 只")
 
@@ -140,7 +140,7 @@ def main(init_kline: bool = False):
                 pass
         print(f"   日线下载完成: {success}/{len(valid)}")
 
-    print("\n🎉 股票池初始化完成")
+    print("\n[DONE] 股票池初始化完成")
 
 
 if __name__ == "__main__":
