@@ -390,24 +390,28 @@ function QuantPageInner() {
     }).catch(() => {})
   }, [])
 
-  // 从 screener 跳转过来时自动查询
+  // URL 参数变化时自动恢复状态（切页回来不丢失）
   useEffect(() => {
     const urlCode = params.get("code")
+    const urlTab = params.get("tab")
+    if (urlTab) setTabState(urlTab)
     if (urlCode && urlCode !== code) {
       setCode(urlCode)
-      // 异步 fetchInsight 需要等 state 更新后才能读到新 code
       setTimeout(() => {
         if (urlCode.trim()) {
           setLoading(true); setError(null)
-          apiGet<StockInsight>(`/api/quant/stock-insight/${urlCode.trim()}?days=${days}`)
-            .then((data) => setInsight(data as StockInsight))
-            .catch((err) => setError(err instanceof Error ? err.message : "加载失败"))
-            .finally(() => setLoading(false))
+          const t = params.get("tab") || "insight"
+          if (t === "insight") {
+            apiGet<StockInsight>(`/api/quant/stock-insight/${urlCode.trim()}?days=${days}`)
+              .then((data) => setInsight(data as StockInsight))
+              .catch((err) => setError(err instanceof Error ? err.message : "加载失败"))
+              .finally(() => setLoading(false))
+          }
         }
       }, 0)
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [params])
+  }, [params.toString()])
 
   const fetchInsight = async () => {
     if (!code.trim()) return
