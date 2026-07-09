@@ -274,16 +274,11 @@ async def ai_screen(body: AIScreenRequest):
 
 @router.get("/strategies")
 def list_strategies():
-    """列出所有可用策略：回测策略 + YAML 策略模板"""
-    from services.backtest_service import AVAILABLE_STRATEGIES
-    backtest_strategies = [
-        {"id": k, "name": v["name"], "description": v.get("description", ""), "type": "backtest"}
-        for k, v in AVAILABLE_STRATEGIES.items()
-    ]
+    """列出所有可用策略（仅 YAML 策略模板）"""
     yaml_strategies = _list_strategies()
     for s in yaml_strategies:
         s["type"] = "condition"
-    return {"strategies": backtest_strategies + yaml_strategies}
+    return {"strategies": yaml_strategies}
 
 
 @router.post("/backtest/single")

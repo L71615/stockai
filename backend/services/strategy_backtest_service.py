@@ -409,23 +409,6 @@ def _list_available_strategies() -> list[dict]:
         except Exception:
             pass
 
-    # 加上内置策略
-    from services.backtest_service import AVAILABLE_STRATEGIES
-    for sid, info in AVAILABLE_STRATEGIES.items():
-        result.append({
-            "id": sid,
-            "name": info["name"],
-            "description": "内置技术指标策略",
-            "source": "",
-            "source_url": "",
-            "tags": [],
-            "params": [],
-            "market_state": [],
-            "recommended_position": "",
-            "conditions_count": 1,
-            "builtin": True,
-        })
-
     return result
 
 
