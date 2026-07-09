@@ -52,7 +52,7 @@ const navGroups = [
     icon: IconChartScatter,
     defaultOpen: true,
     items: [
-      { id: "quant", label: "量化分析", icon: IconChartScatter, url: "/quant" },
+      { id: "quant", label: "量化分析", icon: IconChartScatter, url: "/quant", remember: true },
       { id: "condition", label: "条件选股", icon: IconFilter, url: "/screener/condition" },
       { id: "screener", label: "AI 选股", icon: IconSearch, url: "/screener" },
       { id: "plan", label: "盘前计划", icon: IconClipboardList, url: "/plan" },
@@ -122,20 +122,26 @@ export function AppSidebar() {
                 <CollapsibleContent>
                   <SidebarGroupContent>
                     <SidebarMenu>
-                      {group.items.map((item) => (
+                      {group.items.map((item) => {
+                        const savedUrl = (item as { remember?: boolean }).remember
+                          && typeof window !== "undefined"
+                          ? sessionStorage.getItem(`sidebar_${item.id}_url`)
+                          : null
+                        const href = savedUrl || item.url
+                        return (
                         <SidebarMenuItem key={item.id}>
                           <SidebarMenuButton
                             asChild
-                            isActive={pathname === item.url}
+                            isActive={pathname === item.url || (savedUrl ? pathname === savedUrl.split("?")[0] : false)}
                             tooltip={item.label}
                           >
-                            <Link href={item.url}>
+                            <Link href={href}>
                               <item.icon className="size-4" />
                               <span>{item.label}</span>
                             </Link>
                           </SidebarMenuButton>
                         </SidebarMenuItem>
-                      ))}
+                      )})}
                     </SidebarMenu>
                   </SidebarGroupContent>
                 </CollapsibleContent>

@@ -390,8 +390,12 @@ function QuantPageInner() {
     }).catch(() => {})
   }, [])
 
-  // URL 参数变化时自动恢复状态（切页回来不丢失）
+  // URL 参数变化时自动恢复状态 + 保存到 sessionStorage（切页回来不丢失）
   useEffect(() => {
+    const urlStr = params.toString()
+    if (urlStr && typeof window !== "undefined") {
+      sessionStorage.setItem("sidebar_quant_url", `/quant?${urlStr}`)
+    }
     const urlCode = params.get("code")
     const urlTab = params.get("tab")
     if (urlTab) setTabState(urlTab)
