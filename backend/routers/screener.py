@@ -1002,6 +1002,25 @@ class ConditionScanRequest(BaseModel):
 
 
 @router.post("/conditions/scan")
+def _lookup_stock_name(code: str) -> str:
+    """从本地数据源查找股票名称"""
+    # 优先 Futu 快照缓存
+    row = query_one(
+        "SELECT raw_payload FROM futu_raw_quote WHERE code = ? ORDER BY quote_time DESC LIMIT 1",
+        (code,),
+    )
+    if row:
+        try:
+            payload = json.loads(row["raw_payload"])
+            name = payload.get("name", "")
+            if name:
+                return name
+        except Exception:
+            pass
+    # 回退：local_fundamentals 可能没有 name 字段，返回空
+    return ""
+
+
 def condition_scan(body: ConditionScanRequest):
     """两阶段条件扫描：Phase1 行情快筛(全市场) - Phase2 K线精筛(候选集)"""
     conditions = body.conditions
@@ -1323,7 +1342,7 @@ def condition_scan(body: ConditionScanRequest):
 
         if evaluate(sd, layer_trees[4]):
             return {
-                "code": code, "name": s.get("name", quote.get("name", "")),
+                "code": code, "name": s.get("name") or quote.get("name") or _lookup_stock_name(code),
                 "industry": s.get("industry", ""),
                 "price": round(price, 2), "change_pct": round(quote.get("change_pct", 0) or 0, 2),
                 "pe": sd.get("pe"), "pb": sd.get("pb"), "roe": sd.get("roe"),
