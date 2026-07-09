@@ -188,6 +188,42 @@ def sync_daily_basic(trade_date: str = "") -> dict:
     return {"date": trade_date, "stocks": saved}
 
 
+def get_stock_info(code: str) -> dict | None:
+    """查询单只股票基本信息（名称+行业），优先本地缓存，否则调 Tushare
+
+    单只查询不受 1次/小时 频率限制。
+    """
+    from database import query_one, execute
+
+    # 1. 查本地缓存
+    row = query_one("SELECT name, industry, list_date FROM stock_info WHERE stock_code = ?", (code,))
+    if row and row.get("name"):
+        return {"name": row["name"], "industry": row.get("industry", ""), "code": code}
+
+    # 2. 调 Tushare（单只，无频率限制）
+    market = "SH" if code.startswith("6") else "SZ"
+    ts_code = f"{code}.{market}"
+    items = _call_mcp("stock_basic", {
+        "ts_code": ts_code,
+        "fields": ["ts_code", "name", "industry", "list_date"],
+    })
+    if items:
+        item = items[0]
+        name = item.get("name", "")
+        industry = item.get("industry", "") or ""
+        # 写入缓存
+        try:
+            execute(
+                "INSERT OR REPLACE INTO stock_info (stock_code, name, industry, list_date) VALUES (?, ?, ?, ?)",
+                (code, name, industry, item.get("list_date", "")),
+            )
+        except Exception:
+            pass
+        return {"name": name, "industry": industry, "code": code}
+
+    return None
+
+
 def sync_trade_cal() -> dict:
     """同步交易日历到本地（用于判断交易日）"""
     items = _call_mcp("trade_cal", {

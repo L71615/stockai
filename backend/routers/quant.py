@@ -182,6 +182,18 @@ def stock_insight(code: str, days: int = 120):
     except Exception:
         factors = {}
     finally:
+        # Tushare 兜底：行业+名称
+        if not factors.get("industry") or not factors.get("name"):
+            try:
+                from services.tushare_adapter import get_stock_info
+                info = get_stock_info(code)
+                if info:
+                    if not factors.get("industry") and info.get("industry"):
+                        factors["industry"] = info["industry"]
+                    if not factors.get("name") and info.get("name"):
+                        factors["name"] = info["name"]
+            except Exception:
+                pass
         if _factors_executor is not None:
             _factors_executor.shutdown(wait=False, cancel_futures=True)
 

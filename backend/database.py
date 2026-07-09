@@ -520,6 +520,8 @@ def init_db():
             "  avg_change REAL, up_count INTEGER, down_count INTEGER, total INTEGER,"
             "  PRIMARY KEY (plate_code, trade_date))",
             "CREATE INDEX IF NOT EXISTS idx_local_plate_daily_date ON local_plate_daily(trade_date)",
+            "CREATE TABLE IF NOT EXISTS stock_info ("
+            "  stock_code TEXT PRIMARY KEY, name TEXT, industry TEXT, list_date TEXT)",
         ]
         for sql in indexes:
             conn.execute(sql)
