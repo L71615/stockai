@@ -233,12 +233,46 @@ def run_nightly_fundamentals() -> dict:
     except Exception as e:
         errors.append(str(e))
 
+    # 增量下载缺失的日线（每天最多100只，配额限制）
+    kline_added = 0
+    try:
+        kline_added = _incremental_kline_sync(futu, max_per_day=100)
+    except Exception as e:
+        errors.append(f"K线增量: {e}")
+
     return {
         "status": "ok" if not errors else "partial",
         "target_count": len(codes),
         "saved": saved,
+        "kline_added": kline_added,
         "errors": errors[:5],
     }
+
+
+def _incremental_kline_sync(futu: FutuClient, max_per_day: int = 100) -> int:
+    """每天为缺失日线的股票下载历史K线（受Futu配额限制）"""
+    import time
+    missing = query_all(
+        """SELECT DISTINCT w.stock_code FROM watchlist w
+           WHERE w.user_id = 1 AND w.asset_type = 'stock'
+           AND w.stock_code NOT IN (SELECT DISTINCT stock_code FROM historical_kline)
+           LIMIT ?""",
+        (max_per_day,),
+    )
+    if not missing:
+        return 0
+
+    added = 0
+    for r in missing:
+        try:
+            result = sync_daily_kline(r["stock_code"], count=500, client=futu)
+            if "error" not in result:
+                added += 1
+        except Exception:
+            pass
+        time.sleep(0.5)  # 避免频率限制
+
+    return added
 
 
 def _calc_plate_daily(trade_date: str):
