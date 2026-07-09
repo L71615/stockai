@@ -903,15 +903,16 @@ def get_condition_schema():
 # ── 市场状态 ──
 
 def _calc_market_state() -> dict:
-    """计算当前 A 股市场状态"""
+    """计算当前 A 股市场状态（从本地 historical_kline，零外部调用）"""
     try:
-        from services.technical import fetch_kline
-        from services.akshare_adapter import get_quote
+        from database import query_all
 
-        kline = fetch_kline("000001", "1", days=120)
-        if "error" in kline:
-            return {"state": "unknown", "label": "数据获取失败", "position": "--"}
-        closes = kline.get("closes", [])
+        # 从本地日线获取上证指数数据
+        rows = query_all(
+            "SELECT close FROM historical_kline WHERE stock_code='000001' ORDER BY trade_date DESC LIMIT 120"
+        )
+        closes = [float(r["close"]) for r in reversed(rows) if r["close"]]
+
         if len(closes) < 60:
             return {"state": "unknown", "label": "数据不足", "position": "--"}
 
@@ -920,29 +921,34 @@ def _calc_market_state() -> dict:
         price = closes[-1]
         ma60_distance_pct = round((price / ma60 - 1) * 100, 2)
 
-        # 涨跌比 — 取主要指数实时行情
+        # 涨跌比 — 从本地数据获取三大指数最近一天涨跌
         up_count, down_count = 0, 0
         for idx_code in ["000001", "399001", "399006"]:
             try:
-                q = get_quote(idx_code)
-                if not q or "error" in q:
-                    continue
-                chg = q.get("change_pct", 0) or 0
-                if chg > 0:
-                    up_count += 1
-                elif chg < 0:
-                    down_count += 1
+                rows = query_all(
+                    "SELECT close FROM historical_kline WHERE stock_code=? ORDER BY trade_date DESC LIMIT 2",
+                    (idx_code,),
+                )
+                if len(rows) >= 2:
+                    today = float(rows[0]["close"])
+                    prev = float(rows[1]["close"])
+                    if prev > 0:
+                        chg = (today - prev) / prev * 100
+                        if chg > 0: up_count += 1
+                        elif chg < 0: down_count += 1
             except Exception:
                 pass
 
-        # 成交量判断
-        from services.akshare_adapter import get_kline
-        vol_data = get_kline("000001", days=20)
-        volumes = vol_data.get("volumes", []) if "error" not in vol_data else []
+        # 成交量判断（从本地数据）
+        from database import query_all
+        vol_rows = query_all(
+            "SELECT volume FROM historical_kline WHERE stock_code='000001' ORDER BY trade_date DESC LIMIT 20"
+        )
+        volumes = [float(r["volume"]) for r in vol_rows if r["volume"]]
         vol_ratio = 1.0
         if len(volumes) >= 20:
-            vol_ma = sum(volumes[-21:-1]) / 20
-            vol_ratio = round(volumes[-1] / vol_ma, 2) if vol_ma > 0 else 1.0
+            vol_ma = sum(volumes[1:]) / (len(volumes) - 1)
+            vol_ratio = round(volumes[0] / vol_ma, 2) if vol_ma > 0 else 1.0
 
         # 状态判定
         bull_ratio = up_count / max(up_count + down_count, 1)

@@ -252,7 +252,44 @@ class BatchQuoteBody(BaseModel):
 
 @router.post("/quotes")
 def get_quotes_batch(body: BatchQuoteBody):
-    """批量获取实时行情（股票走东方财富，基金走天天基金估值）"""
+    """批量获取实时行情（优先 Futu 批量，不可用则本地 DB 兜底）"""
+    # 快速路径：Futu 批量获取（300只/次，不阻塞）
+    codes = body.codes
+    if codes:
+        try:
+            from services.futu_client import FutuClient
+            results = []
+            futu = FutuClient()
+            for i in range(0, len(codes), 300):
+                batch = codes[i:i+300]
+                for s in futu.get_snapshot(batch):
+                    if "error" not in s:
+                        results.append({
+                            "code": s["code"], "name": s.get("name",""), "price": s.get("price"),
+                            "change": s.get("change"), "change_pct": s.get("change_pct"),
+                            "high": s.get("high_price"), "low": s.get("low_price"),
+                            "open": s.get("open_price"), "volume": s.get("volume"),
+                            "source": "futu",
+                        })
+            if results:
+                return {"quotes": results, "source": "futu"}
+        except Exception:
+            pass
+        # Futu 不可用：从本地 historical_kline 取最新收盘价
+        from database import query_all
+        results = []
+        for code in codes:
+            row = query_all(
+                "SELECT close FROM historical_kline WHERE stock_code=? ORDER BY trade_date DESC LIMIT 1",
+                (code,),
+            )
+            if row:
+                results.append({"code": code, "name": "", "price": float(row[0]["close"]) if row[0]["close"] else 0, "source": "local"})
+            else:
+                results.append({"code": code, "error": "无数据", "source": "local"})
+        return {"quotes": results, "source": "local"}
+
+    # 以下为旧代码（fund 路径保留，基本不会走到）
     results = []
     for i, code in enumerate(body.codes):
         m = body.markets[i] if body.markets and i < len(body.markets) else None
