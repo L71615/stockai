@@ -167,3 +167,26 @@ def start_memory_resolution_thread(run_hour: int = 15, run_minute: int = 30):
     t = threading.Thread(target=_loop, daemon=True, name="memory-resolution")
     t.start()
     return t
+
+
+def start_futu_nightly_fundamentals_thread(run_hour: int = 15, run_minute: int = 35):
+    """每天收盘后（15:35）同步基本面+板块数据到本地表"""
+    def _loop():
+        last_run = None
+        while True:
+            try:
+                now = datetime.now()
+                today_key = now.strftime("%Y-%m-%d")
+                if now.weekday() < 5 and now.hour == run_hour and now.minute >= run_minute and last_run != today_key:
+                    from services.futu_sync_service import run_nightly_fundamentals
+                    result = run_nightly_fundamentals()
+                    logger.info("scheduler: 基本面同步完成 — %s 条, 状态=%s",
+                                result.get("saved", 0), result.get("status", "?"))
+                    last_run = today_key
+            except Exception:
+                logger.warning("scheduler: 基本面同步异常", exc_info=True)
+            time.sleep(300)  # 每5分钟检查一次
+
+    t = threading.Thread(target=_loop, daemon=True, name="futu-fundamentals")
+    t.start()
+    return t

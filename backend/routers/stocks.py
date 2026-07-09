@@ -674,3 +674,49 @@ def hot_sectors():
     """板块资金流向排名（单独调用）"""
     from services.akshare_adapter import get_sector_fund_flow
     return get_sector_fund_flow()
+
+
+@router.get("/sync-status")
+def sync_status():
+    """本地数据源状态 — Futu连通性 + 各表最后同步时间"""
+    from services.futu_client import FutuClient
+    from database import query_one
+
+    futu_ok = False
+    try:
+        hc = FutuClient().healthcheck()
+        futu_ok = hc.get("ok", False)
+    except Exception:
+        pass
+
+    # 各表最新数据时间
+    tables = {}
+    for table in ["local_fundamentals", "local_plate_daily", "historical_kline"]:
+        try:
+            row = query_one(f"SELECT MAX(trade_date) as dt FROM {table}")
+            tables[table] = row["dt"] if row else None
+        except Exception:
+            tables[table] = None
+
+    # 股票池统计
+    from database import query_all
+    watchlist_count = query_all("SELECT COUNT(*) as n FROM watchlist WHERE user_id = 1")[0]["n"]
+    kline_count = query_all("SELECT COUNT(*) as n FROM historical_kline")[0]["n"]
+
+    return {
+        "futu_online": futu_ok,
+        "tables": tables,
+        "stats": {
+            "watchlist": watchlist_count,
+            "kline_rows": kline_count,
+        },
+        "message": "🟢 数据正常" if futu_ok else "🟡 Futu 离线，使用本地缓存",
+    }
+
+
+@router.post("/sync-fundamentals")
+def trigger_fundamentals_sync():
+    """手动触发基本面+板块同步（立即执行）"""
+    from services.futu_sync_service import run_nightly_fundamentals
+    result = run_nightly_fundamentals()
+    return result

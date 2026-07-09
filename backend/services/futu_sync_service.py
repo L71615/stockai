@@ -183,3 +183,103 @@ def run_nightly_sync(scope: str = "watchlist+holdings", count: int = 200) -> dic
         "success_count": success_count,
         "failed_count": failed_count,
     }
+
+
+# ═══════════════════════════════════════════════════════════════
+#  基本面 + 板块同步
+# ═══════════════════════════════════════════════════════════════
+
+def run_nightly_fundamentals() -> dict:
+    """盘后同步基本面到本地缓存表 local_fundamentals"""
+    from datetime import date
+    today = date.today().isoformat()
+
+    targets = _load_sync_targets("watchlist+holdings")
+    codes = list(targets.keys())
+    if not codes:
+        return {"status": "skipped", "message": "无同步目标"}
+
+    futu = FutuClient()
+    if not futu.healthcheck()["ok"]:
+        return {"status": "skipped", "message": "Futu OpenD 不可用"}
+
+    saved = 0
+    errors = []
+    batch_size = 300
+
+    for i in range(0, len(codes), batch_size):
+        batch = codes[i:i + batch_size]
+        try:
+            snapshots = futu.get_snapshot(batch)
+            for s in snapshots:
+                if "error" in s:
+                    continue
+                execute(
+                    """INSERT OR REPLACE INTO local_fundamentals
+                       (stock_code, trade_date, pe_ttm, pb, market_cap, turnover_rate, eps, roe, dividend_yield, source)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'futu')""",
+                    (s["code"], today,
+                     s.get("pe_ttm"), s.get("pb"), s.get("market_cap"),
+                     s.get("turnover_rate"), s.get("eps"), s.get("roe"),
+                     s.get("dividend_yield")),
+                )
+                saved += 1
+        except Exception as e:
+            errors.append(str(e))
+
+    # 从本地K线计算板块涨跌
+    try:
+        _calc_plate_daily(today)
+    except Exception as e:
+        errors.append(str(e))
+
+    return {
+        "status": "ok" if not errors else "partial",
+        "target_count": len(codes),
+        "saved": saved,
+        "errors": errors[:5],
+    }
+
+
+def _calc_plate_daily(trade_date: str):
+    """从 historical_kline + 行业分类计算板块日均涨跌，写入 local_plate_daily"""
+    try:
+        from services.baostock_adapter import _get_industry_map
+        ind_map = _get_industry_map()
+    except Exception:
+        return
+
+    if not ind_map:
+        return
+
+    # 获取当日和前一日数据
+    today_rows = query_all(
+        """SELECT stock_code, close FROM historical_kline WHERE trade_date = ?""",
+        (trade_date,),
+    )
+    prev_rows = query_all(
+        """SELECT stock_code, close FROM historical_kline
+           WHERE trade_date = (SELECT MAX(trade_date) FROM historical_kline WHERE trade_date < ?)""",
+        (trade_date,),
+    )
+    prev_map = {r["stock_code"]: r["close"] for r in prev_rows}
+
+    ind_changes: dict[str, list[float]] = {}
+    for r in today_rows:
+        code = r["stock_code"]
+        close = r["close"]
+        prev = prev_map.get(code)
+        if close and prev and prev > 0:
+            change = (float(close) - float(prev)) / float(prev) * 100
+            industry = ind_map.get(code, {}).get("industry", "其他")
+            ind_changes.setdefault(industry, []).append(change)
+
+    for ind, changes in ind_changes.items():
+        if changes:
+            execute(
+                """INSERT OR REPLACE INTO local_plate_daily
+                   (plate_code, trade_date, avg_change, up_count, down_count, total)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (ind, trade_date, round(sum(changes) / len(changes), 2),
+                 sum(1 for c in changes if c > 0), sum(1 for c in changes if c < 0), len(changes)),
+            )

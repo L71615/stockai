@@ -79,20 +79,34 @@ class FutuClient:
             for _, row in data.iterrows():
                 symbol = row["code"]
                 code = symbol.split(".", 1)[1]
+                # 计算涨跌幅
+                price = row.get("last_price")
+                prev = row.get("prev_close_price")
+                change = round(price - prev, 2) if price is not None and prev is not None and prev > 0 else None
+                change_pct = round((price - prev) / prev * 100, 2) if price is not None and prev is not None and prev > 0 else None
+
                 rows.append({
                     "code": code,
                     "market": symbol.split(".", 1)[0],
                     "symbol": symbol,
                     "name": row.get("name", ""),
-                    "price": row.get("last_price"),
+                    "price": price,
                     "open_price": row.get("open_price"),
                     "high_price": row.get("high_price"),
                     "low_price": row.get("low_price"),
-                    "prev_close": row.get("prev_close_price"),
-                    "change": None,
-                    "change_pct": None,
+                    "prev_close": prev,
+                    "change": change,
+                    "change_pct": change_pct,
                     "volume": row.get("volume"),
                     "turnover": row.get("turnover"),
+                    # 基本面
+                    "pe_ttm": row.get("pe_ttm"),
+                    "pb": row.get("pb"),
+                    "market_cap": row.get("market_val"),
+                    "turnover_rate": row.get("turnover_rate"),
+                    "eps": row.get("basic_eps"),
+                    "roe": row.get("roe"),
+                    "dividend_yield": row.get("dividend_yield_ratio"),
                     "quote_time": row.get("update_time"),
                     "source": "futu",
                     "raw_payload": row.to_json(force_ascii=False),

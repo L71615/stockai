@@ -118,12 +118,14 @@ def startup():
         start_futu_intraday_sync_thread,
         start_futu_nightly_sync_thread,
         start_memory_resolution_thread,
+        start_futu_nightly_fundamentals_thread,
     )
     start_dca_reminder_thread()
     start_stop_loss_thread()
     start_futu_intraday_sync_thread()
     start_futu_nightly_sync_thread()
     start_memory_resolution_thread()
+    start_futu_nightly_fundamentals_thread()
 
 
 # ── 认证中间件：保护所有 /api/ 路由（登录接口除外）──

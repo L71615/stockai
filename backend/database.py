@@ -508,6 +508,18 @@ def init_db():
             "CREATE INDEX IF NOT EXISTS idx_dca_plans_holding ON dca_plans(holding_id)",
             # 分红
             "CREATE INDEX IF NOT EXISTS idx_dividends_user ON dividends(user_id, stock_code)",
+            # ── 本地数据缓存（Futu 定时同步落地）──
+            "CREATE TABLE IF NOT EXISTS local_fundamentals ("
+            "  stock_code TEXT NOT NULL, trade_date TEXT NOT NULL,"
+            "  pe_ttm REAL, pb REAL, market_cap REAL, turnover_rate REAL,"
+            "  eps REAL, roe REAL, dividend_yield REAL,"
+            "  source TEXT DEFAULT 'futu',"
+            "  PRIMARY KEY (stock_code, trade_date))",
+            "CREATE TABLE IF NOT EXISTS local_plate_daily ("
+            "  plate_code TEXT NOT NULL, trade_date TEXT NOT NULL,"
+            "  avg_change REAL, up_count INTEGER, down_count INTEGER, total INTEGER,"
+            "  PRIMARY KEY (plate_code, trade_date))",
+            "CREATE INDEX IF NOT EXISTS idx_local_plate_daily_date ON local_plate_daily(trade_date)",
         ]
         for sql in indexes:
             conn.execute(sql)
