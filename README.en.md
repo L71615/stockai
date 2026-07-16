@@ -10,18 +10,18 @@
 
 ## 📑 Table of Contents
 
-- [🎯 Core Capabilities](#-core-capabilities)
-- [🔬 Factor System (55)](#-factor-system-55)
-- [📡 Data Sources](#-data-sources)
-- [🏗 Project Structure](#-project-structure)
-- [🚀 Quick Start](#-quick-start)
-- [🛣 Pages & Routes](#-pages--routes)
+- [🎯 Core Capabilities](#core-capabilities)
+- [🔬 Factor System (55)](#factor-system)
+- [📡 Data Sources](#data-sources)
+- [🏗 Project Structure](#project-structure)
+- [🚀 Quick Start](#quick-start)
+- [🛣 Pages & Routes](#pages-and-routes)
 - [⚙️ Environment Variables](#️-environment-variables)
-- [📝 Version History](#-version-history)
+- [📝 Version History](#version-history)
 
 ---
 
-## 🎯 Core Capabilities
+## <a id="core-capabilities"></a>🎯 Core Capabilities
 
 | Module | Features |
 |------|------|
@@ -46,7 +46,7 @@
 
 ---
 
-## 🔬 Factor System (55)
+## <a id="factor-system"></a>🔬 Factor System (55)
 
 | Category | Count | Factors |
 |------|------|------|
@@ -69,7 +69,7 @@
 
 ---
 
-## 📡 Data Sources
+## <a id="data-sources"></a>📡 Data Sources
 
 ```text
 Real-time quotes:  A-share (Futu preferred → Tencent/Eastmoney fallback) + HK (Sina) + Funds (Eastmoney)
@@ -85,7 +85,7 @@ Sync layer:        futu_raw_quote / futu_raw_kline + daily sync to historical_kl
 
 ---
 
-## 🏗 Project Structure
+## <a id="project-structure"></a>🏗 Project Structure
 
 ```text
 stocks/
@@ -105,7 +105,7 @@ stocks/
 
 ---
 
-## 🚀 Quick Start
+## <a id="quick-start"></a>🚀 Quick Start
 
 ### Recommended: Control Panel Launcher
 
@@ -153,7 +153,7 @@ python backend/scripts/sync_futu_data.py --mode nightly --scope watchlist+holdin
 
 ---
 
-## 🛣 Pages & Routes
+## <a id="pages-and-routes"></a>🛣 Pages & Routes
 
 | Group | Page | Route | Description |
 |------|------|------|------|
@@ -169,7 +169,7 @@ python backend/scripts/sync_futu_data.py --mode nightly --scope watchlist+holdin
 
 ---
 
-## ⚙️ Environment Variables
+## <a id="environment-variables"></a>⚙️ Environment Variables
 
 ```bash
 # Admin
@@ -198,7 +198,7 @@ NOTIFY_ENABLED=true
 
 ---
 
-## 📝 Version History
+## <a id="version-history"></a>📝 Version History
 
 - **v3.9** (2026-07-16): Login JSON-parse hardening (`res.text` + try/parse) + dual-header UI refactor (DESIGN.md §Navigation compliance) + Top header version display + `APP_VERSION` centralized in `frontend/src/lib/version.ts` + Tushare token hardcoded default removed (env required) + data-source Provider abstraction (`backend/services/providers/`: akshare/baostock/tushare + Chain fallback) + full / priority K-line sync scripts (`sync_kline_full.py` / `sync_kline_priority.py`)
 - **v3.8** (2026-07-09): Strategy system upgrade (13 strategies, tunable params + source) + parameter optimizer (grid search) + strategy comparison (side-by-side) + backtest enhancements (fees / overfit warnings / buy-sell markers / signal reasons) + AI monthly reports + month-over-month diagnosis + trading-memory strategy dimension + loss-streak protection (3-level warning) + hot sector panel (sector flow + northbound) + sector filter (main board default) + bug fixes (`run_multi_agent_screen` etc.). 33 files, +2983/−115 lines
