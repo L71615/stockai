@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
 import { apiGet, apiPost } from "@/lib/auth"
-import { IconChartBar, IconGridDots, IconChartScatter, IconFlask, IconPlayerPlay, IconCheck } from "@tabler/icons-react"
+import { IconChartBar, IconGridDots, IconChartScatter, IconFlask, IconPlayerPlay, IconCheck, IconBrain } from "@tabler/icons-react"
 import {
   ScatterChart, Scatter, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from "recharts"
@@ -67,6 +67,24 @@ interface GPResult {
   best: Array<{ expr: string; ir: number; ic_mean: number; win_rate: number; valid_days: number; tree_depth: number }>
   history: GPHistory[]
   stats: { evaluated: number; duration_s: number; kept: number }
+}
+
+// ML mining 类型
+interface MLResult {
+  run_id: string
+  feature_importance: Array<{ name: string; importance: number }>
+  train_metrics: { ic_mean: number; ir: number; win_rate: number; valid_days: number }
+  test_metrics: { ic_mean: number; ir: number; win_rate: number; valid_days: number }
+  top_decile_return: number
+  bottom_decile_return: number
+  spread: number
+  sample_count: number
+  train_days: number
+  test_days: number
+  n_estimators: number
+  max_depth: number
+  learning_rate: number
+  summary: string
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -594,6 +612,181 @@ function MiningTab({ pool }: { pool: string }) {
 }
 
 // ═══════════════════════════════════════════════════════════
+//  Tab 5: ML 因子生成 (LightGBM)
+// ═══════════════════════════════════════════════════════════
+
+function MlMiningTab({ pool }: { pool: string }) {
+  const [running, setRunning] = useState(false)
+  const [error, setError] = useState("")
+  const [result, setResult] = useState<MLResult | null>(null)
+  const [nEstimators, setNEstimators] = useState(100)
+  const [maxDepth, setMaxDepth] = useState(4)
+
+  const run = async () => {
+    setRunning(true)
+    setError("")
+    try {
+      const params = new URLSearchParams()
+      params.append("pool", pool)
+      params.append("n_estimators", String(nEstimators))
+      params.append("max_depth", String(maxDepth))
+      const res = await apiPost<MLResult>(`/api/factor-lab/mine/run-ml?${params.toString()}`)
+      setResult(res)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "ML 挖掘失败")
+    } finally {
+      setRunning(false)
+    }
+  }
+
+  const maxImp = result?.feature_importance?.[0]?.importance || 1
+
+  return (
+    <div className="space-y-4">
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm flex items-center gap-2">
+            <IconBrain className="size-4" />
+            LightGBM ML 因子生成
+          </CardTitle>
+          <CardDescription className="text-xs">
+            用 15 个价格/技术因子训练 LightGBM 回归器预测次日收益, 输出非线性"组合因子" + 特征重要性
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="flex flex-wrap items-end gap-3">
+            <div className="space-y-1">
+              <label className="text-[10px] text-muted-foreground">树数量 (n_estimators)</label>
+              <Input type="number" value={nEstimators} onChange={(e) => setNEstimators(Number(e.target.value))} className="h-8 w-24 text-xs" min={20} max={500} step={20} />
+            </div>
+            <div className="space-y-1">
+              <label className="text-[10px] text-muted-foreground">单树最大深度</label>
+              <Input type="number" value={maxDepth} onChange={(e) => setMaxDepth(Number(e.target.value))} className="h-8 w-24 text-xs" min={2} max={10} />
+            </div>
+            <Button onClick={run} disabled={running} size="sm">
+              <IconPlayerPlay className="size-3.5 mr-1" />
+              {running ? "训练中..." : "运行 LightGBM"}
+            </Button>
+          </div>
+          <p className="text-[10px] text-muted-foreground">
+            时间预估: 100 树 ≈ 5-15 秒, 200 树 ≈ 20-40 秒 | 默认 70/30 时序分训练/测试集
+          </p>
+          {error && <p className="text-xs text-destructive">{error}</p>}
+        </CardContent>
+      </Card>
+
+      {result && !result.error && (
+        <>
+          {/* 指标总览 */}
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm flex items-center gap-2">
+                <IconCheck className="size-4 text-emerald-400" />
+                {result.run_id} — 多空对冲 spread {result.spread >= 0 ? "+" : ""}{(result.spread * 100).toFixed(3)}%/日
+              </CardTitle>
+              <p className="text-[10px] text-muted-foreground">
+                样本 {result.sample_count} ({result.train_days} 训练日 / {result.test_days} 测试日) | {result.n_estimators} 树 × depth {result.max_depth} × lr {result.learning_rate}
+              </p>
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                <MetricBox label="训练集 IR" value={result.train_metrics.ir.toFixed(3)} />
+                <MetricBox label="测试集 IR" value={result.test_metrics.ir.toFixed(3)} highlight />
+                <MetricBox label="测试集胜率" value={`${(result.test_metrics.win_rate * 100).toFixed(0)}%`} />
+                <MetricBox label="Top 10% 收益" value={`${(result.top_decile_return * 100).toFixed(2)}%`} positive={result.top_decile_return >= 0} />
+              </div>
+              <div className="mt-3 grid grid-cols-2 lg:grid-cols-4 gap-3">
+                <MetricBox label="训练 IC" value={result.train_metrics.ic_mean.toFixed(4)} />
+                <MetricBox label="测试 IC" value={result.test_metrics.ic_mean.toFixed(4)} />
+                <MetricBox label="Bottom 10% 收益" value={`${(result.bottom_decile_return * 100).toFixed(2)}%`} positive={result.bottom_decile_return >= 0} />
+                <MetricBox label="训练/测试 IC 比" value={result.test_metrics.ic_mean > 0 && result.train_metrics.ic_mean > 0 ? (result.test_metrics.ic_mean / result.train_metrics.ic_mean).toFixed(2) : "—"} hint="越接近 1 越未过拟合" />
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* 特征重要性 */}
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm">特征重要性 (Top 15)</CardTitle>
+              <CardDescription className="text-xs">
+                LightGBM 决策时该特征被使用的次数, 越高越关键
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="p-0">
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead className="bg-muted/50">
+                    <tr>
+                      <th className="p-2 text-left">特征</th>
+                      <th className="p-2 text-left">重要性</th>
+                      <th className="p-2 text-left">相对强度</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {result.feature_importance.map((f) => (
+                      <tr key={f.name} className="border-t border-border hover:bg-accent/30">
+                        <td className="p-2 font-mono">{f.name}</td>
+                        <td className="p-2 font-mono tabular-nums">{f.importance}</td>
+                        <td className="p-2 w-1/2">
+                          <div className="h-2 bg-muted rounded-none overflow-hidden">
+                            <div
+                              className="h-full bg-primary"
+                              style={{ width: `${(f.importance / maxImp) * 100}%` }}
+                            />
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* 解读 */}
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm">解读</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-2 text-xs">
+              <p>
+                <span className="font-medium">测试集 IR = {result.test_metrics.ir.toFixed(3)}</span>:
+                {result.test_metrics.ir > 0.5 ? " 强有效 — 模型能稳定预测次日收益" :
+                 result.test_metrics.ir > 0.3 ? " 中等 — 有一定预测能力" :
+                 " 弱 — 模型表现一般, 可能过拟合或市场环境特殊"}
+              </p>
+              <p>
+                <span className="font-medium">多空 spread = {(result.spread * 100).toFixed(3)}%/日</span>:
+                按模型预测排序, top 10% 平均每天比 bottom 10% 多赚 {result.spread >= 0 ? "+" : ""}{(result.spread * 100).toFixed(3)}%
+              </p>
+              <p className="text-muted-foreground">
+                模型已保存到 <code className="text-[10px] bg-muted px-1">{result.run_id}.pkl</code>,
+                可在 Python 中加载用于实盘预测
+              </p>
+            </CardContent>
+          </Card>
+        </>
+      )}
+
+      {result?.error && (
+        <Card><CardContent className="py-4 text-xs text-destructive">{result.error}</CardContent></Card>
+      )}
+    </div>
+  )
+}
+
+function MetricBox({ label, value, highlight = false, positive, hint }: { label: string; value: string; highlight?: boolean; positive?: boolean; hint?: string }) {
+  const valueColor = positive === undefined ? "" : positive ? "text-red-400" : "text-emerald-400"
+  return (
+    <div className={`p-3 border ${highlight ? "border-primary bg-primary/5" : "border-border"}`}>
+      <p className="text-[10px] text-muted-foreground">{label}</p>
+      <p className={`text-lg font-mono tabular-nums ${highlight ? "text-primary" : valueColor}`}>{value}</p>
+      {hint && <p className="text-[9px] text-muted-foreground mt-0.5">{hint}</p>}
+    </div>
+  )
+}
+
+// ═══════════════════════════════════════════════════════════
 //  Tab 3: 散点图
 // ═══════════════════════════════════════════════════════════
 
@@ -742,11 +935,12 @@ export default function FactorLabPage() {
       <SiteHeader title="因子实验室" />
       <div className="flex flex-1 flex-col overflow-auto p-4 lg:p-6 space-y-4">
         <Tabs defaultValue="ic" className="space-y-4">
-          <TabsList className="grid w-full max-w-xl grid-cols-4">
+          <TabsList className="grid w-full max-w-2xl grid-cols-5">
             <TabsTrigger value="ic" className="text-xs"><IconChartBar className="size-3.5 mr-1" />IC 分析</TabsTrigger>
-            <TabsTrigger value="correlation" className="text-xs"><IconGridDots className="size-3.5 mr-1" />相关性矩阵</TabsTrigger>
+            <TabsTrigger value="correlation" className="text-xs"><IconGridDots className="size-3.5 mr-1" />相关性</TabsTrigger>
             <TabsTrigger value="scatter" className="text-xs"><IconChartScatter className="size-3.5 mr-1" />散点图</TabsTrigger>
             <TabsTrigger value="mining" className="text-xs"><IconFlask className="size-3.5 mr-1" />GP 挖掘</TabsTrigger>
+            <TabsTrigger value="ml" className="text-xs"><IconBrain className="size-3.5 mr-1" />ML 挖掘</TabsTrigger>
           </TabsList>
           <TabsContent value="ic">
             <ICTab
@@ -764,6 +958,9 @@ export default function FactorLabPage() {
           </TabsContent>
           <TabsContent value="mining">
             <MiningTab pool={pool} />
+          </TabsContent>
+          <TabsContent value="ml">
+            <MlMiningTab pool={pool} />
           </TabsContent>
         </Tabs>
       </div>

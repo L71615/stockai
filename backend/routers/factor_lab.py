@@ -10,6 +10,7 @@ from services.factor_lab import (
     get_supported_pools,
 )
 from services.factor_expr import gp_mine
+from services.factor_ml import train_ml_factor
 from database import query_all
 
 logger = logging.getLogger(__name__)
@@ -139,3 +140,31 @@ def promote_candidate(candidate_id: int):
         (candidate_id,),
     )
     return {"promoted": candidate_id, "rows": cur.rowcount if hasattr(cur, "rowcount") else 0}
+
+
+# ═══════════════════════════════════════════════════════════
+#  Phase 3: LightGBM ML 因子生成
+# ═══════════════════════════════════════════════════════════
+
+@router.post("/mine/run-ml")
+def run_ml_mine(
+    pool: str = Query("csi800"),
+    start_date: str | None = Query(None),
+    end_date: str | None = Query(None),
+    n_estimators: int = Query(100, description="LightGBM 树数量"),
+    max_depth: int = Query(4, description="单树最大深度"),
+    learning_rate: float = Query(0.05),
+):
+    """运行 LightGBM ML 因子生成
+
+    输出:
+      - 特征重要性排序
+      - 训练集/测试集 IC/IR (防过拟合)
+      - 多空对冲 spread (top 10% vs bottom 10%)
+      - 模型 .pkl 文件路径
+    """
+    try:
+        return train_ml_factor(pool, start_date, end_date, n_estimators, max_depth, learning_rate)
+    except Exception as e:
+        logger.error("ml mine failed: %s", str(e), exc_info=True)
+        raise HTTPException(500, f"ML 挖掘失败: {str(e)[:200]}")
