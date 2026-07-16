@@ -900,7 +900,10 @@ def get_sector_fund_flow() -> dict:
 def get_north_flow_ranking(top_n: int = 20) -> dict:
     """获取北向资金持股排名（按持股市值排序）
 
-    使用 stock_hsgt_hold_stock_em 获取沪深港通持仓数据。
+    优先级:
+      1) 东方财富/akshare stock_hsgt_hold_stock_em (akshare 1.18+ 有 NoneType bug, 经常失败)
+      2) 本地 daily_north_flow 表 (precompute_market_cache.py 预热)
+      3) 返回空
 
     缓存5分钟。
     """
@@ -911,6 +914,7 @@ def get_north_flow_ranking(top_n: int = 20) -> dict:
         if now - ts < 300:
             return cached
 
+    # ── 主源: akshare 接口 (不稳定, 仅作为尝试) ──
     try:
         import akshare as ak
         df = ak.stock_hsgt_hold_stock_em(market="沪股通")
@@ -918,41 +922,76 @@ def get_north_flow_ranking(top_n: int = 20) -> dict:
         # 合并沪深
         import pandas as pd
         df = pd.concat([df, df_sz], ignore_index=True)
-        if df is None or df.empty:
-            return {"top_inflow": [], "top_outflow": [], "update_time": ""}
+        if df is not None and not df.empty:
+            cols = list(df.columns)
+            code_col = cols[0] if len(cols) > 0 else ""
+            name_col = cols[1] if len(cols) > 1 else ""
+            hold_val_col = cols[4] if len(cols) > 4 else ""
 
-        cols = list(df.columns)
-        code_col = cols[0] if len(cols) > 0 else ""
-        name_col = cols[1] if len(cols) > 1 else ""
-        hold_val_col = cols[4] if len(cols) > 4 else ""  # 持股市值列
+            records = []
+            for _, row in df.iterrows():
+                try:
+                    code = str(row[code_col]) if code_col else ""
+                    name = str(row[name_col]) if name_col else ""
+                    hold_val = _safe_float(row[hold_val_col]) if hold_val_col else 0
+                    if len(code) == 6 and code.isdigit():
+                        records.append({
+                            "code": code, "name": name,
+                            "hold_value_wan": round(hold_val / 1e4, 2),
+                        })
+                except Exception:
+                    continue
 
-        records = []
-        for _, row in df.iterrows():
-            try:
-                code = str(row[code_col]) if code_col else ""
-                name = str(row[name_col]) if name_col else ""
-                hold_val = _safe_float(row[hold_val_col]) if hold_val_col else 0
-                # 只取有效的A股代码
-                if len(code) == 6 and code.isdigit():
-                    records.append({
-                        "code": code, "name": name,
-                        "hold_value_wan": round(hold_val / 1e4, 2),  # 元→万元
-                    })
-            except Exception:
-                continue
+            inflow = sorted(records, key=lambda x: x["hold_value_wan"], reverse=True)[:top_n]
 
-        inflow = sorted(records, key=lambda x: x["hold_value_wan"], reverse=True)[:top_n]
+            result = {
+                "top_inflow": inflow,
+                "top_outflow": [],
+                "update_time": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                "source": "akshare",
+            }
+            _NORTH_FLOW_RANK_CACHE[cache_key] = (now, result)
+            return result
+    except Exception as e:
+        logger.warning(f"get_north_flow_ranking: akshare failed ({type(e).__name__}), fallback to local cache: {str(e)[:100]}")
+
+    # ── Fallback: 本地 daily_north_flow 表 ──
+    try:
+        from database import query_all
+        # 取最新一天的所有股票, 按 net_flow 降序排 TOP5
+        latest_date = query_all(
+            "SELECT MAX(trade_date) AS d FROM daily_north_flow"
+        )
+        if not latest_date or not latest_date[0]["d"]:
+            return {"top_inflow": [], "top_outflow": [], "update_time": "", "error": "本地缓存为空"}
+        latest = latest_date[0]["d"]
+
+        rows = query_all(
+            """SELECT nf.stock_code, nf.net_flow, si.name
+               FROM daily_north_flow nf
+               LEFT JOIN stock_info si ON si.stock_code = nf.stock_code
+               WHERE nf.trade_date = ?
+               ORDER BY nf.net_flow DESC NULLS LAST
+               LIMIT ?""",
+            (latest, top_n),
+        )
+
+        inflow = [
+            {"code": r["stock_code"], "name": r["name"] or r["stock_code"],
+             "hold_value_wan": round((r["net_flow"] or 0) * 10000, 2)}  # 亿元→万元
+            for r in rows
+        ]
 
         result = {
             "top_inflow": inflow,
-            "top_outflow": [],  # 持股数据无净卖出排名
-            "update_time": datetime.now().strftime("%Y-%m-%d %H:%M"),
+            "top_outflow": [],
+            "update_time": latest,
+            "source": "local_cache",
         }
         _NORTH_FLOW_RANK_CACHE[cache_key] = (now, result)
         return result
-
     except Exception as e:
-        logger.warning(f"get_north_flow_ranking: {e}")
+        logger.warning(f"get_north_flow_ranking: local cache also failed: {e}")
         return {"top_inflow": [], "top_outflow": [], "update_time": "", "error": str(e)}
 
 

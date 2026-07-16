@@ -72,11 +72,77 @@ def fetch_one(code: str) -> tuple[str, dict | None]:
         return (code, None)
 
 
+def fetch_north_one(code: str) -> tuple[str, dict | None]:
+    """拉一只股票的最新一日北向资金 (akshare stock_hsgt_individual_em)"""
+    try:
+        import akshare as ak
+        df = ak.stock_hsgt_individual_em(symbol=code)
+        if df is None or df.empty:
+            return (code, None)
+        latest = df.iloc[-1]
+        # 列: ['持股日期', '当日收盘价', '当日涨跌幅', '持股数量', '持股市值',
+        #       '持股数量占A股百分比', '今日增持股数', '今日增持资金', '今日持股市值变化']
+        trade_date = str(latest.iloc[0])  # 持股日期
+        net_yuan = float(latest.iloc[7]) if latest.iloc[7] is not None else 0  # 今日增持资金 (元)
+        change_qty = float(latest.iloc[6]) if latest.iloc[6] is not None else 0
+        return (code, {
+            "trade_date": trade_date,
+            "net_flow": net_yuan / 1e8,  # 元→亿元
+            "change_qty": change_qty,
+        })
+    except Exception as e:
+        log.debug("get_north_flow(%s) failed: %s", code, str(e)[:80])
+        return (code, None)
+
+
+def fetch_north_flow(codes: list[str], trade_date: str, workers: int = 8) -> int:
+    """并发拉全市场北向资金, 写入 daily_north_flow 表"""
+    from services.cache import save_north_flow_batch
+
+    start = time.time()
+    done = ok = 0
+    records = []
+    failures: list[str] = []
+
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        futures = {ex.submit(fetch_north_one, code): code for code in codes}
+        for fut in as_completed(futures):
+            code, data = fut.result()
+            done += 1
+            if data:
+                records.append({
+                    "code": code,
+                    "net_flow": data["net_flow"],
+                    "change_qty": data["change_qty"],
+                    "rank": None,
+                })
+                ok += 1
+            else:
+                failures.append(code)
+            if done % 50 == 0 or done == len(codes):
+                elapsed = time.time() - start
+                rate = done / elapsed if elapsed > 0 else 0
+                eta_min = (len(codes) - done) / rate / 60 if rate > 0 else 0
+                log.info(
+                    "  north progress %d/%d (ok=%d fail=%d) %.1f/s ETA %.1fmin",
+                    done, len(codes), ok, len(failures), rate, eta_min,
+                )
+
+    # 按 trade_date 分组保存 (不同股票可能 trade_date 不同)
+    # 这里简化为单日, 取最后一个非空 trade_date
+    n = save_north_flow_batch(records, trade_date)
+    elapsed = time.time() - start
+    log.info("=== north DONE: %d ok, %d failed, saved %d in %.0fs ===", ok, len(failures), n, elapsed)
+    return n
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--codes", help="逗号分隔的股票代码")
     parser.add_argument("--top", type=int, help="取 stock_info 前 N 只")
     parser.add_argument("--workers", type=int, default=8)
+    parser.add_argument("--skip-north", action="store_true", help="跳过北向资金预热")
+    parser.add_argument("--skip-inst", action="store_true", help="跳过机构持仓预热")
     args = parser.parse_args()
 
     only_codes = [c.strip() for c in args.codes.split(",")] if args.codes else None
@@ -90,45 +156,47 @@ def main():
         log.info("nothing to do.")
         return
 
-    from services.cache import save_inst_holding_batch
+    from services.cache import save_inst_holding_batch, save_north_flow_batch
 
-    start = time.time()
-    done = ok = 0
-    records = []
-    failures: list[str] = []
+    # ── 1) 机构持仓 (akshare 单只接口) ──
+    if not args.skip_inst:
+        start = time.time()
+        done = ok = 0
+        records = []
+        failures: list[str] = []
 
-    with ThreadPoolExecutor(max_workers=args.workers) as ex:
-        futures = {ex.submit(fetch_one, code): code for code in codes}
-        for fut in as_completed(futures):
-            code, data = fut.result()
-            done += 1
-            if data:
-                records.append({
-                    "code": code,
-                    "hold_pct": data.get("hold_pct"),
-                    "change_pct": data.get("change_pct"),
-                })
-                ok += 1
-            else:
-                failures.append(code)
-            if done % 50 == 0 or done == len(codes):
-                elapsed = time.time() - start
-                rate = done / elapsed if elapsed > 0 else 0
-                eta_min = (len(codes) - done) / rate / 60 if rate > 0 else 0
-                log.info(
-                    "  progress %d/%d (ok=%d fail=%d) %.1f/s ETA %.1fmin",
-                    done, len(codes), ok, len(failures), rate, eta_min,
-                )
+        log.info("=== 同步机构持仓 ===")
+        with ThreadPoolExecutor(max_workers=args.workers) as ex:
+            futures = {ex.submit(fetch_one, code): code for code in codes}
+            for fut in as_completed(futures):
+                code, data = fut.result()
+                done += 1
+                if data:
+                    records.append({
+                        "code": code,
+                        "hold_pct": data.get("hold_pct"),
+                        "change_pct": data.get("change_pct"),
+                    })
+                    ok += 1
+                else:
+                    failures.append(code)
+                if done % 50 == 0 or done == len(codes):
+                    elapsed = time.time() - start
+                    rate = done / elapsed if elapsed > 0 else 0
+                    eta_min = (len(codes) - done) / rate / 60 if rate > 0 else 0
+                    log.info(
+                        "  inst progress %d/%d (ok=%d fail=%d) %.1f/s ETA %.1fmin",
+                        done, len(codes), ok, len(failures), rate, eta_min,
+                    )
 
-    n = save_inst_holding_batch(records, trade_date)
-    elapsed = time.time() - start
-    log.info(
-        "=== DONE: %d processed, %d ok, %d failed, saved %d in %.0fs ===",
-        done, ok, len(failures), n, elapsed,
-    )
+        n = save_inst_holding_batch(records, trade_date)
+        elapsed = time.time() - start
+        log.info("=== inst DONE: %d ok, %d failed, saved %d in %.0fs ===", ok, len(failures), n, elapsed)
 
-    if failures:
-        log.warning("first 10 failures: %s", failures[:10])
+    # ── 2) 北向资金 (akshare stock_hsgt_individual_em 单只, 稳定) ──
+    if not args.skip_north:
+        log.info("=== 同步北向资金 (akshare stock_hsgt_individual_em) ===")
+        fetch_north_flow(codes, trade_date, args.workers)
 
 
 if __name__ == "__main__":
