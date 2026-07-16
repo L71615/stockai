@@ -118,3 +118,38 @@ CREATE TABLE historical_kline (
 );
 CREATE INDEX idx_hkline_date         ON historical_kline(trade_date);
 CREATE INDEX idx_hkline_code_date    ON historical_kline(stock_code, trade_date);
+
+
+-- 55 因子预计算快照表 (screener 直接读, 跳过每次重算)
+CREATE TABLE factor_snapshot (
+    stock_code  TEXT    NOT NULL,
+    factor_name TEXT    NOT NULL,
+    value       REAL,
+    updated_at  TEXT    DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (stock_code, factor_name)
+);
+CREATE INDEX idx_factor_snap_code ON factor_snapshot(stock_code);
+CREATE INDEX idx_factor_snap_name ON factor_snapshot(factor_name);
+
+-- 北向资金日级缓存 (akshare 批量调用一次拉全市场, screener 不再每只股票调)
+CREATE TABLE daily_north_flow (
+    stock_code  TEXT    NOT NULL,
+    trade_date  TEXT    NOT NULL,
+    net_flow    REAL,           -- 净流入 (亿元)
+    change_qty  REAL,           -- 持股数量变化 (股)
+    rank        INTEGER,        -- 当日净流入排名 (1=最高)
+    updated_at  TEXT    DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (stock_code, trade_date)
+);
+CREATE INDEX idx_north_flow_date ON daily_north_flow(trade_date);
+
+-- 机构持仓日级缓存
+CREATE TABLE daily_inst_holding (
+    stock_code   TEXT    NOT NULL,
+    trade_date   TEXT    NOT NULL,
+    hold_pct     REAL,
+    change_pct   REAL,
+    updated_at   TEXT    DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (stock_code, trade_date)
+);
+CREATE INDEX idx_inst_holding_date ON daily_inst_holding(trade_date);

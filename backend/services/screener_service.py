@@ -315,8 +315,22 @@ def score_stock(factors: dict[str, Optional[float]],
 
 
 def _process_single_stock(code: str) -> Optional[dict]:
-    """处理单只股票：从本地 historical_kline 取K线 → 算因子 → 返回"""
+    """处理单只股票：从本地 historical_kline 取K线 → 算因子 → 返回
+
+    优先读 factor_snapshot (24h 内有效), 命中则跳过 55 因子计算 (从分钟级降到秒级)
+    """
     try:
+        # 0) 优先读 factor_snapshot — 命中跳过 55 因子计算
+        from services.cache import get_factor_snapshot, save_factor_snapshot
+        cached = get_factor_snapshot(code)
+        if cached:
+            return {
+                "code": code,
+                "factors": cached,
+                "hit_count": sum(1 for v in cached.values() if v is not None),
+                "from_cache": True,
+            }
+
         # 从本地 historical_kline 读取 K 线（零外部调用）
         from database import query_all
         rows = query_all(
@@ -383,13 +397,31 @@ def _process_single_stock(code: str) -> Optional[dict]:
             except Exception:
                 pass
 
-        # 获取北向资金 / 机构持仓数据
+        # 获取北向资金 / 机构持仓数据 (优先 cache, 命中跳过外网)
         north_flow_data = None
         inst_data = None
         try:
-            from services.akshare_adapter import get_north_flow, get_inst_holding
-            north_flow_data = get_north_flow(code)
-            inst_data = get_inst_holding(code)
+            from services.cache import get_north_flow as cache_north, get_inst_holding as cache_inst
+
+            # 先查 cache (cache 命中率够高时 0 外网调用)
+            cached_north = cache_north(code)
+            cached_inst = cache_inst(code)
+            north_flow_data = cached_north  # None 时下面 fallback 到外网
+            inst_data = cached_inst
+
+            # 双双未命中才走外网
+            if cached_north is None or cached_inst is None:
+                from services.akshare_adapter import get_north_flow as ak_north, get_inst_holding as ak_inst
+                if cached_north is None:
+                    try:
+                        north_flow_data = ak_north(code)
+                    except Exception:
+                        pass
+                if cached_inst is None:
+                    try:
+                        inst_data = ak_inst(code)
+                    except Exception:
+                        pass
         except Exception:
             logger.warning("screener_service: north_flow/inst fetch failed for %s", code, exc_info=True)
 
@@ -405,6 +437,14 @@ def _process_single_stock(code: str) -> Optional[dict]:
             north_flow_data=north_flow_data,
             inst_data=inst_data,
         )
+
+        # Lazy-write: 首次算完自动缓存到 factor_snapshot (下次秒读)
+        try:
+            from services.cache import save_factor_snapshot
+            save_factor_snapshot(code, result.get("factors", {}))
+            result["from_cache"] = False
+        except Exception:
+            pass
 
         # 附上股票名称和行业
         result["name"] = fund.get("name", "")
