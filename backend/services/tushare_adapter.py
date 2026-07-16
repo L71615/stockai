@@ -20,7 +20,9 @@ from database import execute, execute_many
 logger = logging.getLogger(__name__)
 
 import os
-_TUSHARE_TOKEN = os.getenv("TUSHARE_TOKEN", "9d785a25a4987d31bc56b2329dd7894dd31c64bfdc74f3f429b32991")
+_TUSHARE_TOKEN = os.getenv("TUSHARE_TOKEN", "")
+if not _TUSHARE_TOKEN:
+    raise ValueError("TUSHARE_TOKEN environment variable must be set — see backend/.env")
 _MCP_URL = f"https://api.tushare.pro/mcp/?token={_TUSHARE_TOKEN}"
 
 
@@ -186,6 +188,29 @@ def sync_daily_basic(trade_date: str = "") -> dict:
             pass
 
     return {"date": trade_date, "stocks": saved}
+
+
+def preheat_stock_info(codes: list[str] | None = None) -> dict:
+    """批量预热 stock_info 表 — thin wrapper 走 providers Chain
+
+    委托给 services.providers.preheat_via_chain。
+    链: Tushare 主 → Akshare 兜底（Baostock industry 自动叠加补 industry）
+
+    Returns: {"written": int, "total": int, "source": str, "error": str | None}
+    """
+    from services.providers import preheat_via_chain
+    return preheat_via_chain(codes)
+
+
+def backfill_stock_info_all() -> dict:
+    """一次性全市场补全 stock_info 表 — thin wrapper 走 providers Chain
+
+    委托给 services.providers.backfill_via_chain。
+    Returns: {"written": int, "total": int, "source": str,
+              "industry_filled": int, "error": str | None}
+    """
+    from services.providers import backfill_via_chain
+    return backfill_via_chain()
 
 
 def get_stock_info(code: str) -> dict | None:

@@ -844,38 +844,6 @@ def factor_inst_change(inst_data: Optional[dict]) -> Optional[float]:
 
 
 # ═══════════════════════════════════════════════════════════
-# 社交情绪因子 (Social Sentiment) — 雪球社区热度
-# ═══════════════════════════════════════════════════════════
-
-def factor_social_rank(follow_count: Optional[int]) -> Optional[float]:
-    """雪球关注数因子：关注人数越多，社区关注度越高
-
-    log10(关注数) / 6  → [0, ~1.0]（6 = log10(1,000,000)，理论上限）
-    关注数 < 100（即 log10 < 2）→ 0，避免噪声
-    """
-    if follow_count is None or follow_count <= 0:
-        return 0.0
-    import math as _math
-    if follow_count < 100:
-        return 0.0
-    # log10(follow_count) ∈ [2, ~6]，归一化到 [0, 1]
-    return round(min((_math.log10(follow_count) - 2) / 4, 1.0), 6)
-
-
-def factor_social_buzz(follow_count: Optional[int]) -> Optional[float]:
-    """雪球关注增长因子：关注数的平方根归一化
-
-    高关注度股票的社区影响力更大。sqrt 避免头部股票分差过大。
-    """
-    if follow_count is None or follow_count <= 0:
-        return 0.0
-    import math as _math
-    if follow_count < 100:
-        return 0.0
-    return round(min(_math.sqrt(follow_count) / _math.sqrt(100000), 1.0), 6)
-
-
-# ═══════════════════════════════════════════════════════════
 # 单只股票全因子计算
 # ═══════════════════════════════════════════════════════════
 
@@ -1082,6 +1050,9 @@ def normalize_factors(all_factors: list[dict]) -> list[dict]:
                 new_factors[fn] = round((raw - mean) / std, 6)
         result.append({
             "code": f["code"],
+            "name": f.get("name", ""),         # 透传：股票名称（来自 stock_info 缓存）
+            "industry": f.get("industry", ""), # 透传：行业（来自 stock_info 缓存）
+            "price": f.get("price"),           # 透传：最新收盘价（来自 historical_kline）
             "factors": new_factors,
             "hit_count": f["hit_count"],
         })

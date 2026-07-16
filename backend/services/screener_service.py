@@ -356,23 +356,32 @@ def _process_single_stock(code: str) -> Optional[dict]:
         except Exception:
             pass
 
-        # 行业分类（尝试 Baostock 缓存，失败为空）
-        fund.setdefault("industry", "")
+        # 名称 + 行业 — 从 stock_info 缓存读取（run_screener 已预热全市场）
         try:
-            from services.baostock_adapter import _get_industry_map
-            ind_map = _get_industry_map()
-            if code in ind_map:
-                fund["industry"] = ind_map[code].get("industry", "")
+            from database import query_one
+            info_row = query_one(
+                "SELECT name, industry FROM stock_info WHERE stock_code = ?", (code,)
+            )
+            if info_row:
+                fund["name"] = info_row.get("name", "") or ""
+                fund["industry"] = info_row.get("industry", "") or ""
+            else:
+                fund.setdefault("name", "")
+                fund.setdefault("industry", "")
         except Exception:
-            pass
+            fund.setdefault("name", "")
+            fund.setdefault("industry", "")
 
-        # 注入雪球社交数据（已在 run_screener 预热缓存）
-        try:
-            from services.social_service import get_stock_social_score
-            stock_name = fund.get("name", "")
-            fund["_social"] = get_stock_social_score(code, stock_name)
-        except Exception:
-            fund["_social"] = {}
+        # 行业兜底 — Tushare preheat 失败时，从 Baostock industry_map 拿
+        # (24h 全局缓存 + run_screener 已预热，此处是 dict lookup)
+        if not fund.get("industry"):
+            try:
+                from services.baostock_adapter import _get_industry_map
+                ind_map = _get_industry_map()
+                if code in ind_map:
+                    fund["industry"] = ind_map[code].get("industry", "") or ""
+            except Exception:
+                pass
 
         # 获取北向资金 / 机构持仓数据
         north_flow_data = None
@@ -475,18 +484,27 @@ def run_screener(
     except Exception:
         logger.warning("screener_service: industry map preheat failed", exc_info=True)
 
-    # 预热雪球人气榜缓存（一次拉取，线程内直接匹配）
-    hot_stocks = []
-    try:
-        from services.social_service import get_hot_stocks
-        hot_stocks = get_hot_stocks(50)
-    except Exception:
-        logger.warning("screener_service: hot stocks preheat failed", exc_info=True)
-
     # 并发计算因子
     all_factors = []
     scanned = 0
     codes = [s["code"] for s in stock_list if s.get("code")]
+
+    # 预热 stock_info 缓存（Tushare 一次拉全市场 → name + industry，避免单只循环查询）
+    try:
+        from services.tushare_adapter import preheat_stock_info
+        preheat_result = preheat_stock_info(codes)
+        source = preheat_result.get("source", "unknown")
+        # 关键：written==0 说明所有数据源都拿不到数据，
+        # 必须升 WARNING，否则下游 stock_info 为空、name/industry 全靠兜底，回归不可见。
+        if preheat_result.get("written", 0) == 0:
+            logger.warning(
+                "screener_service: stock_info 预热 0 行写入 (source=%s, total=%s, error=%s) — 名称/行业将走 Baostock 兜底",
+                source, preheat_result.get("total"), preheat_result.get("error"),
+            )
+        else:
+            logger.info("screener_service: stock_info 预热 source=%s, written=%s", source, preheat_result.get("written"))
+    except Exception:
+        logger.warning("screener_service: stock_info 预热失败", exc_info=True)
 
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = {executor.submit(_process_single_stock, c): c for c in codes}

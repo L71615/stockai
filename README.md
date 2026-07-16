@@ -1,4 +1,4 @@
-# StockAI v3.8 — AI 量化选股 + 投资决策平台
+# StockAI v3.9 — AI 量化选股 + 投资决策平台
 
 > 55 因子多因子选股 · 13 策略模板 · 参数优化 · 策略对比 · AI 月报 · 交易记忆闭环 · 连亏保护 · 热点面板 · 板块过滤
 >
@@ -71,7 +71,10 @@ stocks/
 ├── backend/                     # Python FastAPI
 │   ├── routers/                 # API 路由 (11 个)
 │   ├── services/                # 业务服务 (30+ 个，含 futu_client / futu_ingest_service / futu_sync_service)
-│   └── strategies/              # 条件选股策略 YAML (9 个)
+│   │   └── providers/           # 数据源 Provider 抽象 (akshare / baostock / tushare + Chain fallback)
+│   ├── strategies/              # 条件选股策略 YAML (13 个)
+│   ├── sync_kline_full.py       # 全市场历史 K 线增量同步入口
+│   └── sync_kline_priority.py   # 自选股+持仓优先同步入口
 ├── database/                    # SQLite (WAL 模式, 20+ 表，含 futu_raw_* 与 futu_sync_* 状态表)
 ├── tests/                       # pytest（Futu client / ingest / sync / quant 等回归）
 └── scripts/                     # 工具脚本（导入、同步等）
@@ -166,6 +169,7 @@ NOTIFY_ENABLED=true
 
 ## 版本历史
 
+- **v3.9** (2026-07-16): 登录 JSON 解析防御(res.text + try/parse) + 双层 Header UI 重构(满足 DESIGN.md §Navigation)+ Top header 补 version 显示 + APP_VERSION 集中到 `frontend/src/lib/version.ts` + Tushare token 硬编码默认值脱敏(强制 .env 必填) + 数据源 Provider 抽象层(`backend/services/providers/`: akshare/baostock/tushare + Chain fallback) + 全量/优先级 K线同步脚本(`sync_kline_full.py` / `sync_kline_priority.py`)
 - **v3.8** (2026-07-09): 策略系统升级(13策略,可调参数+来源) + 参数优化器(网格搜索) + 策略对比(多策略并排) + 回测增强(手续费/过拟合警告/买卖点标注/信号理由) + AI月报+对比诊断 + 交易记忆策略维度 + 连亏保护增强(3级警告) + 热点面板(板块资金+北向) + 板块过滤(默认主板) + Bug修复(run_multi_agent_screen等)。33 files, +2983/-115 lines
 - **v3.7** (2026-07-03): 策略回测引擎 + 多 Agent 分析 + 交易记忆系统 + 数据源抽象层 + 交易纪律强制 + AI 设置修复 + 性能优化(筛选页轮询修复/DataTable 3→1倍/批量报价/SWR去重/Futu跳过)。23 files, +1970/-1639 lines
 - **v3.6** (2026-07-01): Futu Phase A + P1 — A 股 `quote / minute / daily` 接入 Futu OpenD，新增 `futu_raw_quote` / `futu_raw_kline`，日线同步 `historical_kline`，现有报价 / 日线 / 1m 图表优先走 Futu；新增 `futu_sync_service`、`futu_sync_runs` / `futu_sync_run_items`、`intraday` / `nightly` 批量同步、告警逻辑与调度触发
