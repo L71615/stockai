@@ -21,6 +21,7 @@ interface ScreenerResultsResponse {
 
 interface ScanResult {
   code: string; name: string; industry?: string; score: number; top_factors?: string[]
+  price?: number; change_pct?: number
 }
 
 interface BacktestResult {
@@ -268,7 +269,7 @@ export default function ScreenerPage() {
                             <th className="text-left p-2 font-medium sticky left-0 bg-muted z-20">#</th>
                             <th className="text-left p-2 font-medium sticky left-[28px] bg-muted z-20">代码</th>
                             <th className="text-left p-2 font-medium">名称</th>
-                            <th className="text-left p-2 font-medium">行业</th>
+                            <th className="text-right p-2 font-medium">股价</th>
                             <th className="text-left p-2 font-medium">评分</th>
                             <th className="text-left p-2 font-medium">关键因子</th>
                             <th className="text-right p-2 font-medium">操作</th>
@@ -279,8 +280,24 @@ export default function ScreenerPage() {
                             <tr key={r.code} className="border-t border-border hover:bg-accent/30 transition-colors">
                               <td className="p-2 text-muted-foreground sticky left-0 bg-background">{i + 1}</td>
                               <td className="p-2 font-mono sticky left-[28px] bg-background">{r.code}</td>
-                              <td className="p-2 font-medium">{r.name}</td>
-                              <td className="p-2 text-muted-foreground">{r.industry || "--"}</td>
+                              <td className="p-2 font-medium">{r.name || r.code}</td>
+                              <td className="p-2 text-right">
+                                {r.price != null ? (
+                                  <div className="flex flex-col items-end leading-tight">
+                                    <span className="font-mono tabular-nums">{r.price.toFixed(2)}</span>
+                                    {r.change_pct != null && (
+                                      <span className={cn(
+                                        "text-[10px] font-mono tabular-nums",
+                                        r.change_pct > 0 ? "text-red-500" : r.change_pct < 0 ? "text-emerald-500" : "text-muted-foreground"
+                                      )}>
+                                        {r.change_pct > 0 ? "+" : ""}{r.change_pct.toFixed(2)}%
+                                      </span>
+                                    )}
+                                  </div>
+                                ) : (
+                                  <span className="text-muted-foreground">--</span>
+                                )}
+                              </td>
                               <td className="p-2">
                                 <div className="flex items-center gap-1.5">
                                   <div className="w-16 h-1.5 bg-muted rounded-none overflow-hidden">
