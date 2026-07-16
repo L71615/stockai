@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
 import { apiGet, apiPost } from "@/lib/auth"
-import { IconChartBar, IconGridDots, IconChartScatter, IconFlask } from "@tabler/icons-react"
+import { IconChartBar, IconGridDots, IconChartScatter, IconFlask, IconPlayerPlay, IconCheck } from "@tabler/icons-react"
 import {
   ScatterChart, Scatter, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from "recharts"
@@ -53,6 +53,20 @@ interface ScatterResult {
   date: string | null
   stock_count: number
   points: ScatterPoint[]
+}
+
+// GP mining 类型
+interface GPCandidate {
+  id: number; expr_text: string; ir: number; ic_mean: number
+  win_rate: number; valid_days: number; tree_depth: number
+  promoted: number; run_id: string; created_at: string
+}
+interface GPHistory { generation: number; best_ir: number; best_expr: string; kept_count: number; duration_s: number }
+interface GPResult {
+  run_id: string
+  best: Array<{ expr: string; ir: number; ic_mean: number; win_rate: number; valid_days: number; tree_depth: number }>
+  history: GPHistory[]
+  stats: { evaluated: number; duration_s: number; kept: number }
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -373,6 +387,213 @@ function CorrelationTab({ factors, pool }: any) {
 }
 
 // ═══════════════════════════════════════════════════════════
+//  Tab 4: GP 因子挖掘
+// ═══════════════════════════════════════════════════════════
+
+function MiningTab({ pool }: { pool: string }) {
+  const [candidates, setCandidates] = useState<GPCandidate[]>([])
+  const [minIr, setMinIr] = useState(0.0)
+  const [running, setRunning] = useState(false)
+  const [error, setError] = useState("")
+  const [lastRun, setLastRun] = useState<GPResult | null>(null)
+  const [popSize, setPopSize] = useState(30)
+  const [gens, setGens] = useState(3)
+
+  const refreshCandidates = async () => {
+    try {
+      const d = await apiGet<{ candidates: GPCandidate[]; count: number }>(
+        `/api/factor-lab/mine/candidates?min_ir=${minIr}&limit=50`
+      )
+      setCandidates(d.candidates || [])
+    } catch (e) {
+      console.error(e)
+    }
+  }
+
+  useEffect(() => { refreshCandidates() }, [minIr])  // eslint-disable-line react-hooks/exhaustive-deps
+
+  const runMine = async () => {
+    setRunning(true)
+    setError("")
+    setLastRun(null)
+    try {
+      const params = new URLSearchParams()
+      params.append("pool", pool)
+      params.append("population", String(popSize))
+      params.append("generations", String(gens))
+      params.append("top_k", "10")
+      const res = await apiPost<GPResult>(`/api/factor-lab/mine/run?${params.toString()}`)
+      setLastRun(res)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "挖掘失败")
+    } finally {
+      setRunning(false)
+      refreshCandidates()
+    }
+  }
+
+  const promote = async (id: number) => {
+    try {
+      await apiPost(`/api/factor-lab/mine/candidate/${id}/promote`)
+      refreshCandidates()
+    } catch (e) {
+      console.error(e)
+    }
+  }
+
+  return (
+    <div className="space-y-4">
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm flex items-center gap-2">
+            <IconFlask className="size-4" />
+            GP 遗传编程 — 自动挖掘新因子
+          </CardTitle>
+          <CardDescription className="text-xs">
+            随机生成 + 评估 IC + 选择 + 变异 + 交叉 的进化循环, 自动发现新因子表达式
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="flex flex-wrap items-end gap-3">
+            <div className="space-y-1">
+              <label className="text-[10px] text-muted-foreground">种群大小</label>
+              <Input type="number" value={popSize} onChange={(e) => setPopSize(Number(e.target.value))} className="h-8 w-20 text-xs" min={10} max={200} />
+            </div>
+            <div className="space-y-1">
+              <label className="text-[10px] text-muted-foreground">迭代代数</label>
+              <Input type="number" value={gens} onChange={(e) => setGens(Number(e.target.value))} className="h-8 w-20 text-xs" min={1} max={20} />
+            </div>
+            <div className="space-y-1">
+              <label className="text-[10px] text-muted-foreground">显示 IR ≥</label>
+              <Input type="number" value={minIr} onChange={(e) => setMinIr(Number(e.target.value))} className="h-8 w-20 text-xs" step={0.05} />
+            </div>
+            <Button onClick={runMine} disabled={running} size="sm">
+              <IconPlayerPlay className="size-3.5 mr-1" />
+              {running ? "挖掘中..." : "运行 GP"}
+            </Button>
+          </div>
+          <p className="text-[10px] text-muted-foreground">
+            时间预估: 30 pop × 3 代 ≈ 1-2 分钟, 50 pop × 5 代 ≈ 5-10 分钟
+          </p>
+          {error && <p className="text-xs text-destructive">{error}</p>}
+        </CardContent>
+      </Card>
+
+      {lastRun && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm flex items-center gap-2">
+              <IconCheck className="size-4 text-emerald-400" />
+              运行完成 — {lastRun.run_id}
+            </CardTitle>
+            <p className="text-[10px] text-muted-foreground">
+              评估 {lastRun.stats.evaluated} 表达式 / 保留 {lastRun.stats.kept} / 耗时 {lastRun.stats.duration_s}s
+            </p>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div>
+              <p className="text-[10px] text-muted-foreground mb-1">每代最佳 IR:</p>
+              <div className="flex flex-wrap gap-2">
+                {lastRun.history.map((h) => (
+                  <Badge key={h.generation} variant="outline" className="text-[10px] font-mono">
+                    代 {h.generation}: {h.best_ir >= 0 ? "+" : ""}{h.best_ir.toFixed(3)}
+                  </Badge>
+                ))}
+              </div>
+            </div>
+            <div>
+              <p className="text-[10px] text-muted-foreground mb-1">本轮 Top 候选:</p>
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead className="bg-muted/50">
+                    <tr>
+                      <th className="p-2 text-left">表达式</th>
+                      <th className="p-2 text-right">IR</th>
+                      <th className="p-2 text-right">IC</th>
+                      <th className="p-2 text-right">胜率</th>
+                      <th className="p-2 text-right">深度</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {lastRun.best.slice(0, 10).map((c, i) => (
+                      <tr key={i} className="border-t border-border">
+                        <td className="p-2 font-mono">{c.expr}</td>
+                        <td className={`p-2 text-right font-mono tabular-nums ${c.ir >= 0 ? "text-red-400" : "text-emerald-400"}`}>
+                          {c.ir >= 0 ? "+" : ""}{c.ir.toFixed(4)}
+                        </td>
+                        <td className="p-2 text-right font-mono tabular-nums">{c.ic_mean >= 0 ? "+" : ""}{c.ic_mean.toFixed(5)}</td>
+                        <td className="p-2 text-right font-mono tabular-nums">{(c.win_rate * 100).toFixed(0)}%</td>
+                        <td className="p-2 text-right text-muted-foreground">{c.tree_depth}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm">
+            历史候选池 ({candidates.length} 条, IR ≥ {minIr.toFixed(2)})
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="p-0">
+          {candidates.length === 0 ? (
+            <p className="text-xs text-muted-foreground py-8 text-center">
+              暂无候选, 运行 GP 挖掘
+            </p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead className="bg-muted/50 sticky top-0">
+                  <tr>
+                    <th className="p-2 text-left">表达式</th>
+                    <th className="p-2 text-right">IR</th>
+                    <th className="p-2 text-right">IC</th>
+                    <th className="p-2 text-right">胜率</th>
+                    <th className="p-2 text-right">深度</th>
+                    <th className="p-2 text-left">run</th>
+                    <th className="p-2 text-center">采纳</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {candidates.map((c) => (
+                    <tr key={c.id} className="border-t border-border hover:bg-accent/30">
+                      <td className="p-2 font-mono">{c.expr_text}</td>
+                      <td className={`p-2 text-right font-mono tabular-nums ${c.ir >= 0 ? "text-red-400" : "text-emerald-400"}`}>
+                        {c.ir >= 0 ? "+" : ""}{c.ir.toFixed(4)}
+                      </td>
+                      <td className="p-2 text-right font-mono tabular-nums">{c.ic_mean >= 0 ? "+" : ""}{c.ic_mean.toFixed(5)}</td>
+                      <td className="p-2 text-right font-mono tabular-nums">{(c.win_rate * 100).toFixed(0)}%</td>
+                      <td className="p-2 text-right text-muted-foreground">{c.tree_depth}</td>
+                      <td className="p-2 text-[10px] text-muted-foreground font-mono">{c.run_id.slice(-6)}</td>
+                      <td className="p-2 text-center">
+                        {c.promoted ? (
+                          <Badge className="text-[10px] bg-emerald-400/10 text-emerald-400">
+                            <IconCheck className="size-2.5 mr-0.5" />已采纳
+                          </Badge>
+                        ) : (
+                          <Button size="sm" variant="ghost" className="h-5 px-1.5 text-[10px]" onClick={() => promote(c.id)}>
+                            采纳
+                          </Button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  )
+}
+
+// ═══════════════════════════════════════════════════════════
 //  Tab 3: 散点图
 // ═══════════════════════════════════════════════════════════
 
@@ -521,10 +742,11 @@ export default function FactorLabPage() {
       <SiteHeader title="因子实验室" />
       <div className="flex flex-1 flex-col overflow-auto p-4 lg:p-6 space-y-4">
         <Tabs defaultValue="ic" className="space-y-4">
-          <TabsList className="grid w-full max-w-xl grid-cols-3">
+          <TabsList className="grid w-full max-w-xl grid-cols-4">
             <TabsTrigger value="ic" className="text-xs"><IconChartBar className="size-3.5 mr-1" />IC 分析</TabsTrigger>
             <TabsTrigger value="correlation" className="text-xs"><IconGridDots className="size-3.5 mr-1" />相关性矩阵</TabsTrigger>
             <TabsTrigger value="scatter" className="text-xs"><IconChartScatter className="size-3.5 mr-1" />散点图</TabsTrigger>
+            <TabsTrigger value="mining" className="text-xs"><IconFlask className="size-3.5 mr-1" />GP 挖掘</TabsTrigger>
           </TabsList>
           <TabsContent value="ic">
             <ICTab
@@ -539,6 +761,9 @@ export default function FactorLabPage() {
           </TabsContent>
           <TabsContent value="scatter">
             <ScatterTab factors={factors} pool={pool} />
+          </TabsContent>
+          <TabsContent value="mining">
+            <MiningTab pool={pool} />
           </TabsContent>
         </Tabs>
       </div>
