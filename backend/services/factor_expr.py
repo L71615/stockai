@@ -435,12 +435,17 @@ def gp_mine(stock_pool: str = "csi800",
 
     logger.info("GP mine start: run=%s pool=%s pop=%d gen=%d", run_id, stock_pool, population, generations)
 
-    # 加载股票池
+    # 加载股票池 (start_date/end_date 为 None 时用默认值)
     from services.factor_lab import get_stock_pool, load_kline_panel
+    if not start_date:
+        start_date = (pd.Timestamp.now() - pd.Timedelta(days=270)).strftime("%Y-%m-%d")
+    if not end_date:
+        end_date = pd.Timestamp.now().strftime("%Y-%m-%d")
+
     stock_codes = get_stock_pool(stock_pool)
     panels = load_kline_panel(stock_codes, start_date, end_date)
     if not panels:
-        return {"error": "股票池为空", "run_id": run_id}
+        return {"error": "股票池为空", "run_id": run_id, "start_date": start_date, "end_date": end_date}
 
     # 初始化种群
     population_set = set()
