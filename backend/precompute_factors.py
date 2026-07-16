@@ -83,60 +83,86 @@ def read_kline(conn, code: str, days: int = 252) -> dict:
 
 
 def preheat_fundamentals(conn, code: str) -> dict:
-    """从 DB 取基本面快照 (避免外网调用)"""
+    """从 DB 取基本面快照 (避免外网调用)
+
+    local_fundamentals 实际列:
+      stock_code, trade_date, pe_ttm, pb, market_cap, turnover_rate,
+      eps, roe, dividend_yield, source
+
+    name/industry 从 stock_info 表取
+    """
     row = conn.execute(
-        """SELECT name, industry, pe, pb, roe, eps, market_cap_billion, ps_ttm,
-                  gross_margin, debt_ratio, dividend_yield, eps_prev
+        """SELECT pe_ttm, pb, market_cap, turnover_rate, eps, roe, dividend_yield
            FROM local_fundamentals
            WHERE stock_code = ?
            ORDER BY trade_date DESC
            LIMIT 1""",
         (code,),
     ).fetchone()
-    if not row:
-        return {}
-    return {
-        "name": row[0] or "",
-        "industry": row[1] or "",
-        "pe": row[2], "pb": row[3], "roe": row[4],
-        "eps": row[5], "market_cap_billion": row[6],
-        "ps_ttm": row[7], "gross_margin": row[8],
-        "debt_ratio": row[9], "dividend_yield": row[10],
-        "prev_eps": row[11],
+
+    # name + industry 来自 stock_info
+    info_row = conn.execute(
+        "SELECT name, industry FROM stock_info WHERE stock_code = ?",
+        (code,),
+    ).fetchone()
+
+    fund = {
+        "name": (info_row[0] if info_row else "") or "",
+        "industry": (info_row[1] if info_row else "") or "",
+        "pe": row[0] if row else None,
+        "pb": row[1] if row else None,
+        "market_cap_billion": row[2] if row else None,    # market_cap (亿)
+        "turnover_rate": row[3] if row else None,
+        "eps": row[4] if row else None,
+        "roe": row[5] if row else None,
+        "dividend_yield": row[6] if row else None,
+        # local_fundamentals 没有这些字段, 给 None
+        "ps_ttm": None,
+        "gross_margin": None,
+        "debt_ratio": None,
+        "prev_eps": None,
     }
+    return fund
 
 
-def compute_one(conn, code: str) -> tuple[str, int, str]:
+def compute_one(code: str) -> tuple[str, int, str]:
     """算一只股票的 55 因子 + 写 snapshot
 
     Returns:
         (code, snapshot_rows, info/error_msg)
+
+    每个 worker 自己创建 sqlite 连接 (Python sqlite3 Connection 不能跨线程)
     """
-    if not has_enough_kline(conn, code):
-        return (code, 0, "kline<120")
-
-    kline = read_kline(conn, code)
-    fund = preheat_fundamentals(conn, code)
-
+    # 每个线程独立 connection (check_same_thread=False)
+    conn = sqlite3.connect(str(DB), check_same_thread=False, timeout=30.0)
     try:
-        from services.factor_service import compute_all_factors
-        from services.factor_snapshot import save_snapshot
+        if not has_enough_kline(conn, code):
+            return (code, 0, "kline<120")
 
-        result = compute_all_factors(
-            code=code,
-            closes=kline.get("closes", []),
-            highs=kline.get("highs", []),
-            lows=kline.get("lows", []),
-            volumes=kline.get("volumes", []),
-            fundamentals=fund,
-            prev_eps=fund.get("prev_eps"),
-            dividend=fund.get("dividend_yield"),
-        )
-        factors = result.get("factors", {})
-        n = save_snapshot(code, factors)
-        return (code, n, "ok")
-    except Exception as e:
-        return (code, 0, f"{type(e).__name__}: {str(e)[:80]}")
+        kline = read_kline(conn, code)
+        fund = preheat_fundamentals(conn, code)
+
+        try:
+            from services.factor_service import compute_all_factors
+            from services.cache import save_factor_snapshot
+
+            result = compute_all_factors(
+                code=code,
+                closes=kline.get("closes", []),
+                highs=kline.get("highs", []),
+                lows=kline.get("lows", []),
+                volumes=kline.get("volumes", []),
+                fundamentals=fund,
+                prev_eps=fund.get("prev_eps"),
+                dividend=fund.get("dividend_yield"),
+            )
+            factors = result.get("factors", {})
+            n = save_factor_snapshot(code, factors)
+            return (code, n, "ok")
+        except Exception as e:
+            return (code, 0, f"{type(e).__name__}: {str(e)[:80]}")
+    finally:
+        conn.close()
 
 
 def main():
@@ -149,19 +175,19 @@ def main():
     only_codes = [c.strip() for c in args.codes.split(",")] if args.codes else None
 
     log.info("DB = %s", DB)
-    conn = sqlite3.connect(str(DB))
+    conn = sqlite3.connect(str(DB), check_same_thread=False, timeout=30.0)
 
     if args.refresh:
-        from services.factor_snapshot import clear_all
-        n = clear_all()
+        from services.cache import clear_factor_snapshot
+        n = clear_factor_snapshot()
         log.info("refresh: cleared %d old snapshot rows", n)
 
     codes = get_all_codes(conn, only_codes)
     log.info("target stocks: %d", len(codes))
+    conn.close()
 
     if not codes:
         log.info("nothing to do, exit.")
-        conn.close()
         return
 
     start = time.time()
@@ -169,7 +195,7 @@ def main():
     failures: list[tuple[str, str]] = []
 
     with ThreadPoolExecutor(max_workers=args.workers) as ex:
-        futures = {ex.submit(compute_one, conn, c): c for c in codes}
+        futures = {ex.submit(compute_one, c): c for c in codes}
         for fut in as_completed(futures):
             code, n, info = fut.result()
             done += 1
@@ -199,8 +225,6 @@ def main():
         log.warning("first 10 failures:")
         for c, info in failures[:10]:
             log.warning("  %s -> %s", c, info)
-
-    conn.close()
 
 
 if __name__ == "__main__":
