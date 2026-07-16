@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
 import { apiGet, apiPost } from "@/lib/auth"
-import { IconChartBar, IconGridDots, IconScatterChart, IconFlask } from "@tabler/icons-react"
+import { IconChartBar, IconGridDots, IconChartScatter, IconFlask } from "@tabler/icons-react"
 import {
   ScatterChart, Scatter, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from "recharts"
@@ -403,7 +403,7 @@ function ScatterTab({ factors, pool }: any) {
       <Card>
         <CardHeader className="pb-2">
           <CardTitle className="text-sm flex items-center gap-2">
-            <IconScatterChart className="size-4" />
+            <IconChartScatter className="size-4" />
             散点图探索 — 两因子关系
           </CardTitle>
           <CardDescription className="text-xs">
@@ -524,7 +524,7 @@ export default function FactorLabPage() {
           <TabsList className="grid w-full max-w-xl grid-cols-3">
             <TabsTrigger value="ic" className="text-xs"><IconChartBar className="size-3.5 mr-1" />IC 分析</TabsTrigger>
             <TabsTrigger value="correlation" className="text-xs"><IconGridDots className="size-3.5 mr-1" />相关性矩阵</TabsTrigger>
-            <TabsTrigger value="scatter" className="text-xs"><IconScatterChart className="size-3.5 mr-1" />散点图</TabsTrigger>
+            <TabsTrigger value="scatter" className="text-xs"><IconChartScatter className="size-3.5 mr-1" />散点图</TabsTrigger>
           </TabsList>
           <TabsContent value="ic">
             <ICTab
