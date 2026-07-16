@@ -1,6 +1,6 @@
 # StockAI v3.9 — AI Quant Stock Screening & Investment Decision Platform
 
-> 55-factor multi-factor screening · 13 strategy templates · parameter optimization · strategy comparison · AI monthly reports · trading memory loop · loss-streak protection · hot sector panel · sector filtering
+> 55-factor multi-factor screening · 13 strategy templates · parameter optimization · strategy comparison · AI monthly reports · trading memory loop · loss-streak protection · factor lab (IC / correlation / scatter / GP mining / ML mining)
 >
 > A quant toolbox for A-share investors. Data-driven, AI-enhanced.
 
@@ -37,6 +37,7 @@
 | 🔥 **Hot Sector Panel** | Homepage sector fund-flow TOP5 + northbound capital holdings TOP5, 5-minute auto refresh |
 | 🔌 **Data Source Abstraction** | Config-driven multi-source fallback (Futu → Sina → AKShare → Baostock), env-var toggle, plug-and-play new providers |
 | 📈 **Quant Analysis** | Per-stock K-line (5 indicators + explainer) + 55-factor panoramic view (9 categories + radar) + portfolio risk metrics (Sharpe/drawdown/volatility/Beta) / Monte Carlo |
+| 🔬 **Factor Lab** | IC analysis (factor predictive power) + correlation matrix (drop redundant factors) + scatter plot (factor vs return) + GP genetic programming mining + LightGBM ML factor generation (test IR=0.45) |
 | 💬 **AI Chat** | SSE streaming, DeepSeek / MiniMax / OpenAI / Claude multi-vendor, function-independent configuration |
 | 🔔 **Notifications** | WeChat Work / Telegram / Email, watchlist anomaly auto-push |
 | 💼 **Portfolio Management** | Real-time P&L + diversification pie + auto industry classification (20+ sectors) |
@@ -230,6 +231,7 @@ NOTIFY_ENABLED=true
 
 ## <a id="version-history"></a>📝 Version History
 
+- **v3.9 follow-up** (2026-07-16): Performance optimizations (Tushare Provider + max_workers=12 + DB index) + three-tier caching (factor_snapshot / daily_north_flow / daily_inst_holding) + data expansion (5524 stocks × 1-year K-line) + **Factor Lab** (`/factor-lab` 5 tabs: IC analysis / correlation / scatter / GP genetic-programming mining / LightGBM ML mining) + removed broken sector-fund/northbound panels (akshare bug) + dual-header UI refactor + Tushare token rotated. 19 files, +2000/−700 lines
 - **v3.9** (2026-07-16): Login JSON-parse hardening (`res.text` + try/parse) + dual-header UI refactor (DESIGN.md §Navigation compliance) + Top header version display + `APP_VERSION` centralized in `frontend/src/lib/version.ts` + Tushare token hardcoded default removed (env required) + data-source Provider abstraction (`backend/services/providers/`: akshare/baostock/tushare + Chain fallback) + full / priority K-line sync scripts (`sync_kline_full.py` / `sync_kline_priority.py`)
 - **v3.8** (2026-07-09): Strategy system upgrade (13 strategies, tunable params + source) + parameter optimizer (grid search) + strategy comparison (side-by-side) + backtest enhancements (fees / overfit warnings / buy-sell markers / signal reasons) + AI monthly reports + month-over-month diagnosis + trading-memory strategy dimension + loss-streak protection (3-level warning) + hot sector panel (sector flow + northbound) + sector filter (main board default) + bug fixes (`run_multi_agent_screen` etc.). 33 files, +2983/−115 lines
 - **v3.7** (2026-07-03): Strategy backtest engine + multi-agent analysis + trading memory system + data-source abstraction + trading discipline enforcement + AI settings fix + performance optimizations (screener poll fix / DataTable 3→1× / batch quotes / SWR dedup / Futu skip). 23 files, +1970/−1639 lines

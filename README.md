@@ -1,6 +1,6 @@
 # StockAI v3.9 — AI 量化选股 + 投资决策平台
 
-> 55 因子多因子选股 · 13 策略模板 · 参数优化 · 策略对比 · AI 月报 · 交易记忆闭环 · 连亏保护 · 热点面板 · 板块过滤
+> 55 因子多因子选股 · 13 策略模板 · 参数优化 · 策略对比 · AI 月报 · 交易记忆闭环 · 连亏保护 · 因子实验室(IC/相关性/散点/GP 挖掘/ML 挖掘)
 >
 > A 股投资者的量化工具箱。数据驱动，AI 增强。
 
@@ -34,9 +34,9 @@
 | 🧠 **交易记忆** | 决策→验证→反思→注入 自动闭环，策略维度追踪(每笔交易记录触发策略)，AI 分析时自动引用 |
 | 📋 **AI 月报** | 当月交易聚合→AI 结构化报告(总成绩/赚最多/亏最多/策略PK/改进建议)，上月对比诊断(进步/退步) |
 | 🛡 **交易纪律** | 买入前强制校验(止损检查+仓位限制+追涨停禁止)，连亏保护(3级警告+亏损明细+行动建议) |
-| 🔥 **热点面板** | 首页板块资金流向 TOP5 + 北向资金持股 TOP5，5分钟自动刷新 |
 | 🔌 **数据源抽象** | 配置驱动多源 fallback(Futu→新浪→AKShare→Baostock)，环境变量一键切换，新数据源插拔式接入 |
 | 📊 **量化分析** | 个股 K 线(5 指标+讲解栏) + 55 因子全景透视(9 类+雷达图) + 组合风险指标(Sharpe/回撤/波动率/Beta) / 蒙特卡洛 |
+| 🔬 **因子实验室** | IC 分析(因子预测能力) + 相关性矩阵(剔除冗余因子) + 散点图(因子vs收益) + GP 遗传编程挖掘新因子 + LightGBM ML 因子生成(测试集 IR=0.45) |
 | 🧠 **AI 对话** | SSE 流式响应，DeepSeek/MiniMax/OpenAI/Claude 多供应商，功能独立配置 |
 | 🔔 **通知推送** | 企业微信 / Telegram / 邮件，盯盘异动自动推送 |
 | 💼 **持仓管理** | 实时盈亏 + 分散度饼图 + 行业自动分类（20+ 板块） |
@@ -217,6 +217,8 @@ NOTIFY_ENABLED=true
 ## <a id="version-history"></a>📝 版本历史
 
 - **v3.9** (2026-07-16): 登录 JSON 解析防御(res.text + try/parse) + 双层 Header UI 重构(满足 DESIGN.md §Navigation)+ Top header 补 version 显示 + APP_VERSION 集中到 `frontend/src/lib/version.ts` + Tushare token 硬编码默认值脱敏(强制 .env 必填) + 数据源 Provider 抽象层(`backend/services/providers/`: akshare/baostock/tushare + Chain fallback) + 全量/优先级 K线同步脚本(`sync_kline_full.py` / `sync_kline_priority.py`)
+- **v3.9 后续** (2026-07-16): 性能优化(Tushare Provider + max_workers=12 + DB 索引) + 三层缓存(factor_snapshot/daily_north_flow/daily_inst_holding) + 数据扩充(5524 只全市场 K 线补齐) + **因子实验室**(/factor-lab 5 Tab: IC分析/相关性/散点图/GP 遗传编程挖掘/LightGBM ML 挖掘) + 清理板块资金北向资金(akshare 坏) + 双层 Header 重构 + Tushare token rotate。19 files, +2000/−700 lines
+- **v3.9** (2026-07-09): 登录 JSON 防御(res.text + try/parse) + 数据源 Provider + 安全脱敏。13 files, +1400/−500 lines
 - **v3.8** (2026-07-09): 策略系统升级(13策略,可调参数+来源) + 参数优化器(网格搜索) + 策略对比(多策略并排) + 回测增强(手续费/过拟合警告/买卖点标注/信号理由) + AI月报+对比诊断 + 交易记忆策略维度 + 连亏保护增强(3级警告) + 热点面板(板块资金+北向) + 板块过滤(默认主板) + Bug修复(run_multi_agent_screen等)。33 files, +2983/-115 lines
 - **v3.7** (2026-07-03): 策略回测引擎 + 多 Agent 分析 + 交易记忆系统 + 数据源抽象层 + 交易纪律强制 + AI 设置修复 + 性能优化(筛选页轮询修复/DataTable 3→1倍/批量报价/SWR去重/Futu跳过)。23 files, +1970/-1639 lines
 - **v3.6** (2026-07-01): Futu Phase A + P1 — A 股 `quote / minute / daily` 接入 Futu OpenD，新增 `futu_raw_quote` / `futu_raw_kline`，日线同步 `historical_kline`，现有报价 / 日线 / 1m 图表优先走 Futu；新增 `futu_sync_service`、`futu_sync_runs` / `futu_sync_run_items`、`intraday` / `nightly` 批量同步、告警逻辑与调度触发

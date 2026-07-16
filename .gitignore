@@ -41,3 +41,8 @@ backend-start.out.log
 # --- 本地报告（含交易数据/选股结果，不提交）---
 reports/
 第三方报告/
+
+# 演示 / 测试临时文件 (不入库)
+gp_run*.json
+ml_run*.json
+test_*.json

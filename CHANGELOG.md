@@ -1,10 +1,70 @@
 # StockAI 项目日志
 
-> StockAI 从 0 到 v3.9 的完整演进记录。按时间倒序。总计 25 次重大更新。
+> StockAI 从 0 到 v3.9 的完整演进记录。按时间倒序。总计 27 次重大更新。
+
+---
+
+## 2026-07-16 — v3.9 后续 性能优化 + 因子实验室 Phase 1/2/3
+
+### 性能优化
+- **Tushare K 线 Provider** (`services/providers/tushare.py`)：新增 `TushareKLineProvider`，1 次 MCP 调用拉 1 只股票 ~250 个交易日（~0.4s/只，比 Baostock 1.5s 快 4×）
+- **vendor_chain 顺序调整**：`tushare_kline → baostock_kline → akshare_kline`（默认 Tushare 优先）
+- **screener max_workers 3 → 12**：全市场扫描提速 4×
+- **DB 联合索引** `(stock_code, trade_date)`：历史 K 线查询提速 3-5×
+- **schema.sql** 补 `historical_kline` 表声明（之前缺失）+ 索引声明
+
+### 三层缓存
+- `factor_snapshot` 表（55 因子 × 全市场）：precompute 11 秒完成 5528 只；screener 命中秒读
+- `daily_north_flow` / `daily_inst_holding` 表：precompute 30 秒完成 watchlist+holdings 200 只
+- `services/cache.py`：统一 read/write 接口（lazy-write + TTL 24h）
+
+### 数据扩充
+- `sync_kline_full.py` 跑完 5524 只全市场：从 0% 覆盖到 **5114 只有 1 年 K 线**
+- 之前 3001 只 < 60 条 → 现在 344 只残缺（北交所代码 Tushare 不覆盖）
+- `precompute_factors.py` / `precompute_market_cache.py` 离线预热脚本
+
+### 因子实验室 (新模块 `/factor-lab`, 5 Tab)
+
+#### Phase 1: 诊断 (1 天)
+- **Tab IC 分析**：15 个纯价格/技术因子的 IC 时序 + IR + 胜率 + 衰减 + 评级
+- **Tab 相关性矩阵**：N×N Pearson 热图 + 点击格子看解读（>0.7 提示重复因子）
+- **Tab 散点图**：两因子散点 + 相关系数 + 回归线
+- 后端：`services/factor_lab.py` (440 行) + `routers/factor_lab.py` (140 行)
+
+#### Phase 2: GP 遗传编程挖掘 (1 周)
+- **Tab GP 挖掘**：随机生成 + IC 评估 + 选择 top + 变异/交叉 + 迭代
+- 表达式引擎：15 算子（close/ma/std/delta/abs/log 等）+ AST 安全求值
+- 实测 (30 pop × 3 代 × 9 个月)：挖出 `returns` IR=+0.388（比手算 ret_5d IR=0.149 强 2.6×）
+- `factor_candidates` 表 + 采纳/未采纳状态
+
+#### Phase 3: LightGBM ML 因子生成 (1-2 周)
+- **Tab ML 挖掘**：15 特征 → LightGBM 训练 → 特征重要性 + 训练/测试 IR + 多空 spread
+- 实测 (100 树 × csi800 × 9 个月 = 8 秒)：训练 IR=2.0, 测试 IR=0.45, **多空 spread=+0.50%/日**
+- 模型保存 .pkl 到 `backend/data/ml_models/`
+- 后端：`services/factor_ml.py` (260 行)
+
+### 清理
+- **删除板块资金 + 北向资金**（akshare 接口全坏且用户决定不需要）：
+  - 删 `routers/stocks.py` `/api/stocks/market-heatmap` 路由
+  - 删 `services/akshare_adapter.py` `get_sector_fund_flow` / `get_north_flow_ranking` / `get_market_heatmap`（170 行）
+  - 删 `frontend/src/components/hot-panel.tsx`（132 行）
+
+### UI / 文档
+- 双层 Header 重构：去掉 `site-header.tsx` 多余 SidebarTrigger（DESIGN.md 合规）
+- 侧边栏导航加"因子实验室"入口
+- README 完善：中英双语 + TOC + 数据源章节准确化
+- Tushare token rotate + 脱敏（token 已泄漏到 git history，rotate 后失效）
+
+### 文件统计
+- 19 个 commit 全部 push
+- 新增 ~2000 行（factor_lab + factor_ml + factor_expr）
+- 删除 ~700 行（hot-panel + 3 个 akshare 函数）
+- 总计 27 次重大更新
 
 ---
 
 ## 2026-07-16 — v3.9 登录健壮性 + UI 合规
+
 
 ### 登录 JSON 解析防御
 - `frontend/src/app/login/page.tsx` 改写 fetch 错误处理：先 `res.text()` 读全文，再用 try/JSON.parse 解析
