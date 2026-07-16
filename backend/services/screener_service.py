@@ -419,7 +419,7 @@ def _process_single_stock(code: str) -> Optional[dict]:
 
 def run_screener(
     stock_list: list[dict] = None,
-    max_workers: int = 3,
+    max_workers: int = 12,
     progress_callback=None,
     allowed_boards: set[str] | None = None,
 ) -> dict:
@@ -427,7 +427,7 @@ def run_screener(
 
     Args:
         stock_list: 股票列表，默认自动获取全A股
-        max_workers: 并发线程数
+        max_workers: 并发线程数 (默认 12, 原 3 — 4× 提速)
         progress_callback: 可选，进度回调 (current, total) -> None
         allowed_boards: 允许的板块集合，None=默认（沪深主板）。可选: main_sh, main_sz, gem, star, bse, nq
 

@@ -103,3 +103,18 @@ CREATE INDEX idx_transactions_user   ON transactions(user_id);
 CREATE INDEX idx_transactions_date   ON transactions(traded_at);
 CREATE INDEX idx_ai_messages_conv    ON ai_messages(conversation_id);
 CREATE INDEX idx_alerts_user         ON price_alerts(user_id);
+
+
+-- 历史 K 线表 (screener / quant / 回测主数据源)
+CREATE TABLE historical_kline (
+    stock_code  TEXT    NOT NULL,
+    trade_date  TEXT    NOT NULL,
+    open        REAL,
+    high        REAL,
+    low         REAL,
+    close       REAL,
+    volume      REAL,
+    PRIMARY KEY (stock_code, trade_date)
+);
+CREATE INDEX idx_hkline_date         ON historical_kline(trade_date);
+CREATE INDEX idx_hkline_code_date    ON historical_kline(stock_code, trade_date);

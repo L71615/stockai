@@ -19,7 +19,7 @@ from .base import StockInfo, KLine, StockInfoProvider, KLineProvider
 from .chain import StockInfoChain, KLineChain
 
 # Provider 实现
-from .tushare import TushareStockInfoProvider
+from .tushare import TushareStockInfoProvider, TushareKLineProvider
 from .akshare import AkshareStockInfoProvider, AkshareKLineProvider
 from .baostock import BaostockIndustryProvider, BaostockKLineProvider
 
@@ -34,10 +34,11 @@ def build_stock_info_chain() -> StockInfoChain:
 
 
 def build_kline_chain() -> KLineChain:
-    """默认 Chain: Baostock (主) → Akshare (兜底)"""
+    """默认 Chain: Tushare (主, 1次调用拉单只) → Baostock (兜底) → Akshare (兜底)"""
     return KLineChain([
-        BaostockKLineProvider(),
-        AkshareKLineProvider(),
+        TushareKLineProvider(),     # 1 次 MCP 调用拉 1 只 ~250 交易日 (~0.4s/只)
+        BaostockKLineProvider(),    # 1.5s/只, 稳定兜底
+        AkshareKLineProvider(),     # ~0.4s/只, 最后兜底
     ])
 
 
