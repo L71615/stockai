@@ -8,6 +8,7 @@ import { AppSidebar } from "@/components/app-sidebar"
 import { SWRProvider } from "@/lib/swr-config"
 import { isAuthenticated } from "@/lib/auth"
 import { getProtectedPageAuthState } from "@/lib/protected-page-auth"
+import { APP_VERSION } from "@/lib/version"
 
 const subscribe = () => () => {}
 
@@ -48,8 +49,9 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
         <SidebarProvider defaultOpen={true}>
           <AppSidebar />
           <SidebarInset>
-            <header className="flex h-12 shrink-0 items-center gap-2 border-b border-border px-4">
+            <header className="flex h-12 shrink-0 items-center justify-between gap-2 border-b border-border px-4">
               <SidebarTrigger />
+              <span className="text-xs text-muted-foreground tabular-nums">{APP_VERSION}</span>
             </header>
             <div className="flex flex-1 flex-col">{children}</div>
           </SidebarInset>

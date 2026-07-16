@@ -1,6 +1,28 @@
 # StockAI 项目日志
 
-> StockAI 从 0 到 v3.8 的完整演进记录。按时间倒序。总计 24 次重大更新。
+> StockAI 从 0 到 v3.9 的完整演进记录。按时间倒序。总计 25 次重大更新。
+
+---
+
+## 2026-07-16 — v3.9 登录健壮性 + UI 合规
+
+### 登录 JSON 解析防御
+- `frontend/src/app/login/page.tsx` 改写 fetch 错误处理：先 `res.text()` 读全文，再用 try/JSON.parse 解析
+- 防御场景：后端瞬时 502 / dev `--reload` 重载 / 网络异常导致响应非 JSON 时，前端不再抛 `Unexpected token 'I', "Internal S"...` 给用户
+- 用户体验：错误时直接展示真实状态码 + 响应内容前 80 字符（如 `服务器返回了非 JSON 内容（HTTP 502）— Internal Server Error`），不再被 SyntaxError 误导
+- 保留 `error` / `detail` / 数组型 `detail.msg` 三种后端错误格式兼容
+
+### 双层 Header UI 重构（DESIGN.md §Navigation 合规）
+- 根因：`app-layout.tsx` 全局 header 与 `site-header.tsx` 页面 header 各有一个 `SidebarTrigger`，每个页面顶部出现两道折叠按钮，视觉重复
+- `frontend/src/components/site-header.tsx` 移除 `SidebarTrigger` + `Separator`，仅保留页面标题
+- `frontend/src/components/app-layout.tsx` 全局 header 改为 `justify-between`：左 `SidebarTrigger`，右版本号
+- 满足 DESIGN.md 第 73-75 行"Top header: h-12, SidebarTrigger + version"硬性要求（之前缺 version）
+- 影响 12 个使用 `SiteHeader` 的页面（screener / quant / plan / settings / journal / transactions / ai-assistant / watchlist / market / page 等）
+
+### 版本号集中管理
+- 新增 `frontend/src/lib/version.ts` 单一来源 `APP_VERSION = "v3.9"`
+- 与 `backend/config.py::VERSION` 同步约定，注释提醒
+- 版本号使用 `tabular-nums`，符合 DESIGN.md §Typography
 
 ---
 

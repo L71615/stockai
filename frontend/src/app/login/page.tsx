@@ -27,8 +27,27 @@ export default function LoginPage() {
         body: JSON.stringify({ email, password }),
       })
 
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.error || data.detail || "登录失败")
+      // 先按 text 读取，再尝试 JSON.parse — 避免非 JSON 响应（502/网络错误）被 SyntaxError 误导
+      const raw = await res.text()
+      let data: { token?: string; username?: string; error?: string; detail?: string | Array<{ msg?: string }> } = {}
+      try {
+        data = raw ? JSON.parse(raw) : {}
+      } catch {
+        throw new Error(
+          `服务器返回了非 JSON 内容（HTTP ${res.status}）— ${raw.slice(0, 80) || "空响应"}`
+        )
+      }
+
+      if (!res.ok) {
+        const detailMsg = Array.isArray(data.detail)
+          ? data.detail.map((d) => d.msg).join("; ")
+          : data.detail
+        throw new Error(data.error || detailMsg || `登录失败（HTTP ${res.status}）`)
+      }
+
+      if (!data.token || !data.username) {
+        throw new Error("登录响应缺少 token 或 username 字段")
+      }
 
       setAuth(data.token, data.username)
       router.push("/")
