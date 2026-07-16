@@ -10,6 +10,7 @@ import { Badge } from "@/components/ui/badge"
 import { Textarea } from "@/components/ui/textarea"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Skeleton } from "@/components/ui/skeleton"
 import { cn } from "@/lib/utils"
 import { apiGet, apiPost } from "@/lib/auth"
 import useSWR from "swr"
@@ -64,8 +65,8 @@ export default function PlanPage() {
   const [newName, setNewName] = useState("")
   const [newReason, setNewReason] = useState("")
 
-  const { data: strategies } = useSWR<StrategyInfo[]>("/api/quant/strategies", swrFetcher)
-  const { data: holdings } = useSWR<{ stock_code: string; stock_name: string }[]>("/api/stocks/holdings", swrFetcher)
+  const { data: strategies, isLoading: strategiesLoading } = useSWR<StrategyInfo[]>("/api/quant/strategies", swrFetcher)
+  const { data: holdings, isLoading: holdingsLoading } = useSWR<{ stock_code: string; stock_name: string }[]>("/api/stocks/holdings", swrFetcher)
 
   // 加载已有计划
   const fetchPlan = useCallback(async (date: string) => {
@@ -198,24 +199,30 @@ export default function PlanPage() {
               </CardHeader>
               <CardContent>
                 <div className="flex flex-wrap gap-1.5">
-                  {(strategies || []).slice(0, 12).map((s) => {
-                    const active = selectedStrategies.includes(s.id)
-                    return (
-                      <button
-                        key={s.id}
-                        onClick={() => toggleStrategy(s.id)}
-                        className={cn(
-                          "inline-flex items-center gap-1 px-2 py-1 text-[11px] border transition-colors",
-                          active
-                            ? "border-primary bg-primary/10 text-primary"
-                            : "border-border text-muted-foreground hover:text-foreground"
-                        )}
-                      >
-                        {s.name || s.id}
-                        {active ? <IconX className="size-3" /> : <IconPlus className="size-3" />}
-                      </button>
-                    )
-                  })}
+                  {strategiesLoading ? (
+                    Array.from({ length: 12 }).map((_, i) => (
+                      <Skeleton key={i} className="h-6 w-20" />
+                    ))
+                  ) : (
+                    (strategies || []).slice(0, 12).map((s) => {
+                      const active = selectedStrategies.includes(s.id)
+                      return (
+                        <button
+                          key={s.id}
+                          onClick={() => toggleStrategy(s.id)}
+                          className={cn(
+                            "inline-flex items-center gap-1 px-2 py-1 text-[11px] border transition-colors",
+                            active
+                              ? "border-primary bg-primary/10 text-primary"
+                              : "border-border text-muted-foreground hover:text-foreground"
+                          )}
+                        >
+                          {s.name || s.id}
+                          {active ? <IconX className="size-3" /> : <IconPlus className="size-3" />}
+                        </button>
+                      )
+                    })
+                  )}
                 </div>
               </CardContent>
             </Card>
@@ -283,7 +290,13 @@ export default function PlanPage() {
                   </Button>
                 </div>
                 {/* Quick add from holdings */}
-                {holdings && holdings.length > 0 && (
+                {holdingsLoading ? (
+                  <div className="flex flex-wrap gap-1">
+                    {Array.from({ length: 5 }).map((_, i) => (
+                      <Skeleton key={i} className="h-5 w-24" />
+                    ))}
+                  </div>
+                ) : holdings && holdings.length > 0 ? (
                   <div className="flex flex-wrap gap-1">
                     {holdings.map((h) => (
                       <button
@@ -295,7 +308,7 @@ export default function PlanPage() {
                       </button>
                     ))}
                   </div>
-                )}
+                ) : null}
                 {/* Target list */}
                 {targets.length === 0 ? (
                   <p className="text-xs text-muted-foreground py-2">尚未添加候选标的</p>
