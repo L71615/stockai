@@ -67,16 +67,46 @@
 
 ## <a id="data-sources"></a>📡 数据源
 
+供应商优先级由 `backend/services/vendor_config.py` 集中管理，环境变量 `VENDOR_*` 可覆盖（详见源码注释）。
+
 ```text
-实时行情:  A股(Futu 优先 → 腾讯/东财 fallback) + 港股(新浪) + 基金(天天基金)
-历史K线:   A股(Futu 日线优先 → 新浪/腾讯/东方财富/Baostock fallback)
-图表1m:    A股 1m 优先走 Futu
-全球指数:  腾讯(7) + 新浪(4) = 11/15 覆盖
-基本面:    AKShare(同花顺 stock_financial_abstract_ths) + Baostock 兜底(PE/PB/ROE/EPS/市值/行业/分红)
-资金流向:  AKShare(北向资金 stock_hsgt_individual_em + 机构持仓 stock_institute_hold_detail)
-AI:        MiniMax / DeepSeek / Claude / OpenAI / 小米(7功能×5供应商独立配置)
-图表:      lightweight-charts v5.2 (TradingView 开源)
-同步层:    futu_raw_quote / futu_raw_kline + daily 同步 historical_kline
+A 股:
+  实时行情:    Futu OpenD → AKShare fallback            (vendor_config: realtime_quote)
+  批量报价:    AKShare (内部调腾讯/东财行情接口)            (vendor_config: batch_quotes)
+  日 K 线:    Futu 日线优先 → 新浪 → AKShare → Baostock fallback
+              (vendor_config: daily_kline; 旧链路 technical.py:_fetch_a_share_daily_legacy 已弃用)
+  1m K 线:    仅 Futu (无 fallback)                      (vendor_config: minute_kline)
+  基本面:      AKShare(同花顺 stock_financial_abstract_ths) → Baostock 兜底 (PE/PB/ROE/EPS/市值/行业/分红)
+
+港股:
+  实时行情:    新浪 (sina_adapter.get_hk_quote)
+  K 线:       AKShare (ak.stock_hk_hist, 仅此一源)
+  基本面:      AKShare (akshare_adapter.get_hk_factors)
+
+美股:
+  实时行情:    AKShare (akshare_adapter.get_us_quote)
+  K 线:       AKShare (ak.stock_us_hist)
+
+ETF / 基金:
+  净值兜底:    天天基金 (fundgz.1234567, 用于检测 ETF 假数据)
+  主行情:     东方财富 / 腾讯 (与 A 股共用, ETF 假数据回退到天天基金)
+
+全球指数 (15 个主要指数):
+  主源:       东方财富 ulist API 一次拉全 15 个 (routers/stocks.py:398)
+  补充:       AKShare / 新浪
+
+资金流向:
+  北向资金:    AKShare (ak.stock_hsgt_individual_em)
+  机构持仓:    AKShare (ak.stock_institute_hold_detail)
+
+AI 供应商 (config.py, 7 功能 × 5 供应商独立路由):
+  MiniMax / DeepSeek / Claude / OpenAI / Xiaomi
+
+图表:        lightweight-charts v5.2 (TradingView 开源)
+
+同步层:
+  Futu:       futu_raw_quote(实时) + futu_raw_kline(分钟) → nightly sync historical_kline(日线)
+  Tushare:    Tushare MCP nightly 全市场日线 + daily_basic + trade_cal + stock_basic 批量同步
 ```
 
 ## <a id="project-structure"></a>🏗 项目结构

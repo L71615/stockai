@@ -71,16 +71,46 @@
 
 ## <a id="data-sources"></a>📡 Data Sources
 
+Vendor priorities are centrally managed in `backend/services/vendor_config.py`, overridable via `VENDOR_*` env vars (see source comments for details).
+
 ```text
-Real-time quotes:  A-share (Futu preferred → Tencent/Eastmoney fallback) + HK (Sina) + Funds (Eastmoney)
-Historical K-line: A-share (Futu daily preferred → Sina/Tencent/Eastmoney/Baostock fallback)
-1-min chart:        A-share 1m via Futu
-Global indices:    Tencent (7) + Sina (4) = 11/15 coverage
-Fundamentals:      AKShare (Tonghuashun stock_financial_abstract_ths) + Baostock fallback (PE/PB/ROE/EPS/market cap/industry/dividend)
-Capital flow:      AKShare (northbound stock_hsgt_individual_em + institutional stock_institute_hold_detail)
-AI:                MiniMax / DeepSeek / Claude / OpenAI / Xiaomi (7 functions × 5 vendors, independent config)
-Charts:            lightweight-charts v5.2 (TradingView open-source)
-Sync layer:        futu_raw_quote / futu_raw_kline + daily sync to historical_kline
+A-share:
+  Real-time quote:   Futu OpenD → AKShare fallback            (vendor_config: realtime_quote)
+  Batch quotes:      AKShare (internally calls Tencent/Eastmoney quote APIs)  (vendor_config: batch_quotes)
+  Daily K-line:      Futu daily preferred → Sina → AKShare → Baostock fallback
+                     (vendor_config: daily_kline; legacy technical.py:_fetch_a_share_daily_legacy deprecated)
+  1-min K-line:      Futu only (no fallback)                   (vendor_config: minute_kline)
+  Fundamentals:      AKShare (Tonghuashun stock_financial_abstract_ths) → Baostock fallback (PE/PB/ROE/EPS/market cap/industry/dividend)
+
+Hong Kong:
+  Real-time quote:   Sina (sina_adapter.get_hk_quote)
+  K-line:            AKShare (ak.stock_hk_hist, sole source)
+  Fundamentals:      AKShare (akshare_adapter.get_hk_factors)
+
+US stocks:
+  Real-time quote:   AKShare (akshare_adapter.get_us_quote)
+  K-line:            AKShare (ak.stock_us_hist)
+
+ETF / Funds:
+  NAV fallback:      Tiantian Fund (fundgz.1234567, used to detect fake ETF data)
+  Main quote:        Eastmoney / Tencent (shared with A-share; fake ETF data falls back to Tiantian Fund NAV)
+
+Global indices (15 major):
+  Primary:           Eastmoney ulist API (single call, 15/15 coverage; routers/stocks.py:398)
+  Supplement:        AKShare / Sina
+
+Capital flow:
+  Northbound:        AKShare (ak.stock_hsgt_individual_em)
+  Institutional:     AKShare (ak.stock_institute_hold_detail)
+
+AI vendors (config.py, 7 functions × 5 vendors, function-dispatched):
+  MiniMax / DeepSeek / Claude / OpenAI / Xiaomi
+
+Charts:             lightweight-charts v5.2 (TradingView open-source)
+
+Sync layer:
+  Futu:              futu_raw_quote (real-time) + futu_raw_kline (minute) → nightly sync to historical_kline (daily)
+  Tushare:           Tushare MCP nightly batch sync for full-market daily / daily_basic / trade_cal / stock_basic
 ```
 
 ---
