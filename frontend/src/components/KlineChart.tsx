@@ -582,8 +582,15 @@ export function KlineChart({ rawData, height = 500, indicators: controlledIndica
 
     return () => {
       controller.abort()
-      chart.remove()
-      chartRef.current = null
+      // 用 rAF 推迟到下一帧再 remove, 避免 lightweight-charts 内部 canvas
+      // 还在 paint 时被 dispose 触发 'Object is disposed'
+      const raf = requestAnimationFrame(() => {
+        try { chart.remove() } catch { /* already disposed */ }
+        chartRef.current = null
+      })
+      // 同时记录 timer id, 万一路由切换, 可强制清理
+      const t = setTimeout(() => cancelAnimationFrame(raf), 1000)
+      return () => { cancelAnimationFrame(raf); clearTimeout(t) }
     }
   }, [height, showVolume, showBollinger, showMACD, showRSI, showKDJ])
 

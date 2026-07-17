@@ -463,7 +463,8 @@ function QuantPageInner() {
   const fetchAlerts = async () => {
     setAlertsLoading(true)
     try {
-      const data = await apiGet<AlertItem[]>("/api/stocks/alerts")
+      // 修正: 后端是 /api/screener/alerts (不是 /api/stocks/alerts)
+      const data = await apiGet<AlertItem[]>("/api/screener/alerts")
       setAlerts(Array.isArray(data) ? data : [])
     } catch { /* alerts are optional */ }
     finally { setAlertsLoading(false) }
