@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
 import { apiGet, apiPost } from "@/lib/auth"
-import { IconChartBar, IconGridDots, IconChartScatter, IconFlask, IconPlayerPlay, IconCheck, IconBrain } from "@tabler/icons-react"
+import { IconChartBar, IconGridDots, IconChartScatter, IconFlask, IconPlayerPlay, IconCheck, IconBrain, IconActivity } from "@tabler/icons-react"
 import {
   ScatterChart, Scatter, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from "recharts"
@@ -85,6 +85,22 @@ interface MLResult {
   max_depth: number
   learning_rate: number
   summary: string
+}
+
+// 因子生命周期类型
+interface LifecycleFactor {
+  factor_name: string
+  status: "active" | "warning" | "retired"
+  ic_current: number
+  ir_current: number
+  warning_days: number
+  last_check: string | null
+  note: string | null
+}
+interface LifecycleStatus {
+  count: number
+  summary: { active: number; warning: number; retired: number }
+  factors: LifecycleFactor[]
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -459,8 +475,99 @@ function MiningTab({ pool }: { pool: string }) {
     }
   }
 
+  // Lifecycle 状态
+  const [lifecycle, setLifecycle] = useState<LifecycleStatus | null>(null)
+  const [lifecycleLoading, setLifecycleLoading] = useState(false)
+
+  const refreshLifecycle = async () => {
+    try {
+      const d = await apiGet<LifecycleStatus>("/api/factor-lab/lifecycle/status")
+      setLifecycle(d)
+    } catch (e) {
+      console.error(e)
+    }
+  }
+
+  useEffect(() => { refreshLifecycle() }, [])
+
+  const runEvaluate = async () => {
+    setLifecycleLoading(true)
+    try {
+      await apiPost("/api/factor-lab/lifecycle/evaluate")
+      await refreshLifecycle()
+    } catch (e) {
+      console.error(e)
+    } finally {
+      setLifecycleLoading(false)
+    }
+  }
+
   return (
     <div className="space-y-4">
+      {/* 因子生命周期卡片 */}
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm flex items-center gap-2">
+            <IconActivity className="size-4" />
+            因子生命周期 — 自动评估 / 告警 / 退役
+          </CardTitle>
+          <CardDescription className="text-xs">
+            规则: IR ≥ 0.15 = 活跃, IR &lt; 0.05 累计 14 天 = 自动退役
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="flex items-center gap-2">
+            <Button size="sm" onClick={runEvaluate} disabled={lifecycleLoading}>
+              <IconPlayerPlay className="size-3.5 mr-1" />
+              {lifecycleLoading ? "评估中..." : "立即评估全部 15 因子"}
+            </Button>
+            {lifecycle && (
+              <div className="flex gap-2 text-xs">
+                <Badge className="bg-emerald-400/10 text-emerald-400">
+                  活跃 {lifecycle.summary.active}
+                </Badge>
+                <Badge className="bg-yellow-400/10 text-yellow-400">
+                  警告 {lifecycle.summary.warning}
+                </Badge>
+                <Badge className="bg-orange-400/10 text-orange-400">
+                  退役 {lifecycle.summary.retired}
+                </Badge>
+              </div>
+            )}
+          </div>
+          {lifecycle && lifecycle.factors.length > 0 && (
+            <div className="grid grid-cols-2 lg:grid-cols-3 gap-2">
+              {lifecycle.factors.map((f) => {
+                const colorMap = {
+                  active: "border-emerald-400/50 bg-emerald-400/5",
+                  warning: "border-yellow-400/50 bg-yellow-400/5",
+                  retired: "border-orange-400/50 bg-orange-400/5 line-through",
+                }
+                const statusLabel = { active: "活跃", warning: "警告", retired: "退役" }
+                return (
+                  <div key={f.factor_name} className={`p-2 border ${colorMap[f.status]}`}>
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="font-mono text-xs font-medium">{f.factor_name}</span>
+                      <span className={`text-[10px] ${
+                        f.status === "active" ? "text-emerald-400" :
+                        f.status === "warning" ? "text-yellow-400" : "text-orange-400"
+                      }`}>{statusLabel[f.status]}</span>
+                    </div>
+                    <div className="flex items-center gap-2 text-[10px] font-mono tabular-nums">
+                      <span>IR {f.ir_current >= 0 ? "+" : ""}{f.ir_current.toFixed(3)}</span>
+                      <span className="text-muted-foreground">IC {f.ic_current >= 0 ? "+" : ""}{f.ic_current.toFixed(4)}</span>
+                    </div>
+                    {f.warning_days > 0 && (
+                      <div className="text-[9px] text-yellow-400 mt-0.5">警告 {f.warning_days}/14 天</div>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
       <Card>
         <CardHeader className="pb-2">
           <CardTitle className="text-sm flex items-center gap-2">

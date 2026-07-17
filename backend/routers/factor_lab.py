@@ -1,4 +1,4 @@
-"""因子实验室路由 — IC 分析 / 相关性矩阵 / 散点图 / GP 挖掘"""
+"""因子实验室路由 — IC 分析 / 相关性矩阵 / 散点图 / GP 挖掘 / 生命周期"""
 import logging
 from fastapi import APIRouter, HTTPException, Query
 
@@ -11,6 +11,11 @@ from services.factor_lab import (
 )
 from services.factor_expr import gp_mine
 from services.factor_ml import train_ml_factor
+from services.factor_lifecycle import (
+    update_all_factors,
+    get_all_statuses,
+    reset_factor,
+)
 from database import query_all
 
 logger = logging.getLogger(__name__)
@@ -168,3 +173,51 @@ def run_ml_mine(
     except Exception as e:
         logger.error("ml mine failed: %s", str(e), exc_info=True)
         raise HTTPException(500, f"ML 挖掘失败: {str(e)[:200]}")
+
+
+# ═══════════════════════════════════════════════════════════
+#  因子生命周期管理
+# ═══════════════════════════════════════════════════════════
+
+@router.post("/lifecycle/evaluate")
+def lifecycle_evaluate():
+    """评估所有 15 个内置因子的 IC/IR, 更新 lifecycle_status 表
+
+    规则:
+      IR >= 0.30           → active
+      0.10 <= IR < 0.30    → warning
+      IR <  0.10            → warning (warning_days +1)
+      warning_days >= 14    → retired (自动退役)
+    """
+    try:
+        result = update_all_factors()
+        return result
+    except Exception as e:
+        logger.error("lifecycle evaluate failed: %s", str(e), exc_info=True)
+        raise HTTPException(500, f"生命周期评估失败: {str(e)[:200]}")
+
+
+@router.get("/lifecycle/status")
+def lifecycle_status():
+    """列出所有因子的当前状态 (active / warning / retired)"""
+    try:
+        rows = get_all_statuses()
+        return {
+            "factors": rows,
+            "count": len(rows),
+            "summary": {
+                "active": sum(1 for r in rows if r["status"] == "active"),
+                "warning": sum(1 for r in rows if r["status"] == "warning"),
+                "retired": sum(1 for r in rows if r["status"] == "retired"),
+            },
+        }
+    except Exception as e:
+        logger.error("lifecycle status failed: %s", str(e))
+        raise HTTPException(500, f"查询失败: {str(e)[:200]}")
+
+
+@router.post("/lifecycle/reset/{factor_name}")
+def lifecycle_reset(factor_name: str):
+    """手动重置某个因子状态 (例如发现误判时)"""
+    ok = reset_factor(factor_name)
+    return {"reset": factor_name, "ok": ok}
