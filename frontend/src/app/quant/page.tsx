@@ -14,6 +14,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { cn } from "@/lib/utils"
 import { apiGet, apiPost } from "@/lib/auth"
 import { usePersistedState } from "@/hooks/use-persisted-state"
+import { useIsMounted } from "@/hooks/use-is-mounted"
 import type { KlineResponse } from "@/lib/api-types"
 import { Area, AreaChart, CartesianGrid, XAxis, BarChart, Bar, Cell } from "recharts"
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from "@/components/ui/chart"
@@ -380,18 +381,8 @@ function QuantPageInner() {
   const [factorExplain, setFactorExplain] = useState<FactorExplainResult | null>(null)
   const [factorExplainLoading, setFactorExplainLoading] = useState(false)
 
-  // Load alerts + quick selector data on mount
-  useEffect(() => {
-    fetchAlerts()
-    apiGet<{ stock_code: string; stock_name: string }[]>("/api/stocks/holdings").then((d) => {
-      if (Array.isArray(d)) setQuickData((prev) => ({ ...prev, holdings: d.map((h) => ({ code: h.stock_code, name: h.stock_name })) }))
-    }).catch(() => {})
-    apiGet<{ stock_code: string; stock_name: string }[]>("/api/stocks/watchlist").then((d) => {
-      if (Array.isArray(d)) setQuickData((prev) => ({ ...prev, watchlist: d.map((w) => ({ code: w.stock_code, name: w.stock_name })) }))
-    }).catch(() => {})
-  }, [])
-
   // URL 参数变化时自动恢复状态 + 保存到 sessionStorage（切页回来不丢失）
+  const isMounted = useIsMounted()
   useEffect(() => {
     const urlStr = params.toString()
     if (urlStr && typeof window !== "undefined") {
@@ -402,18 +393,20 @@ function QuantPageInner() {
     if (urlTab) setTabState(urlTab)
     if (urlCode && urlCode !== code) {
       setCode(urlCode)
-      setTimeout(() => {
+      const t = setTimeout(() => {
+        if (!isMounted.current) return
         if (urlCode.trim()) {
           setLoading(true); setError(null)
-          const t = params.get("tab") || "insight"
-          if (t === "insight") {
+          const tab = params.get("tab") || "insight"
+          if (tab === "insight") {
             apiGet<StockInsight>(`/api/quant/stock-insight/${urlCode.trim()}?days=${days}`)
-              .then((data) => setInsight(data as StockInsight))
-              .catch((err) => setError(err instanceof Error ? err.message : "加载失败"))
-              .finally(() => setLoading(false))
+              .then((data) => { if (isMounted.current) setInsight(data as StockInsight) })
+              .catch((err) => { if (isMounted.current) setError(err instanceof Error ? err.message : "加载失败") })
+              .finally(() => { if (isMounted.current) setLoading(false) })
           }
         }
       }, 0)
+      return () => clearTimeout(t)
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [params.toString()])
@@ -475,6 +468,18 @@ function QuantPageInner() {
     } catch { /* alerts are optional */ }
     finally { setAlertsLoading(false) }
   }
+
+  // Load alerts + quick selector data on mount
+  useEffect(() => {
+    fetchAlerts()
+    apiGet<{ stock_code: string; stock_name: string }[]>("/api/stocks/holdings").then((d) => {
+      if (isMounted.current && Array.isArray(d)) setQuickData((prev) => ({ ...prev, holdings: d.map((h) => ({ code: h.stock_code, name: h.stock_name })) }))
+    }).catch(() => {})
+    apiGet<{ stock_code: string; stock_name: string }[]>("/api/stocks/watchlist").then((d) => {
+      if (isMounted.current && Array.isArray(d)) setQuickData((prev) => ({ ...prev, watchlist: d.map((w) => ({ code: w.stock_code, name: w.stock_name })) }))
+    }).catch(() => {})
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const deleteAlert = async (id: number) => {
     try {
