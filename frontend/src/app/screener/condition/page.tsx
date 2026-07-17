@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useState, useCallback } from "react"
+import { usePersistedState } from "@/hooks/use-persisted-state"
 import { SiteHeader } from "@/components/site-header"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -112,12 +113,12 @@ const LAYER_BADGE: Record<string, { label: string; color: string }> = {
 export default function ConditionPage() {
   const [fields, setFields] = useState<ConditionField[]>([])
   const [strategies, setStrategies] = useState<StrategyTemplate[]>([])
-  const [activeStrategyId, setActiveStrategyId] = useState("")
+  const [activeStrategyId, setActiveStrategyId] = usePersistedState("condition:activeStrategyId", "")
   const [loadingStrategyId, setLoadingStrategyId] = useState("")
-  const [conditions, setConditions] = useState<Condition[]>([])
-  const [logic, setLogic] = useState<"AND" | "OR">("AND")
+  const [conditions, setConditions] = usePersistedState<Condition[]>("condition:conditions", [])
+  const [logic, setLogic] = usePersistedState<"AND" | "OR">("condition:logic", "AND")
   const [newField, setNewField] = useState("")
-  const [sortBy, setSortBy] = useState("")
+  const [sortBy, setSortBy] = usePersistedState("condition:sortBy", "")
   const [sortOrder, setSortOrder] = useState("desc")
   const [marketState, setMarketState] = useState<MarketState | null>(null)
 

@@ -13,6 +13,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { cn } from "@/lib/utils"
 import { apiGet, apiPost } from "@/lib/auth"
+import { usePersistedState } from "@/hooks/use-persisted-state"
 import type { KlineResponse } from "@/lib/api-types"
 import { Area, AreaChart, CartesianGrid, XAxis, BarChart, Bar, Cell } from "recharts"
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from "@/components/ui/chart"
@@ -154,12 +155,12 @@ function QuantPageInner() {
   const router = useRouter()
   const params = useSearchParams()
 
-  const [code, setCode] = useState(params.get("code") || "")
-  const [days, setDays] = useState("60")
+  const [code, setCode] = usePersistedState("quant:code", params.get("code") || "")
+  const [days, setDays] = usePersistedState("quant:days", "60")
   const [insight, setInsight] = useState<StockInsight | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [tab, setTabState] = useState(params.get("tab") || "insight")
+  const [tab, setTabState] = usePersistedState("quant:tab", params.get("tab") || "insight")
 
   // 状态同步到 URL 参数 — 切页面再回来不会丢失
   const setTab = (v: string) => {
@@ -179,16 +180,16 @@ function QuantPageInner() {
   }
 
   // Backtest form
-  const [btAmount, setBtAmount] = useState("1000")
-  const [btFreq, setBtFreq] = useState("weekly")
+  const [btAmount, setBtAmount] = usePersistedState("quant:btAmount", "1000")
+  const [btFreq, setBtFreq] = usePersistedState("quant:btFreq", "weekly")
   const [btResult, setBtResult] = useState<BacktestResult | null>(null)
 
   // Compare
   const [compareResult, setCompareResult] = useState<CompareResult[]>([])
 
   // Monte Carlo
-  const [mcDays, setMcDays] = useState("60")
-  const [mcSims, setMcSims] = useState("100")
+  const [mcDays, setMcDays] = usePersistedState("quant:mcDays", "60")
+  const [mcSims, setMcSims] = usePersistedState("quant:mcSims", "100")
   const [mcResult, setMcResult] = useState<MCResult | null>(null)
 
   // AI explain
