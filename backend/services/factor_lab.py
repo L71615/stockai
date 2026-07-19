@@ -230,6 +230,61 @@ def _pearson_daily(factor_panel: pd.DataFrame, return_panel: pd.DataFrame) -> pd
     return pd.Series(ic_values).sort_index()
 
 
+def _compute_decay_score(ic_decay: dict) -> dict:
+    """根据 IC 衰减速度打分 (0-100)
+
+    规则（基于明日计划 2026-07-17）：
+      - 取 1 日 IC 和 5 日 IC 计算相对衰减
+      - 衰减 > 50%   → "rapid_decay" / red    (建议退役)
+      - 衰减 20-50%  → "decay_warning" / yellow (观察)
+      - 衰减 ≤ 20%   → "stable" / green (健康)
+
+    Args:
+        ic_decay: {1: float, 5: float, 10: float, 20: float} 各周期 IC
+
+    Returns:
+        {
+            "score": int,           # 0-100，越高越稳定
+            "status": str,          # stable | decay_warning | rapid_decay | insufficient_data
+            "color": str,           # green | yellow | red | gray
+            "decay_pct": float,     # 1→5 日 IC 相对衰减（绝对值）
+            "label": str,           # 人类可读中文标签
+        }
+    """
+    ic_1 = ic_decay.get(1)
+    ic_5 = ic_decay.get(5)
+    if ic_1 is None or ic_5 is None:
+        return {"score": None, "status": "insufficient_data", "color": "gray",
+                "decay_pct": None, "label": "数据不足"}
+
+    # IC_1 接近 0 → 因子本身信号弱，无衰减意义
+    if abs(ic_1) < 1e-4:
+        return {"score": 50, "status": "weak_signal", "color": "gray",
+                "decay_pct": 0.0, "label": "信号弱"}
+
+    # 相对衰减：只看幅度，方向由分数反映
+    decay_pct = (ic_1 - ic_5) / abs(ic_1)
+    decay_pct_abs = abs(decay_pct)
+
+    # 0-100 分数：衰减 0% → 100 分，衰减 100% → 0 分
+    score = max(0, min(100, round(100 * (1 - decay_pct_abs))))
+
+    if decay_pct_abs > 0.5:
+        status, color, label = "rapid_decay", "red", "快速衰减"
+    elif decay_pct_abs > 0.2:
+        status, color, label = "decay_warning", "yellow", "缓慢衰减"
+    else:
+        status, color, label = "stable", "green", "稳定"
+
+    return {
+        "score": score,
+        "status": status,
+        "color": color,
+        "decay_pct": round(decay_pct_abs, 4),
+        "label": label,
+    }
+
+
 def compute_factor_metrics(factor_names: list[str], stock_pool: str = "all",
                            start_date: Optional[str] = None,
                            end_date: Optional[str] = None) -> dict:
@@ -345,6 +400,7 @@ def compute_factor_metrics(factor_names: list[str], stock_pool: str = "all",
                 "ir": round(ir, 3),
                 "win_rate": round(win_rate, 3),
                 "ic_decay": {k: round(v, 5) for k, v in decay.items()},
+                "decay_score": _compute_decay_score(decay),
                 "turnover": round(turnover, 3),
                 "ic_series": ic_series_sparse,
                 "valid_days": int(len(ic_series)),

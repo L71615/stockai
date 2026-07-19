@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
 import { apiGet, apiPost } from "@/lib/auth"
+import { cn } from "@/lib/utils"
 import { IconChartBar, IconGridDots, IconChartScatter, IconFlask, IconPlayerPlay, IconCheck, IconBrain, IconActivity } from "@tabler/icons-react"
 import {
   ScatterChart, Scatter, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -20,12 +21,20 @@ import {
 // ═══════════════════════════════════════════════════════════
 
 interface FactorInfo { name: string; needs_volume: boolean }
+interface DecayScore {
+  score: number | null
+  status: string            // stable | decay_warning | rapid_decay | insufficient_data | weak_signal
+  color: string             // green | yellow | red | gray
+  decay_pct: number | null
+  label: string
+}
 interface FactorMetrics {
   ic_mean: number
   ic_std: number
   ir: number
   win_rate: number
   ic_decay: Record<string, number>
+  decay_score?: DecayScore  // 后端在 compute_factor_metrics 里新增
   turnover: number
   ic_series: [string, number][]
   valid_days: number
@@ -247,11 +256,13 @@ function ICTab({ factors, pool, setPool, startDate, setStartDate, endDate, setEn
                     <th className="p-2 font-medium text-right">IR</th>
                     <th className="p-2 font-medium text-right">胜率</th>
                     <th className="p-2 font-medium text-right">换手</th>
+                    <th className="p-2 font-medium text-center">衰减评分</th>
                     <th className="p-2 font-medium text-center" colSpan={4}>衰减 (天)</th>
                     <th className="p-2 font-medium text-right">有效天数</th>
                     <th className="p-2 font-medium">评级</th>
                   </tr>
                   <tr className="text-[10px] text-muted-foreground">
+                    <th className="p-1"></th>
                     <th className="p-1"></th>
                     <th className="p-1"></th>
                     <th className="p-1"></th>
@@ -280,6 +291,26 @@ function ICTab({ factors, pool, setPool, startDate, setStartDate, endDate, setEn
                         <td className="p-2 text-right font-mono tabular-nums">{fmtPct(m.win_rate)}</td>
                         <td className="p-2 text-right font-mono tabular-nums text-muted-foreground">
                           {(m.turnover * 100).toFixed(0)}%
+                        </td>
+                        <td className="p-2 text-center">
+                          {m.decay_score ? (
+                            <Badge
+                              variant="outline"
+                              title={`1日→5日 IC 衰减 ${((m.decay_score.decay_pct ?? 0) * 100).toFixed(0)}%`}
+                              className={cn(
+                                "text-[10px] font-mono tabular-nums",
+                                m.decay_score.color === "green" && "border-emerald-500/50 text-emerald-400",
+                                m.decay_score.color === "yellow" && "border-yellow-500/50 text-yellow-400",
+                                m.decay_score.color === "red" && "border-red-500/50 text-red-400 bg-red-500/5",
+                                m.decay_score.color === "gray" && "border-border text-muted-foreground",
+                              )}
+                            >
+                              {m.decay_score.score != null ? `${m.decay_score.score}` : "--"}
+                              <span className="ml-1 text-[9px] opacity-70">{m.decay_score.label}</span>
+                            </Badge>
+                          ) : (
+                            <span className="text-[10px] text-muted-foreground">--</span>
+                          )}
                         </td>
                         <td className="p-1 text-right font-mono tabular-nums text-[10px]">
                           {(m.ic_decay?.[1] ?? 0) >= 0 ? "+" : ""}{(m.ic_decay?.[1] ?? 0).toFixed(4)}

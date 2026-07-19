@@ -25,21 +25,26 @@ SNAPSHOT_TTL_SECONDS = 24 * 3600
 # ═══════════════════════════════════════════════════════════
 
 def get_factor_snapshot(code: str) -> Optional[dict]:
-    """读某只股票的完整 55 因子快照, 过期返回 None"""
+    """读某只股票的完整 55 因子快照, 过期返回 None
+
+    ⚠️ Fix 2026-07-19: 用列名访问。query_all 返回 dict（database.py:62），
+    原来 row[0]/row[1]/row[2] 整数索引对 dict 抛 KeyError，导致每只股票
+    _process_single_stock 静默失败，候选池永远为空。
+    """
     rows = query_all(
         "SELECT factor_name, value, updated_at FROM factor_snapshot WHERE stock_code = ?",
         (code,),
     )
     if not rows:
         return None
-    latest_ts = max((row[2] for row in rows if row[2]), default="")
+    latest_ts = max((row["updated_at"] for row in rows if row["updated_at"]), default="")
     try:
         ts = time.mktime(time.strptime(latest_ts[:19], "%Y-%m-%d %H:%M:%S"))
         if time.time() - ts > SNAPSHOT_TTL_SECONDS:
             return None
     except (ValueError, TypeError):
         pass
-    return {row[0]: row[1] for row in rows if row[1] is not None}
+    return {row["factor_name"]: row["value"] for row in rows if row["value"] is not None}
 
 
 def save_factor_snapshot(code: str, factors: dict) -> int:

@@ -14,8 +14,13 @@
 
 import time
 import logging
+import sys as _sys
 from typing import Optional
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as FuturesTimeoutError
+
+# DIAG: 强制 basicConfig，确保 logger.info 输出（uvicorn 不接管 root logger）
+if not logging.getLogger().handlers:
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(name)s] %(levelname)s: %(message)s', stream=_sys.stdout, force=True)
 
 import baostock as bs
 
@@ -24,6 +29,8 @@ from services.technical import fetch_kline
 from services.utils import get_market
 
 logger = logging.getLogger(__name__)
+# DIAG: 强制 propagate=True（兜底，uvicorn 默认应已 True）
+logger.propagate = True
 
 # ═══════════════════════════════════════════════════════════════
 #  板块分类 — 过滤买不了的股票（科创板/北交所/创业板需权限）
@@ -465,6 +472,11 @@ def run_screener(
 ) -> dict:
     """全市场多因子筛选
 
+    [DIAG] 埋点（一次性诊断，不影响生产逻辑）：
+      - 入口/出口总耗时
+      - 3 个预热函数（bench_kline / industry_map / stock_info）的耗时
+      - ThreadPool submitted / completed / failed 计数
+
     Args:
         stock_list: 股票列表，默认自动获取全A股
         max_workers: 并发线程数 (默认 12, 原 3 — 4× 提速)
@@ -482,6 +494,15 @@ def run_screener(
             "board_filter": [...],
         }
     """
+    _diag_t0 = time.time()
+    _diag_caller = "unknown"
+    try:
+        import inspect
+        _diag_caller = inspect.stack()[1].filename.split("/")[-1]
+    except Exception:
+        pass
+    logger.info("[DIAG] run_screener ENTER caller=%s max_workers=%d", _diag_caller, max_workers)
+
     if stock_list is None:
         from database import query_all
         stock_list = [
@@ -497,6 +518,7 @@ def run_screener(
             stock_list = [s for s in stock_list if detect_board(s["code"]) in _DEFAULT_ALLOWED_BOARDS]
 
     if not stock_list:
+        logger.info("[DIAG] run_screener EARLY-EXIT no_stock_list total=%.2fs", time.time() - _diag_t0)
         return {"error": "无法获取股票列表", "total_stocks": 0, "scanned": 0, "candidates": []}
 
     # 板块过滤
@@ -509,10 +531,15 @@ def run_screener(
 
     # 获取基准收益（用于市场状态判断和 IC 权重微调）
     try:
+        _t = time.time()
         bench_kline = fetch_kline("000300", "1", days=252)
+        logger.info("[DIAG] bench_kline fetch_kline took %.2fs, has_closes=%s, n=%d",
+                    time.time() - _t, "closes" in bench_kline,
+                    len(bench_kline.get("closes", [])) if isinstance(bench_kline, dict) else 0)
         from services.factor_service import _returns
         bench_returns = _returns(bench_kline["closes"]) if "closes" in bench_kline else []
-    except Exception:
+    except Exception as _e:
+        logger.warning("[DIAG] bench_kline fetch failed: %s", _e, exc_info=True)
         bench_returns = []
 
     market_state = _market_state_label(bench_returns)
@@ -520,9 +547,11 @@ def run_screener(
     # 预热全局缓存（避免线程内抢 Baostock 锁）
     try:
         from services.baostock_adapter import _get_industry_map
-        _get_industry_map()  # 一次性查询全市场行业分类，后续线程直接读缓存
+        _t = time.time()
+        _ind_map = _get_industry_map()
+        logger.info("[DIAG] industry_map preheat took %.2fs, n=%d", time.time() - _t, len(_ind_map) if _ind_map else 0)
     except Exception:
-        logger.warning("screener_service: industry map preheat failed", exc_info=True)
+        logger.warning("[DIAG] industry map preheat failed", exc_info=True)
 
     # 并发计算因子
     all_factors = []
@@ -532,7 +561,13 @@ def run_screener(
     # 预热 stock_info 缓存（Tushare 一次拉全市场 → name + industry，避免单只循环查询）
     try:
         from services.tushare_adapter import preheat_stock_info
+        _t = time.time()
         preheat_result = preheat_stock_info(codes)
+        logger.info("[DIAG] stock_info preheat took %.2fs, source=%s, written=%d, total=%s",
+                    time.time() - _t,
+                    preheat_result.get("source", "unknown"),
+                    preheat_result.get("written", 0),
+                    preheat_result.get("total"))
         source = preheat_result.get("source", "unknown")
         # 关键：written==0 说明所有数据源都拿不到数据，
         # 必须升 WARNING，否则下游 stock_info 为空、name/industry 全靠兜底，回归不可见。
@@ -544,23 +579,40 @@ def run_screener(
         else:
             logger.info("screener_service: stock_info 预热 source=%s, written=%s", source, preheat_result.get("written"))
     except Exception:
-        logger.warning("screener_service: stock_info 预热失败", exc_info=True)
+        logger.warning("[DIAG] stock_info preheat raised exception", exc_info=True)
 
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = {executor.submit(_process_single_stock, c): c for c in codes}
+        _diag_submitted = len(futures)
+        _diag_ok = 0
+        _diag_failed = 0
+        _diag_timeout = 0
+        _diag_cache_hit = 0
         for i, future in enumerate(as_completed(futures)):
             try:
                 result = future.result(timeout=30)
                 if result:
                     all_factors.append(result)
+                    _diag_ok += 1
+                    if result.get("from_cache"):
+                        _diag_cache_hit += 1
                 scanned += 1
                 if progress_callback:
                     progress_callback(scanned, total)
-            except Exception:
-                logger.warning("screener_service: future.result() failed for %s", futures[future], exc_info=True)
+            except FuturesTimeoutError:
+                _diag_timeout += 1
                 scanned += 1
+                logger.warning("[DIAG] ThreadPool worker TIMEOUT for code=%s", futures[future])
+            except Exception:
+                _diag_failed += 1
+                scanned += 1
+                logger.warning("[DIAG] ThreadPool worker failed for code=%s", futures[future], exc_info=False)
+        logger.info("[DIAG] ThreadPool DONE submitted=%d ok=%d failed=%d timeout=%d cache_hit=%d took=%.2fs",
+                    _diag_submitted, _diag_ok, _diag_failed, _diag_timeout, _diag_cache_hit,
+                    time.time() - _diag_t0)
 
     if not all_factors:
+        logger.info("[DIAG] run_screener EARLY-EXIT no_factors total=%.2fs scanned=%d", time.time() - _diag_t0, scanned)
         return {"error": "未能计算出任何有效因子", "total_stocks": total, "scanned": scanned, "candidates": []}
 
     # 截面标准化
@@ -600,6 +652,20 @@ def run_screener(
     for s in top50:
         s["top_factors"] = _explain_top_factors(s["factors"], weights)
 
+    logger.info("[DIAG] run_screener EXIT total=%.2fs all_factors=%d top50=%d",
+                time.time() - _diag_t0, len(all_factors), len(top50))
+    # 深度诊断：看每步数据形状
+    if all_factors:
+        af0 = all_factors[0]
+        logger.info("[DIAG] all_factors[0] keys=%s, factors_count=%d, hit_count=%s",
+                    list(af0.keys()), len(af0.get("factors") or {}), af0.get("hit_count"))
+    else:
+        logger.warning("[DIAG] all_factors is EMPTY")
+    logger.info("[DIAG] normalized len=%d, weights_keys=%d (sample: %s)",
+                len(normalized) if 'normalized' in dir() else -1,
+                len(weights) if 'weights' in dir() else -1,
+                list(weights.keys())[:5] if 'weights' in dir() and weights else "EMPTY")
+    logger.info("[DIAG] scored len=%d, top50 len=%d", len(scored) if 'scored' in dir() else -1, len(top50))
     return {
         "total_stocks": total,
         "scanned": scanned,
