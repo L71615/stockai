@@ -164,6 +164,51 @@ function QuantPageInner() {
   const [tab, setTabState] = usePersistedState("quant:tab", params.get("tab") || "insight")
 
   // 状态同步到 URL 参数 — 切页面再回来不会丢失
+
+  // F10: 策略回测买卖点叠加到 K 线
+  const [tradeMarkers, setTradeMarkers] = useState<import("@/components/KlineChart").TradeMarker[]>([])
+  const [markersLoading, setMarkersLoading] = useState(false)
+  const [markersLabel, setMarkersLabel] = useState<string>("")
+
+  const overlayBacktestMarkers = async (strategyId: string = "turtle_s1") => {
+    if (!insight?.code) return
+    setMarkersLoading(true)
+    try {
+      const data = await apiPost<StrategyBacktestResult>("/api/quant/strategy-backtest", {
+        strategy_ids: [strategyId],
+        stock_codes: [insight.code],
+        start_date: "2024-01-01",
+        end_date: "2026-07-01",
+        initial_cash: 100000,
+        hold_days: 5,
+        rebalance_freq: "daily",
+        max_positions: 5,
+        position_size_pct: 0.2,
+      })
+      const trades = data?.trades || []
+      const markers: import("@/components/KlineChart").TradeMarker[] = trades
+        .filter((t) => t.code === insight.code)
+        .map((t) => ({
+          time: t.date as unknown as import("@/components/KlineChart").TradeMarker["time"],
+          position: t.direction === "buy" ? "belowBar" : "aboveBar",
+          color: t.direction === "buy" ? "#10b981" : "#ef4444",
+          shape: t.direction === "buy" ? "arrowUp" : "arrowDown",
+          text: t.direction === "buy" ? "B" : "S",
+        }))
+      setTradeMarkers(markers)
+      setMarkersLabel(`${strategyId} · ${markers.filter((m) => m.shape === "arrowUp").length}买 ${markers.filter((m) => m.shape === "arrowDown").length}卖`)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "回测失败")
+    } finally {
+      setMarkersLoading(false)
+    }
+  }
+
+  const clearMarkers = () => {
+    setTradeMarkers([])
+    setMarkersLabel("")
+  }
+
   const setTab = (v: string) => {
     setTabState(v)
     const p = new URLSearchParams(window.location.search)
@@ -695,12 +740,35 @@ function QuantPageInner() {
                 {insight.kline?.dates?.length ? (
                   <Card>
                     <CardHeader className="pb-2">
-                      <CardTitle className="text-sm">K线图表</CardTitle>
+                      <div className="flex items-center justify-between">
+                        <CardTitle className="text-sm">K线图表</CardTitle>
+                        {/* F10: 叠加回测买卖点 */}
+                        <div className="flex items-center gap-1">
+                          {tradeMarkers.length > 0 && (
+                            <Badge variant="outline" className="text-[10px]">{markersLabel}</Badge>
+                          )}
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-6 text-[10px]"
+                            onClick={() => overlayBacktestMarkers("turtle_s1")}
+                            disabled={markersLoading}
+                          >
+                            {markersLoading ? "回测中…" : tradeMarkers.length > 0 ? "刷新买卖点" : "叠加买卖点"}
+                          </Button>
+                          {tradeMarkers.length > 0 && (
+                            <Button size="sm" variant="ghost" className="h-6 text-[10px]" onClick={clearMarkers}>
+                              清除
+                            </Button>
+                          )}
+                        </div>
+                      </div>
                     </CardHeader>
                     <CardContent>
                       <KlineChart
                         rawData={insight.kline as KlineResponse}
                         height={400}
+                        markers={tradeMarkers}
                         turtleOverlay={insight.turtle ? {
                           sys1_entry: insight.turtle.sys1_entry,
                           sys2_entry: insight.turtle.sys2_entry,

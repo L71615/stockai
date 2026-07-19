@@ -875,6 +875,7 @@ class StrategyBacktestRequest(BaseModel):
     max_positions: int = 10
     position_size_pct: float = 0.1            # 单票仓位比例
     benchmark: str = "000300"                 # 基准指数
+    commission_rate: float = 0.0003           # 单边手续费（默认万3，A 股标准买卖各收一次）
 
 
 @router.post("/strategy-backtest")
@@ -920,6 +921,7 @@ def strategy_backtest(req: StrategyBacktestRequest):
         max_positions=req.max_positions,
         position_size_pct=req.position_size_pct,
         benchmark=req.benchmark,
+        commission_rate=req.commission_rate,
     )
 
     if "error" in result:

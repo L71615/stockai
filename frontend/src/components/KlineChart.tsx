@@ -55,6 +55,15 @@ export interface TurtleOverlay {
   sys2_triggered: boolean
 }
 
+/** K线买卖点标注 — F10 阶段 2 核心可视化 */
+export interface TradeMarker {
+  time: Time
+  position: "aboveBar" | "belowBar" | "inBar"
+  color: string
+  shape: "arrowUp" | "arrowDown" | "circle" | "square"
+  text?: string
+}
+
 export interface KlineChartProps {
   rawData: KlineResponse
   height?: number
@@ -66,6 +75,8 @@ export interface KlineChartProps {
   showIndicatorSelector?: boolean
   /** 海龟通道线叠加 */
   turtleOverlay?: TurtleOverlay
+  /** 买卖点标注（回测结果叠加） */
+  markers?: TradeMarker[]
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -401,7 +412,7 @@ function saveStoredIndicators(val: IndicatorPane[]) {
   try { localStorage.setItem(INDICATOR_STORAGE_KEY, JSON.stringify(val)) } catch { /* quota */ }
 }
 
-export function KlineChart({ rawData, height = 500, indicators: controlledIndicators, onIndicatorsChange, showIndicatorSelector = true, turtleOverlay }: KlineChartProps) {
+export function KlineChart({ rawData, height = 500, indicators: controlledIndicators, onIndicatorsChange, showIndicatorSelector = true, turtleOverlay, markers }: KlineChartProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const [popoverOpen, setPopoverOpen] = useState(false)
 
@@ -724,7 +735,12 @@ export function KlineChart({ rawData, height = 500, indicators: controlledIndica
     if (!abortRef.current?.signal.aborted) {
       chartRef.current?.timeScale().fitContent()
     }
-  }, [rawData, showVolume, showBollinger, showMACD, showRSI, showKDJ])
+
+    // Trade markers (F10 — 回测买卖点叠加)
+    try {
+      candleSeries.current?.setMarkers(markers ?? [])
+    } catch { /* lightweight-charts 偶发 race condition */ }
+  }, [rawData, showVolume, showBollinger, showMACD, showRSI, showKDJ, markers])
 
   // 3. ResizeObserver
   useEffect(() => {

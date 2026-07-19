@@ -11,6 +11,7 @@ from services.factor_lab import (
 )
 from services.factor_expr import gp_mine
 from services.factor_ml import train_ml_factor
+from services.factor_ml import train_ml_with_gp_factors
 from services.factor_lifecycle import (
     update_all_factors,
     get_all_statuses,
@@ -173,6 +174,37 @@ def run_ml_mine(
     except Exception as e:
         logger.error("ml mine failed: %s", str(e), exc_info=True)
         raise HTTPException(500, f"ML 挖掘失败: {str(e)[:200]}")
+
+
+@router.post("/mine/train-ml-with-gp")
+def train_ml_with_gp(
+    pool: str = Query("csi800"),
+    start_date: str | None = Query(None),
+    end_date: str | None = Query(None),
+    gp_top_k: int = Query(5, description="取 IR 最高的 N 个 GP 因子"),
+    n_estimators: int = Query(80, description="LightGBM 树数量"),
+    max_depth: int = Query(4),
+    learning_rate: float = Query(0.05),
+):
+    """GP + ML 联合训练
+
+    流程:
+      1. 读 factor_candidates 表的 Top K GP 因子表达式
+      2. 训练基线 LightGBM（只用 15 个内置因子）
+      3. 训练增强 LightGBM（15 + GP 因子叠加）
+      4. 返回 IR/spread 对比
+
+    耗时: csi800 + 270 天约 1-3 分钟
+    """
+    try:
+        return train_ml_with_gp_factors(
+            stock_pool=pool, start_date=start_date, end_date=end_date,
+            gp_top_k=gp_top_k, n_estimators=n_estimators,
+            max_depth=max_depth, learning_rate=learning_rate,
+        )
+    except Exception as e:
+        logger.error("gp+ml train failed: %s", str(e), exc_info=True)
+        raise HTTPException(500, f"GP+ML 训练失败: {str(e)[:200]}")
 
 
 # ═══════════════════════════════════════════════════════════

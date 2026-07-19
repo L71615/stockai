@@ -291,6 +291,16 @@ def run_strategy_backtest(
     # ── 月度收益 ──
     monthly_returns = _calculate_monthly_returns(equity_curve, benchmark_curve)
 
+    # ── 回测内置保护评估（不修改主回测逻辑，只附加风险信号）──
+    protection = _evaluate_protection(
+        metrics=metrics,
+        trades=trades,
+        stock_count=len(stock_codes) if stock_codes else 0,
+        start_date=start_date,
+        end_date=end_date,
+        include_fees=include_fees,
+    )
+
     return {
         "config": {
             "strategy_ids": strategy_ids,
@@ -312,6 +322,7 @@ def run_strategy_backtest(
         "monthly_returns": monthly_returns,
         "final_positions": final_positions,
         "final_value": round(total_value, 2),
+        "_protection": protection,
     }
 
 
@@ -434,6 +445,123 @@ def _calc_fee(amount: float, is_buy: bool = True) -> float:
     transfer = amount * _TRANSFER_FEE_RATE
     stamp = 0 if is_buy else amount * _STAMP_TAX_RATE
     return round(commission + stamp + transfer, 2)
+
+
+def _evaluate_protection(
+    metrics: dict,
+    trades: list[dict],
+    stock_count: int,
+    start_date: str,
+    end_date: str,
+    include_fees: bool,
+) -> dict:
+    """回测内置保护评估 — 不改主回测逻辑，只在结果上附加风险信号
+
+    Returns:
+        {
+            "include_fees": bool,
+            "warnings": [str, ...],       # 人类可读警告
+            "sample_size_ok": bool,       # 交易数是否够多
+            "overfit_risk": "low"|"medium"|"high",
+            "stock_diversity_ok": bool,   # 候选池是否够大
+            "period_ok": bool,            # 回测期是否够长
+            "suggestions": [str, ...],   # 改进建议
+        }
+    """
+    warnings: list[str] = []
+    suggestions: list[str] = []
+
+    num_trades = metrics.get("num_trades", 0) or 0
+    sharpe = metrics.get("sharpe", 0) or 0
+    max_dd = abs(metrics.get("max_drawdown", 0) or 0)
+    win_rate = metrics.get("win_rate", 0) or 0
+
+    # ── 1. 交易样本量 ──
+    if num_trades < 20:
+        warnings.append(f"交易笔数过少 ({num_trades} < 20)，统计显著性不足，结果不稳定")
+        suggestions.append("延长回测期至 1 年以上，或扩大股票池到 100+")
+        sample_size_ok = False
+    elif num_trades < 50:
+        warnings.append(f"交易笔数偏少 ({num_trades} < 50)，建议补充更长回测期")
+        sample_size_ok = True
+    else:
+        sample_size_ok = True
+
+    # ── 2. 过拟合风险 ──
+    overfit_risk = "low"
+    # 高 Sharpe + 低交易数 + 大回撤 = 典型过拟合
+    if sharpe > 2.0 and num_trades < 30:
+        overfit_risk = "high"
+        warnings.append(f"⚠️ Sharpe={sharpe:.2f} 异常高 + 交易数仅 {num_trades}，疑似过拟合（参数可能针对历史噪声优化）")
+        suggestions.append("用样本外数据（前 70% 训练 / 后 30% 测试）验证策略稳健性")
+    elif sharpe > 1.5 and max_dd > 0.3:
+        overfit_risk = "medium"
+        warnings.append(f"Sharpe={sharpe:.2f} 偏高 + 最大回撤 {max_dd*100:.1f}%，收益波动大，注意风险")
+    elif sharpe > 1.0 and num_trades < 50:
+        overfit_risk = "medium"
+        warnings.append(f"Sharpe={sharpe:.2f} 偏高 + 交易数 {num_trades}，可能未充分验证")
+
+    # ── 3. 胜率异常 ──
+    if win_rate > 0.85 and num_trades < 30:
+        warnings.append(f"胜率 {win_rate*100:.0f}% 异常高，样本不足，结果可能不稳健")
+    elif win_rate < 0.3 and num_trades >= 30:
+        warnings.append(f"胜率仅 {win_rate*100:.0f}%，策略长期可能不盈利（看盈亏比）")
+
+    # ── 4. 股票池多样性 ──
+    if stock_count == 0:
+        stock_diversity_ok = True  # 用了默认池，不警告
+    elif stock_count < 5:
+        warnings.append(f"股票池过小 ({stock_count} 只)，策略可能过拟合于这几只特定股票")
+        suggestions.append("扩大股票池至 30+ 只以验证普适性")
+        stock_diversity_ok = False
+    elif stock_count < 30:
+        stock_diversity_ok = True
+        suggestions.append(f"股票池 {stock_count} 只偏小，建议扩展到 30+ 验证普适性")
+    else:
+        stock_diversity_ok = True
+
+    # ── 5. 回测期长度 ──
+    try:
+        from datetime import datetime
+        d1 = datetime.strptime(start_date, "%Y-%m-%d")
+        d2 = datetime.strptime(end_date, "%Y-%m-%d")
+        days = (d2 - d1).days
+        if days < 180:
+            warnings.append(f"回测期仅 {days} 天 (< 6 个月)，覆盖市场周期不足")
+            suggestions.append("至少覆盖 1 年回测期（含牛/熊/震荡）")
+            period_ok = False
+        elif days < 365:
+            period_ok = True
+            suggestions.append(f"回测期 {days} 天偏短，建议至少 1 年")
+        else:
+            period_ok = True
+    except Exception:
+        period_ok = True
+
+    # ── 6. 手续费透明度 ──
+    if not include_fees:
+        warnings.append("回测未计入手续费（A 股单边约 0.05%，双边约 0.1%），实际收益会被高估")
+        suggestions.append("确认使用 include_fees=True（默认）")
+
+    # ── 综合风险等级 ──
+    high_warnings = sum(1 for w in warnings if "⚠️" in w or "异常" in w or "过少" in w)
+    if high_warnings >= 2:
+        overfit_risk = "high" if overfit_risk == "low" else overfit_risk
+
+    return {
+        "include_fees": include_fees,
+        "warnings": warnings,
+        "suggestions": suggestions,
+        "sample_size_ok": sample_size_ok,
+        "overfit_risk": overfit_risk,
+        "stock_diversity_ok": stock_diversity_ok,
+        "period_ok": period_ok,
+        "summary": {
+            "warning_count": len(warnings),
+            "suggestion_count": len(suggestions),
+            "overall": "safe" if not warnings else ("caution" if overfit_risk != "high" else "risky"),
+        },
+    }
 
 
 def _overfit_warning(num_trades: int, max_dd: float, sharpe: float) -> str | None:

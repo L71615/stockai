@@ -142,6 +142,7 @@ def screener_results(limit: int = 50):
     """获取最近一次扫描结果"""
     if _screen_status["result"]:
         candidates = _screen_status["result"].get("candidates", [])[:limit]
+        candidates = _attach_factor_warnings(candidates)
         return {
             "from_cache": True,
             "market_state": _screen_status["result"].get("market_state", ""),
@@ -156,6 +157,8 @@ def screener_results(limit: int = 50):
     if not row:
         return {"from_cache": False, "candidates": [], "message": "暂无扫描结果，请先运行 /api/screener/run"}
 
+    candidates = json.loads(row.get("candidates_json", "[]"))[:limit]
+    candidates = _attach_factor_warnings(candidates)
     return {
         "from_cache": True,
         "created_at": row["created_at"],
@@ -163,7 +166,7 @@ def screener_results(limit: int = 50):
         "total_stocks": row["total_stocks"],
         "scanned": row["scanned"],
         "factor_weights": json.loads(row.get("factor_weights_json", "{}")),
-        "candidates": json.loads(row.get("candidates_json", "[]"))[:limit],
+        "candidates": candidates,
     }
 
 
@@ -994,6 +997,51 @@ class ConditionScanRequest(BaseModel):
     stock_pool: str = "all"  # "all" | "hs300" | "zz500" | "custom"
     stock_codes: list[str] = []
     max_results: int = 50
+
+
+def _attach_factor_warnings(candidates: list[dict]) -> list[dict]:
+    """给候选股票附加因子健康警告
+
+    从 factor_lifecycle_status 读取因子状态 (active / warning / retired),
+    把候选 top_factors 里的 retired/warning 因子作为警告附加到 candidate。
+    用途: 让用户在选股页面看到"该候选涉及的关键因子是否在衰减"。
+    """
+    # 一次性查所有 lifecycle 状态
+    try:
+        rows = query_all("SELECT factor_name, status, warning_days, ir_current FROM factor_lifecycle_status")
+        lifecycle = {r["factor_name"]: dict(r) for r in rows}
+    except Exception:
+        lifecycle = {}
+
+    if not lifecycle:
+        return candidates
+
+    STATUS_LABELS = {
+        "retired": ("已退役", "red"),
+        "warning": ("信号弱", "yellow"),
+        "active": ("活跃", "green"),
+    }
+
+    for cand in candidates:
+        warnings = []
+        for tf in cand.get("top_factors") or []:
+            fn = tf.get("factor") if isinstance(tf, dict) else tf
+            if not fn or fn not in lifecycle:
+                continue
+            st = lifecycle[fn].get("status", "active")
+            if st in ("retired", "warning"):
+                label, _color = STATUS_LABELS.get(st, (st, ""))
+                warnings.append({
+                    "factor": fn,
+                    "status": st,
+                    "label": label,
+                    "warning_days": lifecycle[fn].get("warning_days", 0),
+                    "ir_current": lifecycle[fn].get("ir_current"),
+                })
+        cand["factor_warnings"] = warnings
+        cand["has_critical_warnings"] = any(w["status"] == "retired" for w in warnings)
+
+    return candidates
 
 
 def _lookup_stock_name(code: str) -> str:

@@ -6,6 +6,97 @@
 
 ## 2026-07-19 — P0 修复：筛选功能 + 因子衰减评分
 
+### 🔴 Bug #1：条件选股 / AI 选股筛选功能不可用
+- **根因**：`backend/services/cache.py:35,42` 用了 `row[2]` / `row[0]` / `row[1]` 整数索引访问 dict
+  - `database.py:62` `query_all()` 返回 `[dict(r) for r in rows]`,dict 不支持整数索引 → `KeyError: 2`
+  - 每只股票 `_process_single_stock` 抛 KeyError → `try/except` 静默吞掉 → `all_factors=[]` → `candidates=0`
+  - **历史原因**：`cache.py` 假设 row 是 `sqlite3.Row`(支持整数索引),但 `query_all` 已强制转 dict,接口契约未对齐
+- **修复**：改用列名访问 `row["updated_at"]` / `row["factor_name"]` / `row["value"]`
+- **附带发现**：`/api/quant/strategies` 路由 404 — 路由其实存在 (`routers/quant.py:985`),后端重启后自动修复
+- **附带修复**：`screener_service.py` 顶部加 `logging.basicConfig(force=True)` —— `main.py` 没配 logging,应用 logger 静默丢失
+- **诊断方法**：systematic-debugging 4 阶段 + 6 处 `[DIAG]` 埋点 + curl 触发 60 秒看 stderr → 一次定位到 `KeyError: 2`
+- **验证**：21 只扫描 → 21 个候选(修复前 0),Top score=0.77
+
+### 📊 因子衰减评分（明天计划 P0 遗留 2 天）
+- **后端**：`factor_lab.py` 新增 `_compute_decay_score(ic_decay)` 函数（60 行，含 5 case 单元测试）
+- **规则**：
+  - 1→5 日 IC 相对衰减 >50%  → `red` / `rapid_decay`(建议退役)
+  - 20-50%                  → `yellow` / `decay_warning`(观察)
+  - ≤20%                    → `green` / `stable`(健康)
+  - 数据不足                → `gray` / `insufficient_data`
+- **接入**：`compute_factor_metrics()` 返回结果新增 `decay_score` 字段（`score`/`status`/`color`/`decay_pct`/`label`），`/api/factor-lab/ic` 路由自动透传
+- **前端**：`factor-lab/page.tsx` 新增 `DecayScore` 接口 + IC 表格"衰减评分"列（绿/黄/红 Badge + Tooltip 显示衰减百分比）
+- **真实用例命中**：`ret_5d` 因子 IR=0.148（中等），但 1 日 IC=+0.025 → 5 日 IC=-0.019（反向）→ score=0 / rapid_decay / red —— 典型"看着 IR 还行但实际快速衰减"的散户陷阱
+- **建议后续**：`factor_lifecycle.py` retired 状态联动推送通知（邮件/微信/Telegram）
+
+### 🔬 运行时诊断基础设施（保留）
+- `screener_service.py` 保留 18 处 `[DIAG]` 埋点：`run_screener` 入口/出口/2 处早 return + 3 个预热函数耗时（`bench_kline`/`industry_map`/`stock_info`）+ ThreadPool `submitted/ok/failed/timeout/cache_hit` 计数
+- 下次"扫描结果为空"问题可一眼定位：`[DIAG] all_factors=N top50=M` 即知数据形状
+- 生产环境用 `LOG_LEVEL=WARNING` 屏蔽噪音
+
+### 文件统计
+- 1 个 commit `ab1e09b` （fix: 筛选功能 + 因子衰减评分）
+- +167 / -9 行
+- 4 个文件：`cache.py` / `factor_lab.py` / `screener_service.py` / `factor-lab/page.tsx`
+- 已 push 到 `origin/main`
+
+---
+
+## 2026-07-19 — 量化方向：Top 候选警告 + F10 + 回测保护 + GP+ML 联合
+
+> **项目重点调整**：从 7 月交易纪律方向转向**量化方向**（因子挖掘/分析 + 回测 + 预测）。
+> 删除项目：分钟 K 线全套 K08-K12 / 服务器级数据备份（用户不需要）。
+
+### 🔴 Top 候选警告联动衰减评分（半天）
+- **后端** `routers/screener.py` 新增 `_attach_factor_warnings(candidates)` helper
+  - 查 `factor_lifecycle_status` 表（`active` / `warning` / `retired`）
+  - 给每个 candidate 涉及的因子标 warning + `has_critical_warnings` 标志
+  - `/api/screener/results` 两处返回路径都加 warnings
+- **前端** `screener/page.tsx` `ScanResult` 接口加 `factor_warnings` + 表格"关键因子"列渲染 Badge 警告色（红/黄）+ Tooltip 显示 `warning_days` + `ir_current`
+- **真实用例**：候选 600056 涉及 `ret_20d`（warning, IR=0.125）+ `vol_ratio`（warning, IR=-0.065）→ 用户立刻知道该候选"信号弱"
+
+### 🔴 F10 K线买卖点标注（1-2 天）
+- **`components/KlineChart.tsx`** 新增 `TradeMarker` 接口 + `markers?: TradeMarker[]` prop
+  - 在 `useEffect` 里调 `candleSeries.setMarkers(markers ?? [])`
+  - 支持 `position: aboveBar/belowBar` + `shape: arrowUp/arrowDown` + 颜色
+- **`app/quant/page.tsx`** 新增"叠加买卖点"按钮
+  - 调 `/api/quant/strategy-backtest` with `stock_codes=[insight.code]`
+  - 过滤当前股票 trades → 转 markers → 传给 KlineChart
+  - 按钮可刷新/清除
+- 后端 `strategy_backtest_service.py` 已返回完整 `trades: [{date, code, direction, price}]` —— 直接消费
+
+### 🔴 回测内置保护（1 天）
+- **后端** `services/strategy_backtest_service.py` 新增 `_evaluate_protection()` 函数（130 行）
+  - **6 维风险评估**：(1) 样本量 (trades<20 警告) / (2) 过拟合 (sharpe>2+trades<30=high) / (3) 胜率异常 (4) 股票池多样性 (<5) / (5) 回测期长度 (<180 天) / (6) 手续费透明度
+  - 综合 risk 等级：low / medium / high
+  - 返回 `_protection: {warnings, suggestions, overfit_risk, summary}`
+- **API** `routers/quant.py` `StrategyBacktestRequest` 加 `commission_rate: float = 0.0003`（默认万3）
+- **单测 4/4 通过**：高 sharpe + 少交易 → high / 中等 → low / 低 sharpe → low / 极 sharpe + 小池 → high
+- **端到端验证**：5 只股票 + 151 天回测期 → 触发"交易笔数过少"+"回测期过短"2 个警告 + 3 个改进建议
+
+### 🔴 GP + ML 联合训练（核心突破）
+- **后端** `services/factor_ml.py` 抽取通用 helper `_train_lgb()`（复用训练逻辑）+ 新增 `train_ml_with_gp_factors()`
+- **工作流**：
+  1. 读 `factor_candidates` 表 Top K GP 表达式（按 IR 降序）
+  2. 训练基线 LightGBM（仅 15 个内置因子）
+  3. 把 GP 因子作为新特征叠加训练增强 LightGBM
+  4. 返回 base vs enhanced 完整对比
+- **API** `routers/factor_lab.py` 新增 `POST /api/factor-lab/mine/train-ml-with-gp`
+- **实测结果（hs300 + 3 GP 因子 + 60 树）**：
+  - 基线 test IR=0.3802
+  - 增强 test IR=**0.4323**（**+13.69% lift**）
+  - spread 0.4930% → 0.5564%（+12.86%）
+  - improved=True ✨
+  - 6 秒完成，命中 7 月计划预期的"IR 提升 10-30%"区间
+- **Bug 修复**：gp_df.trade_date（str）与 big_base.trade_date（datetime64）merge 类型不匹配 → `pd.to_datetime()` 转换
+
+### 文件统计
+- 1 个 commit（pending push）
+- ~+520 / -10 行
+- 8 个文件改动：4 后端服务 + 2 后端路由 + 3 前端页面/组件
+
+---
+
 ### 🔴 Bug #1:条件选股 / AI 选股筛选功能不可用
 - **根因**:`backend/services/cache.py:35,42` 用了 `row[2]` / `row[0]` / `row[1]` 整数索引访问 dict
   - `database.py:62` `query_all()` 返回 `[dict(r) for r in rows]`,dict 不支持整数索引 → `KeyError: 2`

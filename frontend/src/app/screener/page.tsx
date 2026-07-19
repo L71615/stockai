@@ -22,6 +22,8 @@ interface ScreenerResultsResponse {
 interface ScanResult {
   code: string; name: string; industry?: string; score: number; top_factors?: string[]
   price?: number; change_pct?: number
+  factor_warnings?: { factor: string; status: string; label: string; warning_days?: number; ir_current?: number | null }[]
+  has_critical_warnings?: boolean
 }
 
 interface BacktestResult {
@@ -307,10 +309,25 @@ export default function ScreenerPage() {
                                 </div>
                               </td>
                               <td className="p-2">
-                                <div className="flex flex-wrap gap-0.5">
-                                  {(r.top_factors || []).slice(0, 3).map((f, j) => (
-                                    <Badge key={j} variant="secondary" className="text-[10px]">{typeof f === "string" ? f : (f as { factor?: string }).factor || ""}</Badge>
-                                  ))}
+                                <div className="flex flex-wrap gap-0.5 items-center">
+                                  {(r.top_factors || []).slice(0, 3).map((f, j) => {
+                                    const factorName = typeof f === "string" ? f : (f as { factor?: string }).factor || ""
+                                    const warn = (r.factor_warnings || []).find((w) => w.factor === factorName)
+                                    return (
+                                      <Badge
+                                        key={j}
+                                        variant="secondary"
+                                        title={warn ? `${warn.label} · 累计 ${warn.warning_days ?? 0} 天 · IR ${warn.ir_current?.toFixed(3) ?? "?"}` : undefined}
+                                        className={cn(
+                                          "text-[10px]",
+                                          warn?.status === "retired" && "bg-red-500/15 text-red-400 border-red-500/40",
+                                          warn?.status === "warning" && "bg-yellow-500/10 text-yellow-400 border-yellow-500/30",
+                                        )}
+                                      >
+                                        {factorName}{warn ? " ⚠" : ""}
+                                      </Badge>
+                                    )
+                                  })}
                                 </div>
                               </td>
                               <td className="p-2 text-right">
