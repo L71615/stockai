@@ -4,6 +4,44 @@
 
 ---
 
+## 2026-07-19 — P0 修复：筛选功能 + 因子衰减评分
+
+### 🔴 Bug #1:条件选股 / AI 选股筛选功能不可用
+- **根因**:`backend/services/cache.py:35,42` 用了 `row[2]` / `row[0]` / `row[1]` 整数索引访问 dict
+  - `database.py:62` `query_all()` 返回 `[dict(r) for r in rows]`,dict 不支持整数索引 → `KeyError: 2`
+  - 每只股票 `_process_single_stock` 抛 KeyError → `try/except` 静默吞掉 → `all_factors=[]` → `candidates=0`
+  - **历史原因**:`cache.py` 假设 row 是 `sqlite3.Row`(支持整数索引),但 `query_all` 已强制转 dict,接口契约未对齐
+- **修复**:改用列名访问 `row["updated_at"]` / `row["factor_name"]` / `row["value"]`
+- **附带发现**:`/api/quant/strategies` 路由 404 — 路由其实存在 (`routers/quant.py:985`),后端重启后自动修复
+- **附带修复**:`screener_service.py` 顶部加 `logging.basicConfig(force=True)` —— `main.py` 没配 logging,应用 logger 静默丢失
+- **诊断方法**:systematic-debugging 4 阶段 + 6 处 `[DIAG]` 埋点 + curl 触发 60 秒看 stderr → 一次定位到 `KeyError: 2`
+- **验证**:21 只扫描 → 21 个候选(修复前 0),Top score=0.77
+
+### 📊 因子衰减评分(明天计划 P0 遗留 2 天)
+- **后端**:`factor_lab.py` 新增 `_compute_decay_score(ic_decay)` 函数(60 行,含 5 case 单元测试)
+- **规则**:
+  - 1→5 日 IC 相对衰减 >50%  → `red` / `rapid_decay`(建议退役)
+  - 20-50%                  → `yellow` / `decay_warning`(观察)
+  - ≤20%                    → `green` / `stable`(健康)
+  - 数据不足                → `gray` / `insufficient_data`
+- **接入**:`compute_factor_metrics()` 返回结果新增 `decay_score` 字段(`score`/`status`/`color`/`decay_pct`/`label`),`/api/factor-lab/ic` 路由自动透传
+- **前端**:`factor-lab/page.tsx` 新增 `DecayScore` 接口 + IC 表格"衰减评分"列(绿/黄/红 Badge + Tooltip 显示衰减百分比)
+- **真实用例命中**:`ret_5d` 因子 IR=0.148(中等),但 1 日 IC=+0.025 → 5 日 IC=-0.019(反向)→ score=0 / rapid_decay / red —— 典型"看着 IR 还行但实际快速衰减"的散户陷阱
+- **建议后续**:`factor_lifecycle.py` retired 状态联动推送通知(邮件/微信/Telegram)
+
+### 🔬 运行时诊断基础设施(保留)
+- `screener_service.py` 保留 18 处 `[DIAG]` 埋点:`run_screener` 入口/出口/2 处早 return + 3 个预热函数耗时(`bench_kline`/`industry_map`/`stock_info`) + ThreadPool `submitted/ok/failed/timeout/cache_hit` 计数
+- 下次"扫描结果为空"问题可一眼定位:`[DIAG] all_factors=N top50=M` 即知数据形状
+- 生产环境用 `LOG_LEVEL=WARNING` 屏蔽噪音
+
+### 文件统计
+- 1 个 commit `ab1e09b` (fix: 筛选功能 + 因子衰减评分)
+- +167 / -9 行
+- 4 个文件:`cache.py` / `factor_lab.py` / `screener_service.py` / `factor-lab/page.tsx`
+- 已 push 到 `origin/main`
+
+---
+
 ## 2026-07-16 — v3.9 后续 性能优化 + 因子实验室 Phase 1/2/3
 
 ### 性能优化
