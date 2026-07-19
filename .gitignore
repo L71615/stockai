@@ -46,3 +46,6 @@ reports/
 gp_run*.json
 ml_run*.json
 test_*.json
+
+# 后台启动脚本生成的日志
+backend/backend.log
