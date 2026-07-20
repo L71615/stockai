@@ -111,7 +111,7 @@ export default function BrowsePage() {
       try {
         // 查找股票名（从 stocksSwr.data 缓存）
         const stock = findStockInData(stocksSwr.data, code)
-        await apiPost("/api/holdings/watchlist", {
+        await apiPost("/api/stocks/watchlist", {
           stock_code: code,
           stock_name: stock?.name || code,
         })
