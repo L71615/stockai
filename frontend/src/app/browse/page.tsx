@@ -155,12 +155,12 @@ export default function BrowsePage() {
                     onChange={(e) => setSearch(e.target.value)}
                   />
                 </div>
-                <Select value={sector} onValueChange={setSector}>
+                <Select value={sector || "all"} onValueChange={(v) => setSector(v === "all" ? "" : v)}>
                   <SelectTrigger className="h-8 text-xs w-auto min-w-[120px]">
                     <SelectValue placeholder="全部板块" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="">全部板块</SelectItem>
+                    <SelectItem value="all">全部板块</SelectItem>
                     <SelectItem value="main_sh">沪深主板</SelectItem>
                     <SelectItem value="main_sz">深证主板</SelectItem>
                     <SelectItem value="gem">创业板</SelectItem>
@@ -170,12 +170,12 @@ export default function BrowsePage() {
                     <SelectItem value="index">指数</SelectItem>
                   </SelectContent>
                 </Select>
-                <Select value={integrity} onValueChange={setIntegrity}>
+                <Select value={integrity || "all"} onValueChange={(v) => setIntegrity(v === "all" ? "" : v)}>
                   <SelectTrigger className="h-8 text-xs w-auto min-w-[110px]">
                     <SelectValue placeholder="全部状态" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="">全部状态</SelectItem>
+                    <SelectItem value="all">全部状态</SelectItem>
                     <SelectItem value="fresh">新鲜</SelectItem>
                     <SelectItem value="stale">滞后</SelectItem>
                     <SelectItem value="missing">缺失</SelectItem>
@@ -313,30 +313,57 @@ function FreshnessBar({ data, onRefresh, syncing, syncProgress, onSync }: {
 }
 
 function SectorPerformanceBar({ data }: { data: SectorPerformanceResponse["industries"] }) {
+  // 计算最大涨幅用于柱状比例
+  const maxAbs = data.reduce((m, ind) => Math.max(m, Math.abs(ind.avg_change_pct ?? 0)), 0) || 1
+
   return (
     <Card>
       <CardHeader className="pb-2">
-        <CardTitle className="text-sm">行业涨幅榜</CardTitle>
+        <CardTitle className="text-sm">行业涨幅榜 TOP 10</CardTitle>
       </CardHeader>
-      <CardContent className="overflow-x-auto">
-        <div className="flex gap-2 min-w-min">
-          {data.slice(0, 10).map((ind) => {
-            const up = (ind.avg_change_pct ?? 0) >= 0
-            return (
-              <div key={ind.industry} className={cn(
-                "shrink-0 px-3 py-2 rounded border text-xs min-w-[140px]",
-                up ? "border-red-500/30 bg-red-500/5" : "border-emerald-500/30 bg-emerald-500/5"
-              )}>
-                <div className="font-medium truncate" title={ind.industry}>{ind.industry}</div>
-                <div className="flex items-center justify-between mt-1">
-                  <span className="text-muted-foreground">{ind.stock_count} 只</span>
-                  <span className={cn("font-mono tabular-nums font-semibold", up ? "text-red-400" : "text-emerald-400")}>
-                    {(ind.avg_change_pct ?? 0) >= 0 ? "+" : ""}{ind.avg_change_pct?.toFixed(2)}%
-                  </span>
-                </div>
-              </div>
-            )
-          })}
+      <CardContent className="p-0">
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead className="bg-muted/50">
+              <tr>
+                <th className="p-2 text-left font-medium">行业</th>
+                <th className="p-2 text-right font-medium w-16">股票数</th>
+                <th className="p-2 text-right font-medium w-20">平均涨幅</th>
+                <th className="p-2 text-center font-medium">柱状</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.slice(0, 10).map((ind) => {
+                const pct = ind.avg_change_pct ?? 0
+                const up = pct >= 0
+                const barWidth = Math.min(Math.abs(pct) / maxAbs * 100, 100)
+                return (
+                  <tr key={ind.industry} className="border-t border-border/50 hover:bg-accent/30">
+                    <td className="p-2 truncate max-w-[200px]" title={ind.industry}>
+                      {ind.industry}
+                    </td>
+                    <td className="p-2 text-right font-mono tabular-nums text-muted-foreground">
+                      {ind.stock_count}
+                    </td>
+                    <td className={cn(
+                      "p-2 text-right font-mono tabular-nums font-semibold",
+                      up ? "text-red-400" : "text-emerald-400"
+                    )}>
+                      {up ? "+" : ""}{pct.toFixed(2)}%
+                    </td>
+                    <td className="p-2">
+                      <div className="h-2 bg-muted/30 rounded-full overflow-hidden">
+                        <div
+                          className={cn("h-full transition-all", up ? "bg-red-500/60" : "bg-emerald-500/60")}
+                          style={{ width: `${barWidth}%` }}
+                        />
+                      </div>
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
         </div>
       </CardContent>
     </Card>
