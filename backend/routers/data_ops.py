@@ -11,7 +11,7 @@ import logging
 import threading
 import time
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 from typing import Optional
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
@@ -23,6 +23,56 @@ from services.akshare_adapter import get_kline
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/data-ops", tags=["DataOps"])
+
+# ═══════════════════════════════════════════════════════════
+#  A 股交易日历（启动时拉一次，缓存到内存）
+# ═══════════════════════════════════════════════════════════
+_A_SHARE_TRADING_DAYS: set[str] | None = None
+
+
+def _get_a_share_calendar() -> set[str]:
+    """从 akshare 拉官方 A 股交易日历（含节假日剔除）
+
+    返回: set of 'YYYY-MM-DD' 字符串
+    """
+    global _A_SHARE_TRADING_DAYS
+    if _A_SHARE_TRADING_DAYS is None:
+        try:
+            import akshare as ak
+            df = ak.tool_trade_date_hist_sina()
+            _A_SHARE_TRADING_DAYS = set(df["trade_date"].astype(str).tolist())
+            logger.info("A 股交易日历加载: %d 天", len(_A_SHARE_TRADING_DAYS))
+        except Exception as e:
+            logger.warning("akshare 交易日历拉取失败，回退到日历天数: %s", e)
+            _A_SHARE_TRADING_DAYS = set()
+    return _A_SHARE_TRADING_DAYS
+
+
+def _trading_days_lag(last_trade_date: date, today: Optional[date] = None) -> int:
+    """计算 A 股交易日差距（不算 last_trade_date 本身）
+
+    Returns:
+        0 = 今天就是最新交易日
+        1 = 滞后 1 个交易日
+        N = 滞后 N 个交易日
+
+    Fallback: akshare 拉不到时用日历天数（周末也算）
+    """
+    if today is None:
+        today = date.today()
+    if last_trade_date >= today:
+        return 0
+    calendar = _get_a_share_calendar()
+    if not calendar:
+        # fallback: 简单日历天数
+        return (today - last_trade_date).days
+    d = last_trade_date
+    n = 0
+    while d < today:
+        d = d + timedelta(days=1)
+        if d.isoformat() in calendar:
+            n += 1
+    return n
 
 # 板块定义（与 screener_service._BOARD_RULES 一致 + 补充 ETF/指数）
 _SECTOR_LABELS = {
@@ -62,16 +112,22 @@ def _classify_sector(code: str) -> str:
 
 
 def _integrity_status(days_ago: int | None, kline_count: int) -> str:
-    """根据滞后天数 + K线数量判定数据完整性"""
+    """根据滞后天数 + K线数量判定数据完整性
+
+    days_ago 含义：实际交易日差距（已剔除周末 + 节假日）
+    - 0 = 今天就是最新交易日
+    - 1 = 滞后 1 个交易日
+    - 2-3 = 滞后 2-3 个交易日（fresh）
+    - 4-7 = 滞后 4-7 个交易日（stale）
+    - >7 = 严重滞后（stale）
+    """
     if days_ago is None:
         return "missing"
     if kline_count < 60:
         return "missing"
     if days_ago <= 3:
         return "fresh"
-    if days_ago <= 7:
-        return "stale"
-    return "stale"  # >7 天一律视为陈旧
+    return "stale"  # ≥4 视为滞后
 
 
 @router.get("/stocks")
@@ -126,12 +182,12 @@ def list_stocks(
         sector_key = _classify_sector(code)
         sector_label = _SECTOR_LABELS.get(sector_key, sector_key)
 
-        # 滞后天数
+        # 滞后交易日数（用 A 股交易日历）
         days_ago = None
         if r["latest_date"]:
             try:
                 d = datetime.strptime(r["latest_date"][:10], "%Y-%m-%d").date()
-                days_ago = (today - d).days
+                days_ago = _trading_days_lag(d, today)
             except Exception:
                 pass
 
@@ -228,16 +284,16 @@ def freshness_dashboard():
         if latest:
             try:
                 d = datetime.strptime(latest[:10], "%Y-%m-%d").date()
-                days_ago = (today - d).days
+                days_ago = _trading_days_lag(d, today)
             except Exception:
                 pass
 
-        # 滞后分布
+        # 滞后分布（按交易日差距）
         buckets = {"≤1天": 0, "2-3天": 0, "4-7天": 0, "8-30天": 0, ">30天": 0}
         for dt in dates:
             try:
                 d = datetime.strptime(dt[:10], "%Y-%m-%d").date()
-                lag = (today - d).days
+                lag = _trading_days_lag(d, today)
                 if lag <= 1: key = "≤1天"
                 elif lag <= 3: key = "2-3天"
                 elif lag <= 7: key = "4-7天"
@@ -493,7 +549,7 @@ def _codes_by_integrity(target: str) -> list[str]:
             continue
         try:
             d = datetime.strptime(r["d"][:10], "%Y-%m-%d").date()
-            days_ago = (today - d).days
+            days_ago = _trading_days_lag(d, today)
         except Exception:
             continue
         integrity = _integrity_status(days_ago, r["n"])
