@@ -37,6 +37,7 @@ export default function BrowsePage() {
   const [sector, setSector] = useState<string>("")
   const [integrity, setIntegrity] = useState<string>("")
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
+  const [showColdSectors, setShowColdSectors] = useState(false)
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [syncing, setSyncing] = useState(false)
   const [syncProgress, setSyncProgress] = useState<SyncStatusResponse | null>(null)
@@ -221,20 +222,63 @@ export default function BrowsePage() {
               </CardContent>
             </Card>
           ) : (
-            stocksSwr.data?.sectors.map((sec) => (
-              <SectorCard
-                key={sec.sector}
-                sector={sec}
-                collapsed={!!collapsed[sec.sector]}
-                onToggleCollapse={() => setCollapsed((prev) => ({ ...prev, [sec.sector]: !prev[sec.sector] }))}
-                sparklineCache={sparklineCache}
-                selected={selected}
-                onToggleSelect={toggleSelect}
-                onToggleSelectAll={() => toggleSelectSector(sec.stocks)}
-                onJump={jumpToQuant}
-                onSyncSector={() => startSync("sector", sec.sector)}
-              />
-            ))
+            <>
+              {(() => {
+                const CORE_SECTORS = ["main_sh", "main_sz", "gem", "star", "bse"]
+                const allSectors = stocksSwr.data?.sectors ?? []
+                const visible = showColdSectors
+                  ? allSectors
+                  : allSectors.filter((s) => CORE_SECTORS.includes(s.sector))
+                const coldSectors = allSectors.filter((s) => !CORE_SECTORS.includes(s.sector))
+                const coldTotal = coldSectors.reduce((sum, s) => sum + s.total, 0)
+                return (
+                  <>
+                    {visible.map((sec) => (
+                      <SectorCard
+                        key={sec.sector}
+                        sector={sec}
+                        collapsed={!!collapsed[sec.sector]}
+                        onToggleCollapse={() => setCollapsed((prev) => ({ ...prev, [sec.sector]: !prev[sec.sector] }))}
+                        sparklineCache={sparklineCache}
+                        selected={selected}
+                        onToggleSelect={toggleSelect}
+                        onToggleSelectAll={() => toggleSelectSector(sec.stocks)}
+                        onJump={jumpToQuant}
+                        onSyncSector={() => startSync("sector", sec.sector)}
+                      />
+                    ))}
+                    {!showColdSectors && coldTotal > 0 && (
+                      <Card>
+                        <CardContent className="py-3 text-center text-xs text-muted-foreground">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 text-xs"
+                            onClick={() => setShowColdSectors(true)}
+                          >
+                            <IconChevronDown className="size-3 mr-1" />
+                            + 显示冷门板块（{coldSectors.length} 个，{coldTotal} 只）
+                          </Button>
+                        </CardContent>
+                      </Card>
+                    )}
+                    {showColdSectors && coldTotal > 0 && (
+                      <div className="flex justify-center">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 text-xs text-muted-foreground"
+                          onClick={() => setShowColdSectors(false)}
+                        >
+                          <IconChevronUp className="size-3 mr-1" />
+                          − 收起冷门板块
+                        </Button>
+                      </div>
+                    )}
+                  </>
+                )
+              })()}
+            </>
           )}
 
           {toast && (
