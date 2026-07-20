@@ -1,6 +1,6 @@
-# StockAI v3.9 — AI Quant Stock Screening & Investment Decision Platform
+# StockAI v3.9.1 — AI Quant Screening + Market Browser + Data Ops
 
-> 55-factor multi-factor screening · 13 strategy templates · parameter optimization · strategy comparison · AI monthly reports · trading memory loop · loss-streak protection · factor lab (IC / correlation / scatter / GP mining / ML mining)
+> 55-factor multi-factor screening · 13 strategy templates · parameter optimization · strategy comparison · AI monthly reports · factor lab (IC / correlation / GP mining / ML joint training) · **Market Browser /browse** · **Data Ops (one-click K-line backfill)**
 >
 > A quant toolbox for A-share investors. Data-driven, AI-enhanced.
 
@@ -36,6 +36,8 @@
 | 🛡️ **Trading Discipline** | Pre-trade enforcement (stop-loss check / position limit / no chasing limit-ups), loss-streak protection (3-level warning + loss breakdown + action recommendations) |
 | 🔥 **Hot Sector Panel** | Homepage sector fund-flow TOP5 + northbound capital holdings TOP5, 5-minute auto refresh |
 | 🔌 **Data Source Abstraction** | Config-driven multi-source fallback (Futu → Sina → AKShare → Baostock), env-var toggle, plug-and-play new providers |
+| 🌐 **Market Browser** | **`/browse` new in v3.9** — 5,530 stocks grouped by sector (main boards / ChiNext / STAR / BSE), Sparkline 60-day mini-chart, integrity badge (fresh/stale/missing), one-click batch operations |
+| 🛠 **Data Ops** | K-line freshness dashboard (A-share trading-day calendar via akshare) + one-click backfill (scope=missing/stale/sector/all) + real-time sync progress |
 | 📈 **Quant Analysis** | Per-stock K-line (5 indicators + explainer) + 55-factor panoramic view (9 categories + radar) + portfolio risk metrics (Sharpe/drawdown/volatility/Beta) / Monte Carlo |
 | 🔬 **Factor Lab** | IC analysis (factor predictive power) + correlation matrix (drop redundant factors) + scatter plot (factor vs return) + GP genetic programming mining + LightGBM ML factor generation (test IR=0.45) |
 | 💬 **AI Chat** | SSE streaming, DeepSeek / MiniMax / OpenAI / Claude multi-vendor, function-independent configuration |
@@ -190,10 +192,12 @@ python backend/scripts/sync_futu_data.py --mode nightly --scope watchlist+holdin
 |------|------|------|------|
 | Investing | Portfolio Overview | `/` | KPI cards + trend chart + industry pie + holdings table |
 | Investing | Watchlist | `/watchlist` | Real-time quotes + batch pricing |
+| Investing | **Market Browser** | `/browse` | **🆕 v3.9** Browse all 5,530 stocks by sector group + integrity badge + Sparkline + sector performance TOP 10 + one-click K-line backfill |
 | Investing | Market Indices | `/market` | 15 global indices |
-| Analysis | Quant Analysis | `/quant` | Per-stock view / factor panel (9 categories, 55 factors + radar) / strategy backtest / Monte Carlo |
+| Analysis | Quant Analysis | `/quant` | Per-stock view / factor panel (9 categories, 55 factors + radar) / strategy backtest / Monte Carlo / **🆕 F10 K-line buy/sell markers** |
 | Analysis | Conditional Screening | `/screener/condition` | Four-layer filter (L1–L4) + 14 preset strategies + YAML engine |
-| Analysis | AI Stock Screening | `/screener` | Multi-factor scan + AI shortlist + strategy backtest + watchlist |
+| Analysis | AI Stock Screening | `/screener` | Multi-factor scan + AI shortlist + strategy backtest + watchlist + **🆕 candidate warnings (factor_warnings)** |
+| Analysis | Factor Lab | `/factor-lab` | 5 tabs: IC / correlation / scatter / GP mining / ML mining + **🆕 GP+ML joint training (+13.69% test IR lift)** + **🆕 decay score** |
 | Tools | Transactions | `/transactions` | Trade CRUD |
 | Tools | AI Chat | `/ai-assistant` | Multi-model SSE streaming chat |
 | Tools | Settings | `/settings` | AI keys (function → vendor map) + notification config |
@@ -231,6 +235,8 @@ NOTIFY_ENABLED=true
 
 ## <a id="version-history"></a>📝 Version History
 
+- **v3.9.1** (2026-07-20): 6 hotfixes — Select empty-string crash fix · sector-performance horizontal→table layout · sector list default-collapsed + cold-sector filter · **⭐ A-share trading-day calendar for `days_ago` (fresh 0% → 94.1%)** · stock-count display "total / with-data" · batch watchlist API path (404 → 200)
+- **v3.9** (2026-07-20): 🆕 `/browse` market browser page — 6 data-ops APIs (`/api/data-ops/*`) · 11 features (search/sector filter/Sparkline/integrity badge/backfill/batch select/sector perf) · **🆕 Top candidate warnings (factor_warnings)** · **🆕 F10 K-line buy/sell markers** · **🆕 Built-in backtest safeguards (6-dim risk evaluation)** · **🆕 GP+ML joint training (test IR +13.69%)** · **🆕 Factor decay score (decay_score)** · full quant direction (factor mining + backtest + prediction)
 - **v3.9 follow-up** (2026-07-16): Performance optimizations (Tushare Provider + max_workers=12 + DB index) + three-tier caching (factor_snapshot / daily_north_flow / daily_inst_holding) + data expansion (5524 stocks × 1-year K-line) + **Factor Lab** (`/factor-lab` 5 tabs: IC analysis / correlation / scatter / GP genetic-programming mining / LightGBM ML mining) + removed broken sector-fund/northbound panels (akshare bug) + dual-header UI refactor + Tushare token rotated. 19 files, +2000/−700 lines
 - **v3.9** (2026-07-16): Login JSON-parse hardening (`res.text` + try/parse) + dual-header UI refactor (DESIGN.md §Navigation compliance) + Top header version display + `APP_VERSION` centralized in `frontend/src/lib/version.ts` + Tushare token hardcoded default removed (env required) + data-source Provider abstraction (`backend/services/providers/`: akshare/baostock/tushare + Chain fallback) + full / priority K-line sync scripts (`sync_kline_full.py` / `sync_kline_priority.py`)
 - **v3.8** (2026-07-09): Strategy system upgrade (13 strategies, tunable params + source) + parameter optimizer (grid search) + strategy comparison (side-by-side) + backtest enhancements (fees / overfit warnings / buy-sell markers / signal reasons) + AI monthly reports + month-over-month diagnosis + trading-memory strategy dimension + loss-streak protection (3-level warning) + hot sector panel (sector flow + northbound) + sector filter (main board default) + bug fixes (`run_multi_agent_screen` etc.). 33 files, +2983/−115 lines

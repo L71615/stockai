@@ -1,6 +1,6 @@
-# StockAI v3.9 — AI 量化选股 + 投资决策平台
+# StockAI v3.9.1 — AI 量化选股 + 全市场浏览 + 数据运维
 
-> 55 因子多因子选股 · 13 策略模板 · 参数优化 · 策略对比 · AI 月报 · 交易记忆闭环 · 连亏保护 · 因子实验室(IC/相关性/散点/GP 挖掘/ML 挖掘)
+> 55 因子多因子选股 · 13 策略模板 · 参数优化 · 策略对比 · AI 月报 · 因子实验室(IC/相关性/GP/ML 联合训练) · **全市场浏览 /browse** · **数据运维（一键补齐 K 线）**
 >
 > A 股投资者的量化工具箱。数据驱动，AI 增强。
 
@@ -28,6 +28,8 @@
 | 🔍 **AI 选股** | 全市场多因子扫描（55 因子）→ IC 加权打分 → AI 二次精选 → 板块过滤(默认沪深主板) → 策略回测 → 盯盘 |
 | 🎯 **条件选股** | 四层过滤架构(L1-L4)，13 个策略模板，YAML 策略引擎，AND/OR 组合，每策略可调参数+来源说明 |
 | 🎛️ **参数优化** | 网格搜索最优参数组合（上限300组），按最大回撤→夏普排序，一键应用到回测 |
+| 🌐 **全市场浏览** | `/browse` 新增 — 5530 只股票按板块分组、Sparkline 走势、完整性标签、一键加自选 / 跑回测 |
+| 🛠️ **数据运维** | K 线新鲜度仪表盘（akshare A 股交易日历）+ 一键补齐（scope=missing/stale/sector/all）+ 同步进度可查 |
 | ⚖️ **策略对比** | 多策略独立回测并排排名（交易数/胜率/夏普/回撤/总收益） |
 | 📊 **策略回测** | 18 个策略模板(13 YAML + 5 内置)，选股→模拟交易→绩效报告(夏普/最大回撤/胜率/卡玛)，手续费自动计入，买卖点K线标注，过拟合警告 |
 | 🤖 **多 Agent 分析** | 5 角色多空辩论(技术面+基本面→多头+空头→裁判)，结构化决策输出(买入/持有/卖出+置信度)，自动注入交易记忆+策略历史 |
@@ -179,10 +181,12 @@ python backend/scripts/sync_futu_data.py --mode nightly --scope watchlist+holdin
 |------|------|------|------|
 | 投资 | 持仓概览 | `/` | KPI 卡片 + 走势图 + 行业饼图 + 持仓表 |
 | 投资 | 自选股 | `/watchlist` | 实时行情 + 批量报价 |
+| 投资 | **股票浏览** | `/browse` | **🆕 v3.9** 全市场浏览 — 5530 只股票按板块分组 + 完整性标签 + Sparkline + 行业涨幅榜 + 一键补齐 |
 | 投资 | 大盘指数 | `/market` | 全球 15 指数 |
-| 分析 | 量化分析 | `/quant` | 个股透视 / 因子面板(9类55因子+雷达图) / 策略回测 / 蒙特卡洛 |
+| 分析 | 量化分析 | `/quant` | 个股透视 / 因子面板(9类55因子+雷达图) / 策略回测 / 蒙特卡洛 / **🆕 F10 K 线买卖点标注** |
 | 分析 | 条件选股 | `/screener/condition` | 四层过滤(L1-L4) + 14 预设策略 + YAML 引擎 |
-| 分析 | AI 选股 | `/screener` | 多因子扫描 + AI 精选 + 策略回测 + 盯盘 |
+| 分析 | AI 选股 | `/screener` | 多因子扫描 + AI 精选 + 策略回测 + 盯盘 + **🆕 候选警告 (factor_warnings)** |
+| 分析 | 因子实验室 | `/factor-lab` | 5 Tab: IC/相关性/散点/GP 挖掘/ML 挖掘 + **🆕 GP+ML 联合训练 (+13.69% IR lift)** + **🆕 衰减评分 (decay_score)** |
 | 工具 | 交易记录 | `/transactions` | 交易 CRUD |
 | 工具 | AI 对话 | `/ai-assistant` | 多模型 SSE 流式对话 |
 | 工具 | 设置 | `/settings` | AI Key(功能→供应商映射表) + 通知配置 |
@@ -216,6 +220,8 @@ NOTIFY_ENABLED=true
 
 ## <a id="version-history"></a>📝 版本历史
 
+- **v3.9.1** (2026-07-20): 6 个 hotfix — Select 空字符串 crash · 行业涨幅榜横向→表格 · 板块列表默认折叠 + 过滤冷门 · **⭐ A 股交易日历判断 days_ago (fresh 0%→94.1%)** · 股票数显示"总数/有数据" · 批量加自选 API 路径 (404→200)
+- **v3.9** (2026-07-20): 🆕 `/browse` 全市场浏览页面 — 6 个数据运维 API (`/api/data-ops/*`) · 11 项功能 (搜索/板块过滤/Sparkline/完整性标签/补齐/批量勾选/行业涨幅榜等) · **🆕 Top 候选警告 (factor_warnings)** · **🆕 F10 K 线买卖点标注** · **🆕 回测内置保护 (6 维风险评估)** · **🆕 GP+ML 联合训练 (test IR +13.69%)** · **🆕 因子衰减评分 (decay_score)** · 量化方向 (因子挖掘+回测+预测) 5 大功能落地
 - **v3.9** (2026-07-16): 登录 JSON 解析防御(res.text + try/parse) + 双层 Header UI 重构(满足 DESIGN.md §Navigation)+ Top header 补 version 显示 + APP_VERSION 集中到 `frontend/src/lib/version.ts` + Tushare token 硬编码默认值脱敏(强制 .env 必填) + 数据源 Provider 抽象层(`backend/services/providers/`: akshare/baostock/tushare + Chain fallback) + 全量/优先级 K线同步脚本(`sync_kline_full.py` / `sync_kline_priority.py`)
 - **v3.9 后续** (2026-07-16): 性能优化(Tushare Provider + max_workers=12 + DB 索引) + 三层缓存(factor_snapshot/daily_north_flow/daily_inst_holding) + 数据扩充(5524 只全市场 K 线补齐) + **因子实验室**(/factor-lab 5 Tab: IC分析/相关性/散点图/GP 遗传编程挖掘/LightGBM ML 挖掘) + 清理板块资金北向资金(akshare 坏) + 双层 Header 重构 + Tushare token rotate。19 files, +2000/−700 lines
 - **v3.9** (2026-07-09): 登录 JSON 防御(res.text + try/parse) + 数据源 Provider + 安全脱敏。13 files, +1400/−500 lines
