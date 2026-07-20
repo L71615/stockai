@@ -1,8 +1,57 @@
 # StockAI 项目日志
 
-> StockAI 从 0 到 v3.9 的完整演进记录。按时间倒序。总计 27 次重大更新。
+> StockAI 从 0 到 v3.9 的完整演进记录。按时间倒序。总计 28 次重大更新。
 
 ---
+
+## 2026-07-20 — v3.9 正式版 — 股票浏览 + 数据运维
+
+### 🆕 新增页面：`/browse` — 全市场浏览入口
+- **定位**：填补"自选股"和"AI 选股"之间的空白 —— 全市场股票浏览 + 数据运维
+- **不重复**：不做持仓 P&L（`/`）/ AI Top 选股（`/screener`）/ 深度技术指标（`/quant`）/ 预警盯盘（`/watchlist`）
+- **唯一职责**：浏览 + 数据库运维
+
+### 新增 6 个 API（`/api/data-ops/*`）
+- **`GET /api/data-ops/stocks`** — 全市场股票列表 + 板块 + 最新价 + 涨跌幅 + 完整性标签 + 滞后天数
+  - 过滤：`sector=main_sh/main_sz/gem/star/bse/etf/index` + `integrity=fresh/stale/missing` + `search=600519`
+  - 一次返回全部 5530 只，按板块分组 + 完整性统计
+- **`GET /api/data-ops/freshness`** — 各板块 K 线新鲜度仪表盘（最新日期 + 滞后天数 + 滞后分布）
+- **`GET /api/data-ops/sector-performance`** — 行业涨幅榜 TOP N（按行业聚合当日/历史涨幅）
+- **`GET /api/data-ops/sparkline/{code}?days=N`** — 单只股票最近 N 天收盘价序列（用于前端 sparkline）
+- **`POST /api/data-ops/sync-stocks`** — 异步补齐 K 线（scope=missing/stale/sector/all）
+  - 后台线程 + 进度可查（`GET /api/data-ops/sync-status/{task_id}`）
+- **`GET /api/data-ops/sync-status/{task_id}`** — 任务进度（completed/failed/percent）
+
+### Browse 页面功能（11 项）
+- ✅ A 股票搜索框（代码/名称模糊匹配）
+- ✅ B 60 日 K 线迷你图（sparkline，纯 SVG 自绘，涨绿跌红）
+- ✅ C 最新价 + 涨跌幅 + 成交量 + 滞后天数
+- ✅ D 一键补齐按钮（按 scope 一键补齐）
+- ✅ E 按板块分组（沪深主板/深证主板/创业板/科创板/北交所/ETF/指数）
+- ✅ F K 线新鲜度仪表盘（顶部彩色块，每个板块显示滞后天数）
+- ✅ G 按板块批量补齐（板块行右侧"补齐此板块"按钮）
+- ✅ H 数据完整性标签（✓ 新鲜 / ⚠ 滞后 / ❌ 缺失 三态 Badge）
+- ✅ I 行业涨幅榜 TOP 10（横向彩色卡片）
+- ✅ J 批量勾选 + 批量加自选（前端循环调 `/api/holdings/watchlist`）
+- ✅ K 点击代码 → 跳转 `/quant?code=xxx` 深入分析
+
+### 实现细节
+- **板块分类**：`60/688/00/30/83/87/43/51/15` 等前缀自动归类（main_sh/star/gem/bse/etf）
+- **完整性算法**：滞后 ≤3天=fresh / 4-7天=stale / >7天=stale；K线 <60=missing
+- **涨跌幅 SQL**：LEFT JOIN `latest` + `prev` 子查询，单次 SQL 取最新价 + 前一交易日
+- **sparkline**：纯 SVG `<polyline>`，120×32 px，涨红跌绿
+- **同步补齐**：BackgroundTasks 异步 + 任务 ID + 状态轮询（每 2s）
+
+### 文件统计
+- 新增 `backend/routers/data_ops.py`（约 280 行）
+- 新增 `frontend/src/app/browse/page.tsx`（约 470 行）
+- 修改 `backend/main.py`（注册 router）
+- 修改 `frontend/src/components/app-sidebar.tsx`（加 "股票浏览" 入口）
+- 修改 `frontend/src/lib/api-types.ts`（加 9 个新类型）
+
+---
+
+## 2026-07-19 — 量化方向：Top 候选警告 + F10 + 回测保护 + GP+ML 联合
 
 ## 2026-07-19 — P0 修复：筛选功能 + 因子衰减评分
 

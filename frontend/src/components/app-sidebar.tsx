@@ -33,6 +33,7 @@ import {
   IconChevronDown,
   IconClipboardList,
   IconFlask,
+  IconBuildingBank,
 } from "@tabler/icons-react"
 
 const navGroups = [
@@ -44,6 +45,7 @@ const navGroups = [
     items: [
       { id: "holdings", label: "持仓概览", icon: IconLayoutDashboard, url: "/" },
       { id: "watchlist", label: "自选股", icon: IconStar, url: "/watchlist" },
+      { id: "browse", label: "股票浏览", icon: IconBuildingBank, url: "/browse" },
       { id: "market", label: "大盘指数", icon: IconChartBar, url: "/market" },
     ],
   },

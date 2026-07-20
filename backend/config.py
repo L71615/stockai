@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 load_dotenv(Path(__file__).resolve().parent / ".env")
 
 # 版本号：重大功能 +0.1，小修复 +0.01
-VERSION = "3.8"
+VERSION = "3.9"
 
 BASE_DIR = Path(__file__).resolve().parent
 PROJECT_DIR = BASE_DIR.parent
