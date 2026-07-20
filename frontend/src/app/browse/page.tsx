@@ -371,7 +371,7 @@ function SectorPerformanceBar({ data }: { data: SectorPerformanceResponse["indus
             <thead className="bg-muted/50">
               <tr>
                 <th className="p-2 text-left font-medium">行业</th>
-                <th className="p-2 text-right font-medium w-16">股票数</th>
+                <th className="p-2 text-right font-medium w-20">股票数 (总/有数据)</th>
                 <th className="p-2 text-right font-medium w-20">平均涨幅</th>
                 <th className="p-2 text-center font-medium">柱状</th>
               </tr>
@@ -387,7 +387,9 @@ function SectorPerformanceBar({ data }: { data: SectorPerformanceResponse["indus
                       {ind.industry}
                     </td>
                     <td className="p-2 text-right font-mono tabular-nums text-muted-foreground">
-                      {ind.stock_count}
+                      {ind.n_total ?? ind.stock_count}
+                      <span className="text-muted-foreground/60"> / </span>
+                      {ind.n_with_data ?? ind.stock_count}
                     </td>
                     <td className={cn(
                       "p-2 text-right font-mono tabular-nums font-semibold",

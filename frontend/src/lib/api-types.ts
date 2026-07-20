@@ -184,7 +184,14 @@ export interface FreshnessResponse {
 
 export interface SectorPerformanceItem {
   industry: string
+  /** @deprecated 用 n_total / n_with_data */
   stock_count: number
+  /** 行业总股票数（来自 stock_info） */
+  n_total: number
+  /** 有完整 (今日+昨日) K 线的股票数（参与均值计算的） */
+  n_with_data: number
+  /** 数据完整率：n_with_data / n_total (%) */
+  data_pct: number
   avg_change_pct: number
 }
 

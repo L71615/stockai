@@ -334,7 +334,14 @@ def sector_performance(
     days: int = Query(1, description="统计窗口（1=今日，5=5日，20=月）"),
     top_n: int = Query(10, description="返回 TOP N 行业"),
 ):
-    """行业涨幅榜 TOP N（按行业聚合）"""
+    """行业涨幅榜 TOP N（按行业聚合）
+
+    返回每个行业:
+      - n_total: 行业总股票数（来自 stock_info）
+      - n_with_data: 有完整 (今日+昨日) K 线的股票数（实际参与均值计算的）
+      - data_pct: n_with_data / n_total
+      - avg_change_pct: n_with_data 只股票的平均涨幅
+    """
     sql = """
         WITH latest AS (
             SELECT stock_code, MAX(trade_date) AS d FROM historical_kline GROUP BY stock_code
@@ -352,20 +359,28 @@ def sector_performance(
             SELECT k.stock_code, k.close AS today_close
             FROM historical_kline k
             JOIN latest l ON k.stock_code = l.stock_code AND k.trade_date = l.d
+        ),
+        total_count AS (
+            SELECT industry, COUNT(*) AS n_total
+            FROM stock_info
+            WHERE industry IS NOT NULL AND industry != ''
+            GROUP BY industry
         )
         SELECT
             si.industry,
-            COUNT(*) AS n,
+            COUNT(*) AS n_with_data,
+            tc.n_total,
             ROUND(AVG((t.today_close - p.prev_close) / p.prev_close * 100), 2) AS avg_change_pct
         FROM stock_info si
         JOIN today t ON si.stock_code = t.stock_code
         JOIN prev p ON si.stock_code = p.stock_code
+        JOIN total_count tc ON si.industry = tc.industry
         WHERE si.industry IS NOT NULL AND si.industry != ''
-        GROUP BY si.industry
+        GROUP BY si.industry, tc.n_total
         ORDER BY avg_change_pct DESC
         LIMIT ?
     """
-    rows = query_all(sql, (top_n * 2,))  # 多取一些防止过滤后不足
+    rows = query_all(sql, (top_n * 2,))
 
     return {
         "as_of": datetime.now().date().isoformat(),
@@ -373,7 +388,10 @@ def sector_performance(
         "industries": [
             {
                 "industry": r["industry"],
-                "stock_count": r["n"],
+                "stock_count": r["n_with_data"],
+                "n_total": r["n_total"],
+                "n_with_data": r["n_with_data"],
+                "data_pct": round(r["n_with_data"] * 100 / r["n_total"], 1) if r["n_total"] else 0,
                 "avg_change_pct": r["avg_change_pct"],
             }
             for r in rows[:top_n]
