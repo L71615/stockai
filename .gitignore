@@ -14,7 +14,6 @@ Thumbs.db
 # --- 本地开发工具 ---
 .claude/
 .context/
-tests/
 CLAUDE.md
 start.bat
 backend/pytest.ini
