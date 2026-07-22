@@ -280,7 +280,7 @@ export default function BrowsePage() {
                       <SectorCard
                         key={sec.sector}
                         sector={sec}
-                        collapsed={!!collapsed[sec.sector]}
+                        collapsed={collapsed[sec.sector] ?? true}
                         onToggleCollapse={() => setCollapsed((prev) => ({ ...prev, [sec.sector]: !prev[sec.sector] }))}
                         sparklineCache={sparklineCache}
                         selected={selected}
