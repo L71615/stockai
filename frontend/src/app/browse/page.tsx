@@ -143,6 +143,49 @@ export default function BrowsePage() {
           {/* ── 顶部：新鲜度仪表盘 + 操作按钮 ── */}
           <FreshnessBar data={freshnessSwr.data} onRefresh={freshnessSwr.refresh} syncing={syncing} syncProgress={syncProgress} onSync={startSync} />
 
+          {/* ── 全局数据陈旧警告（最显眼）── */}
+          {stocksSwr.data && (() => {
+            const allStocks = stocksSwr.data.sectors.flatMap((s) => s.stocks)
+            const totalStocks = allStocks.length
+            if (totalStocks === 0) return null
+            const staleCount = allStocks.filter((s) => (s.days_ago ?? 99) > 3).length
+            const missingCount = allStocks.filter((s) => s.integrity === "missing").length
+            const avgDaysAgo = allStocks.reduce((s, x) => s + (x.days_ago ?? 0), 0) / totalStocks
+            // 计算"主流最新日期"（出现最多的 latest_date）
+            const dateCount: Record<string, number> = {}
+            for (const s of allStocks) {
+              if (s.latest_date) dateCount[s.latest_date] = (dateCount[s.latest_date] ?? 0) + 1
+            }
+            const sortedDates = Object.entries(dateCount).sort((a, b) => b[1] - a[1])
+            const mostCommonDate = sortedDates[0]?.[0]
+            const mostCommonPct = sortedDates[0] ? Math.round(sortedDates[0][1] * 100 / totalStocks) : 0
+
+            if (staleCount === 0 && missingCount === 0) {
+              return null  // 全 fresh, 不显示警告
+            }
+            return (
+              <div className={cn(
+                "rounded-md border-2 px-4 py-3 flex items-center gap-3",
+                missingCount > totalStocks * 0.3 || avgDaysAgo > 7
+                  ? "border-red-500/60 bg-red-500/10"
+                  : "border-yellow-500/60 bg-yellow-500/10"
+              )}>
+                <div className="text-2xl">{missingCount > totalStocks * 0.3 || avgDaysAgo > 7 ? "🚨" : "⚠️"}</div>
+                <div className="flex-1 text-sm">
+                  <div className="font-semibold">
+                    数据不是最新的 — 你看到的不是今天的价格
+                  </div>
+                  <div className="text-xs text-muted-foreground mt-0.5">
+                    主流数据停在 <span className="font-mono">{mostCommonDate}</span>（{mostCommonPct}% 股票）
+                    {staleCount > 0 && <span> · {staleCount} 只滞后 &gt;3 天</span>}
+                    {missingCount > 0 && <span> · {missingCount} 只有缺数据</span>}
+                    ，建议点右上"一键补齐"按钮
+                  </div>
+                </div>
+              </div>
+            )
+          })()}
+
           {/* ── 工具栏：搜索 + 过滤 ── */}
           <Card>
             <CardContent className="pt-4">
@@ -523,7 +566,11 @@ function BrowseRow({ stock, isSelected, onToggleSelect, sparklineCache, onJump }
   }, [stock.code, sparklineCache])
 
   return (
-    <tr className={cn("border-t border-border/50 hover:bg-accent/30 transition-colors", isSelected && "bg-primary/10")}>
+    <tr className={cn(
+      "border-t border-border/50 hover:bg-accent/30 transition-colors",
+      isSelected && "bg-primary/10",
+      (stock.days_ago ?? 0) > 3 && "bg-red-500/5 border-l-2 border-l-red-500/40",
+    )}>
       <td className="p-2">
         <input type="checkbox" checked={isSelected} onChange={onToggleSelect} className="cursor-pointer" />
       </td>
