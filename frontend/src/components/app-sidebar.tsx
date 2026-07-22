@@ -34,6 +34,7 @@ import {
   IconClipboardList,
   IconFlask,
   IconBuildingBank,
+  IconPlayerPlay,
 } from "@tabler/icons-react"
 
 const navGroups = [
@@ -60,6 +61,7 @@ const navGroups = [
       { id: "screener", label: "AI 选股", icon: IconSearch, url: "/screener" },
       { id: "plan", label: "盘前计划", icon: IconClipboardList, url: "/plan" },
       { id: "factor-lab", label: "因子实验室", icon: IconFlask, url: "/factor-lab" },
+      { id: "pipeline", label: "量化 Pipeline", icon: IconPlayerPlay, url: "/pipeline" },
     ],
   },
   {

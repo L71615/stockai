@@ -153,3 +153,12 @@ CREATE TABLE daily_inst_holding (
     PRIMARY KEY (stock_code, trade_date)
 );
 CREATE INDEX idx_inst_holding_date ON daily_inst_holding(trade_date);
+
+-- v3.10: 量化日报 (auto pipeline 输出)
+CREATE TABLE IF NOT EXISTS quant_briefs (
+    id           TEXT PRIMARY KEY,
+    content_md   TEXT NOT NULL,
+    summary_json TEXT,
+    created_at   TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_quant_briefs_created ON quant_briefs(created_at);

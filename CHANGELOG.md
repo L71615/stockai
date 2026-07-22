@@ -62,6 +62,47 @@
 
 ---
 
+## 2026-07-23 — v3.10 量化 Pipeline (auto)
+
+### 🆕 新增页面：`/pipeline` 量化 Pipeline 控制台
+- **定位**: 按 plan-ceo-review 2026-07-22 方案, 自动化 GP 挖掘 → ML 训练 → 过拟合验证 → 衰减告警 → 简报 → 推送
+- **5 步编排**:
+  1. `1_gp_mining` — GP 挖因子 (复用 factor_expr.gp_mine)
+  2. `2_ml_training` — ML 训练 (复用 factor_ml.train_ml_with_gp_factors)
+  3. `3_factor_decay` — 因子衰减告警 (复用 factor_lifecycle.update_all_factors)
+  4. `4_data_health` — 数据源健康 (新 services/health_monitor.py)
+  5. `5_brief_notify` — 简报 + 推送 (新 services/quant_brief.py)
+- **cron 入口**: `scripts/daily_quant_pipeline.py` (Linux cron / Windows 任务计划)
+- **5 个新文件** + 3 个修改:
+  - 新建: `backend/services/quant_pipeline.py` (300 行)
+  - 新建: `backend/services/quant_brief.py` (160 行)
+  - 新建: `backend/services/health_monitor.py` (130 行)
+  - 新建: `backend/routers/pipeline.py` (60 行)
+  - 新建: `backend/scripts/daily_quant_pipeline.py` (70 行)
+  - 新建: `frontend/src/app/pipeline/page.tsx` (350 行)
+- **修改**: main.py (import pipeline + include_router), schema.sql (加 quant_briefs 表), app-sidebar.tsx (加 Pipeline 入口)
+
+### 6 个新 API (路由 /api/pipeline/*)
+- `GET  /api/pipeline/status` - 当前 5 步进度
+- `POST /api/pipeline/run` - 手动触发
+- `GET  /api/pipeline/brief` - 最新简报 Markdown
+- `GET  /api/pipeline/briefs` - 历史简报列表
+- `GET  /api/pipeline/health` - 数据源健康度
+- (内部) `services/health_monitor.check_all()` - akshare 限频 + Futu 断连检测
+
+### 用户体验变化
+- 之前: 每天手动跑 GP / ML / 检查
+- 现在: 18:00 自动跑, 早上打开浏览器看简报
+
+### 文件统计
+- 6 个新文件 (~1000 行)
+- 3 个修改
+- 0 破坏性改动 (向后兼容)
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+
+---
+
 ## 2026-07-20 — v3.9 正式版 — 股票浏览 + 数据运维
 
 ### 🆕 新增页面：`/browse` — 全市场浏览入口
