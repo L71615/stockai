@@ -150,6 +150,7 @@ interface StrategyBacktestResult {
   trades?: StrategyBacktestTrade[]
   monthly_returns?: StrategyBacktestMonthly[]
   final_value?: number
+  _overfit_check?: import("@/components/backtest-results").OverfitCheck
 }
 
 function QuantPageInner() {
@@ -1445,6 +1446,8 @@ function QuantPageInner() {
                   pnl: number | null; pnl_pct: number | null; reason: string
                 }>}
                 monthly_returns={btStrategyResult.monthly_returns ?? []}
+                overfit={btStrategyResult._overfit_check as
+                  import("@/components/backtest-results").OverfitCheck | undefined}
               />
             )}
           </TabsContent>

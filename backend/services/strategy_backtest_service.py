@@ -49,6 +49,7 @@ def run_strategy_backtest(
     benchmark: str = "000300",
     param_overrides: dict[str, dict[str, any]] | None = None,
     include_fees: bool = True,
+    commission_rate: float = 0.0003,
 ) -> dict:
     """策略回测主函数
 
@@ -301,6 +302,15 @@ def run_strategy_backtest(
         include_fees=include_fees,
     )
 
+    # ── 过拟合检测：train/test split (默认 70/30) ──
+    overfit_check = _evaluate_overfit(
+        equity_curve=equity_curve,
+        initial_cash=initial_cash,
+        trades=trades,
+        start_date=start_date,
+        end_date=end_date,
+    )
+
     return {
         "config": {
             "strategy_ids": strategy_ids,
@@ -323,6 +333,105 @@ def run_strategy_backtest(
         "final_positions": final_positions,
         "final_value": round(total_value, 2),
         "_protection": protection,
+        "_overfit_check": overfit_check,
+    }
+
+
+def _evaluate_overfit(
+    equity_curve: list[dict],
+    initial_cash: float,
+    trades: list[dict],
+    start_date: str,
+    end_date: str,
+    split_ratio: float = 0.7,
+) -> dict:
+    """过拟合检测：把数据切 train/test 两段，单独算 metrics
+
+    原理: 前 70% 训练后 30% 测试。
+    - 如果 train_metrics.sharpe 远高于 test_metrics.sharpe → 可能过拟合
+    - 如果两者接近 → 策略相对稳健
+
+    Returns:
+        {
+            "split_ratio": 0.7,
+            "train_period": [start, mid],
+            "test_period": [mid+1, end],
+            "train_metrics": {sharpe, total_return, max_drawdown, num_trades, ...},
+            "test_metrics": {sharpe, total_return, max_drawdown, num_trades, ...},
+            "sharpe_decay_pct": float,  # (train_sharpe - test_sharpe) / train_sharpe
+            "verdict": "stable" | "watch" | "overfit",
+            "message": "人类可读说明"
+        }
+    """
+    if not equity_curve or len(equity_curve) < 10:
+        return {
+            "split_ratio": split_ratio,
+            "error": "数据太少 (<10 个交易日)，无法做 train/test split",
+        }
+
+    n = len(equity_curve)
+    split_idx = int(n * split_ratio)
+    if split_idx < 5 or (n - split_idx) < 5:
+        return {
+            "split_ratio": split_ratio,
+            "error": f"数据点太少 (n={n}), split 后训练/测试样本不足",
+        }
+
+    train_curve = equity_curve[:split_idx]
+    test_curve = equity_curve[split_idx:]
+
+    train_metrics = _calculate_metrics(
+        train_curve, initial_cash,
+        [t for t in trades if t.get("date", "") <= train_curve[-1]["date"]],
+        start_date, train_curve[-1]["date"],
+    )
+    test_metrics = _calculate_metrics(
+        test_curve, initial_cash,
+        [t for t in trades if t.get("date", "") > train_curve[-1]["date"]],
+        train_curve[-1]["date"], end_date,
+    )
+
+    # 过拟合判定: 训练 Sharpe vs 测试 Sharpe
+    train_sharpe = train_metrics.get("sharpe", 0) or 0
+    test_sharpe = test_metrics.get("sharpe", 0) or 0
+
+    # 关键: 只在"训练看起来好"时才判过拟合。
+    # 训练/测试都负 (都亏钱) 是"策略整体差",不是过拟合。
+    if abs(train_sharpe) < 0.01:
+        sharpe_decay_pct = 0.0
+    else:
+        sharpe_decay_pct = (train_sharpe - test_sharpe) / abs(train_sharpe)
+
+    # 判定: 训练 Sharpe 必须 > 0.5 (策略看起来"有点用") 才做对比
+    # 否则 verdict = "weak" (策略本身无效, 不是过拟合问题)
+    if train_sharpe < 0.5:
+        verdict = "weak"
+        msg = (f"⚡ 训练 Sharpe {train_sharpe:.2f} 太低, 策略整体无效 — "
+               f"先验证策略逻辑, 再谈过拟合")
+    elif sharpe_decay_pct > 0.5:
+        verdict = "overfit"
+        msg = (f"⚠️ 训练 Sharpe {train_sharpe:.2f} 远高于测试 Sharpe {test_sharpe:.2f} "
+               f"(下降 {sharpe_decay_pct*100:.0f}%) — 可能过拟合, 建议调参或减少参数")
+    elif sharpe_decay_pct > 0.3:
+        verdict = "watch"
+        msg = (f"⚡ 训练 Sharpe {train_sharpe:.2f} 与测试 Sharpe {test_sharpe:.2f} 有差距 "
+               f"(下降 {sharpe_decay_pct*100:.0f}%) — 需谨慎, 留意实盘表现")
+    else:
+        verdict = "stable"
+        msg = (f"✓ 训练 Sharpe {train_sharpe:.2f} 与测试 Sharpe {test_sharpe:.2f} 接近 "
+               f"(下降 {sharpe_decay_pct*100:.0f}%) — 策略相对稳健")
+
+    return {
+        "split_ratio": split_ratio,
+        "train_period": [train_curve[0]["date"], train_curve[-1]["date"]],
+        "test_period": [test_curve[0]["date"], test_curve[-1]["date"]],
+        "train_days": len(train_curve),
+        "test_days": len(test_curve),
+        "train_metrics": train_metrics,
+        "test_metrics": test_metrics,
+        "sharpe_decay_pct": round(sharpe_decay_pct, 4),
+        "verdict": verdict,
+        "message": msg,
     }
 
 

@@ -34,6 +34,20 @@ interface BacktestMetrics {
   fees_included?: boolean
 }
 
+/** 过拟合检测详细 (v3.10 新增) */
+export interface OverfitCheck {
+  split_ratio: number
+  train_period: [string, string]
+  test_period: [string, string]
+  train_days: number
+  test_days: number
+  train_metrics: { sharpe: number; total_return: number; max_drawdown: number }
+  test_metrics: { sharpe: number; total_return: number; max_drawdown: number }
+  sharpe_decay_pct: number
+  verdict: "stable" | "watch" | "overfit" | "weak"
+  message: string
+}
+
 interface Trade {
   id: number
   date: string
@@ -64,6 +78,7 @@ interface BacktestResultsProps {
   equity_curve: EquityPoint[]
   trades: Trade[]
   monthly_returns: MonthlyReturn[]
+  overfit?: OverfitCheck
 }
 
 const fmtMoney = (v: number) =>
@@ -119,7 +134,7 @@ const metricCards = (m: BacktestMetrics) => [
   },
 ]
 
-export function BacktestResults({ metrics, equity_curve, trades, monthly_returns }: BacktestResultsProps) {
+export function BacktestResults({ metrics, equity_curve, trades, monthly_returns, overfit }: BacktestResultsProps) {
   const [showTrades, setShowTrades] = React.useState(false)
 
   const sellTrades = trades.filter((t) => t.direction === "sell" && t.pnl != null)
@@ -171,8 +186,76 @@ export function BacktestResults({ metrics, equity_curve, trades, monthly_returns
         )}
       </div>
 
-      {/* 过拟合警告 */}
-      {metrics.overfit_warning && (
+      {/* 过拟合检测 — 样本外表现 (v3.10 新增) */}
+      {overfit && (
+        <Card className={cn(
+          "border-2",
+          overfit.verdict === "overfit" && "border-red-500/50 bg-red-500/5",
+          overfit.verdict === "watch" && "border-yellow-500/50 bg-yellow-500/5",
+          overfit.verdict === "stable" && "border-emerald-500/50 bg-emerald-500/5",
+          overfit.verdict === "weak" && "border-orange-500/50 bg-orange-500/5",
+        )}>
+          <CardContent className="py-3">
+            <div className="flex items-start justify-between mb-2">
+              <div>
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="text-xs font-semibold">样本外表现（防过拟合）</span>
+                  <Badge variant="outline" className={cn(
+                    "text-[10px]",
+                    overfit.verdict === "overfit" && "border-red-500/50 text-red-400",
+                    overfit.verdict === "watch" && "border-yellow-500/50 text-yellow-400",
+                    overfit.verdict === "stable" && "border-emerald-500/50 text-emerald-400",
+                    overfit.verdict === "weak" && "border-orange-500/50 text-orange-400",
+                  )}>
+                    {overfit.verdict === "stable" ? "✓ 稳健" :
+                     overfit.verdict === "watch" ? "⚡ 留意" :
+                     overfit.verdict === "overfit" ? "⚠️ 过拟合" : "⚡ 整体弱"}
+                  </Badge>
+                </div>
+                <p className="text-[11px] text-muted-foreground">{overfit.message}</p>
+              </div>
+              <div className="text-[10px] text-muted-foreground text-right">
+                <div>切分 {Math.round(overfit.split_ratio * 100)}% / {100 - Math.round(overfit.split_ratio * 100)}%</div>
+                <div>训练 {overfit.train_days} 天 / 测试 {overfit.test_days} 天</div>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-2 text-[11px] mt-2">
+              <div className="rounded border border-border/40 bg-muted/20 p-2">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-muted-foreground">训练 (前 {Math.round(overfit.split_ratio * 100)}%)</span>
+                  <span className="text-[10px] text-muted-foreground">{overfit.train_period[0]} ~ {overfit.train_period[1]}</span>
+                </div>
+                <div className="font-mono">
+                  Sharpe <span className={(overfit.train_metrics.sharpe ?? 0) >= 1 ? "text-red-400" : "text-muted-foreground"}>{(overfit.train_metrics.sharpe ?? 0).toFixed(2)}</span>
+                </div>
+                <div className="font-mono">
+                  收益 <span className={((overfit.train_metrics.total_return ?? 0) >= 0) ? "text-red-400" : "text-emerald-400"}>{fmtPct(overfit.train_metrics.total_return ?? 0)}</span>
+                </div>
+              </div>
+              <div className="rounded border border-border/40 bg-muted/20 p-2">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-muted-foreground">测试 (后 {100 - Math.round(overfit.split_ratio * 100)}%)</span>
+                  <span className="text-[10px] text-muted-foreground">{overfit.test_period[0]} ~ {overfit.test_period[1]}</span>
+                </div>
+                <div className="font-mono">
+                  Sharpe <span className={(overfit.test_metrics.sharpe ?? 0) >= 1 ? "text-red-400" : "text-muted-foreground"}>{(overfit.test_metrics.sharpe ?? 0).toFixed(2)}</span>
+                </div>
+                <div className="font-mono">
+                  收益 <span className={((overfit.test_metrics.total_return ?? 0) >= 0) ? "text-red-400" : "text-emerald-400"}>{fmtPct(overfit.test_metrics.total_return ?? 0)}</span>
+                </div>
+              </div>
+            </div>
+            {overfit.sharpe_decay_pct > 0.3 && (
+              <p className="text-[10px] text-muted-foreground mt-2">
+                Sharpe 下降 {Math.round(overfit.sharpe_decay_pct * 100)}% — 训练表现明显好于测试
+              </p>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* 过拟合警告 (兼容旧字段) */}
+      {metrics.overfit_warning && !overfit && (
         <Card className="border-yellow-500/30 bg-yellow-500/5">
           <CardContent className="py-2">
             <p className="text-xs text-yellow-400">⚠️ {metrics.overfit_warning}</p>
