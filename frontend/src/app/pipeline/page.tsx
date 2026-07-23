@@ -244,8 +244,13 @@ export default function PipelinePage() {
                       {step.lift_pct !== undefined && (
                         <span className="text-xs text-muted-foreground">IR 提升: {step.lift_pct}%</span>
                       )}
-                      {step.warnings !== undefined && (
-                        <span className="text-xs text-yellow-400">告警: {step.warnings}</span>
+                      {(step.warning_count ?? (Array.isArray(step.warnings) ? step.warnings.length : 0)) > 0 && (
+                        <span
+                          className="text-xs text-yellow-400"
+                          title={Array.isArray(step.warnings) && step.warnings[0]?.message}
+                        >
+                          告警: {step.warning_count ?? step.warnings.length} 个
+                        </span>
                       )}
                       {step.error && (
                         <span className="text-xs text-red-400 truncate" title={step.error}>err: {step.error}</span>
