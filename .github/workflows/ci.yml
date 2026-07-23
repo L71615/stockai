@@ -70,10 +70,10 @@ jobs:
 
       - name: Install dependencies
         working-directory: frontend
-        # --legacy-peer-deps: next@16.2.9 声明 peerOptional @playwright/test@^1.51.1,
-        # 但项目锁的是 1.49.0, npm ci 严格模式会 ERESOLVE 失败
-        # CI 不跑 e2e 测试, 只是为了让 npm ci 通过
-        run: npm ci --legacy-peer-deps
+        # 用 npm install 而非 npm ci: 本地 package-lock.json 跟 package.json 不完全同步
+        # (Windows 生成的 lock 缺 fsevents), npm ci 严格模式 EUSAGE 失败
+        # --legacy-peer-deps: 容忍 next@16.2.9 的 peerOptional @playwright/test@^1.51.1 冲突
+        run: npm install --legacy-peer-deps --no-audit --no-fund
 
       - name: TypeScript type-check
         working-directory: frontend
@@ -98,10 +98,10 @@ jobs:
 
       - name: Install dependencies
         working-directory: frontend
-        # --legacy-peer-deps: next@16.2.9 声明 peerOptional @playwright/test@^1.51.1,
-        # 但项目锁的是 1.49.0, npm ci 严格模式会 ERESOLVE 失败
-        # CI 不跑 e2e 测试, 只是为了让 npm ci 通过
-        run: npm ci --legacy-peer-deps
+        # 用 npm install 而非 npm ci: 本地 package-lock.json 跟 package.json 不完全同步
+        # (Windows 生成的 lock 缺 fsevents), npm ci 严格模式 EUSAGE 失败
+        # --legacy-peer-deps: 容忍 next@16.2.9 的 peerOptional @playwright/test@^1.51.1 冲突
+        run: npm install --legacy-peer-deps --no-audit --no-fund
 
       - name: Build
         working-directory: frontend
