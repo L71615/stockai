@@ -25,7 +25,8 @@ interface PipelineStatus {
     base_ir?: number
     enhanced_ir?: number
     lift_pct?: number
-    warnings?: number
+    warning_count?: number
+    warnings?: Array<{ level: string; type: string; factors: string[]; message: string }>
     retired_count?: number
     status_detail?: string
     error?: string
@@ -123,7 +124,7 @@ export default function PipelinePage() {
     <>
       <SiteHeader title="量化 Pipeline" />
       <div className="flex flex-1 flex-col overflow-auto">
-        <div className="p-4 lg:p-6 space-y-4 max-w-5xl mx-auto">
+        <div className="p-4 lg:p-6 space-y-4 max-w-7xl mx-auto">
           {/* ── 顶部: 触发按钮 + 状态 ── */}
           <Card>
             <CardHeader className="pb-2">
@@ -181,50 +182,52 @@ export default function PipelinePage() {
             </CardContent>
           </Card>
 
-          {/* ── 数据源健康 ── */}
-          {health && (
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm">数据源健康</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
-                  <HealthItem
-                    label="akshare"
-                    status={health.checks.akshare.status}
-                    detail={health.checks.akshare.latency_ms ? `${health.checks.akshare.latency_ms}ms` : (health.checks.akshare.error ?? "")}
-                  />
-                  <HealthItem
-                    label="Futu OpenD"
-                    status={health.checks.futu.status}
-                    detail={health.checks.futu.connected ? "已连" : (health.checks.futu.error ?? "")}
-                  />
-                  <HealthItem
-                    label="DB 最新数据"
-                    status={health.checks.db_freshness.status}
-                    detail={health.checks.db_freshness.latest_date
-                      ? `${health.checks.db_freshness.latest_date} (${health.checks.db_freshness.days_ago} 天前)`
-                      : ""}
-                  />
-                </div>
-                {health.issues.length > 0 && (
-                  <ul className="mt-3 space-y-1 text-xs">
-                    {health.issues.map((issue, i) => (
-                      <li key={i} className="text-yellow-400">⚠️ {issue}</li>
-                    ))}
-                  </ul>
-                )}
-              </CardContent>
-            </Card>
-          )}
+          {/* ── 左: 数据源健康  右: 5 步进度 (双列) ── */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            {/* ── 数据源健康 ── */}
+            {health && (
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm">数据源健康</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                    <HealthItem
+                      label="akshare"
+                      status={health.checks.akshare.status}
+                      detail={health.checks.akshare.latency_ms ? `${health.checks.akshare.latency_ms}ms` : (health.checks.akshare.error ?? "")}
+                    />
+                    <HealthItem
+                      label="Futu OpenD"
+                      status={health.checks.futu.status}
+                      detail={health.checks.futu.connected ? "已连" : (health.checks.futu.error ?? "")}
+                    />
+                    <HealthItem
+                      label="DB 最新数据"
+                      status={health.checks.db_freshness.status}
+                      detail={health.checks.db_freshness.latest_date
+                        ? `${health.checks.db_freshness.latest_date} (${health.checks.db_freshness.days_ago} 天前)`
+                        : ""}
+                    />
+                  </div>
+                  {health.issues.length > 0 && (
+                    <ul className="mt-3 space-y-1 text-xs">
+                      {health.issues.map((issue, i) => (
+                        <li key={i} className="text-yellow-400">⚠️ {issue}</li>
+                      ))}
+                    </ul>
+                  )}
+                </CardContent>
+              </Card>
+            )}
 
-          {/* ── 5 步进度 ── */}
-          {steps.length > 0 && (
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm">5 步进度</CardTitle>
-              </CardHeader>
-              <CardContent>
+            {/* ── 5 步进度 ── */}
+            {steps.length > 0 && (
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm">5 步进度</CardTitle>
+                </CardHeader>
+                <CardContent>
                 <ol className="space-y-2 text-sm">
                   {steps.map((step) => (
                     <li key={step.name} className="flex items-center gap-2">
@@ -244,12 +247,12 @@ export default function PipelinePage() {
                       {step.lift_pct !== undefined && (
                         <span className="text-xs text-muted-foreground">IR 提升: {step.lift_pct}%</span>
                       )}
-                      {(step.warning_count ?? (Array.isArray(step.warnings) ? step.warnings.length : 0)) > 0 && (
+                      {(step.warning_count ?? step.warnings?.length ?? 0) > 0 && (
                         <span
                           className="text-xs text-yellow-400"
-                          title={Array.isArray(step.warnings) && step.warnings[0]?.message}
+                          title={step.warnings?.[0]?.message}
                         >
-                          告警: {step.warning_count ?? step.warnings.length} 个
+                          告警: {step.warning_count ?? step.warnings?.length ?? 0} 个
                         </span>
                       )}
                       {step.error && (
@@ -260,7 +263,8 @@ export default function PipelinePage() {
                 </ol>
               </CardContent>
             </Card>
-          )}
+            )}
+          </div>
 
           {/* ── 简报列表 + 内容 ── */}
           <Card>
