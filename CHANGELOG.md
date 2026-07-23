@@ -1,6 +1,52 @@
 # StockAI 项目日志
 
-> StockAI 从 0 到 v3.9 的完整演进记录。按时间倒序。总计 28 次重大更新。
+> StockAI 从 0 到 v3.10 的完整演进记录。按时间倒序。总计 29 次重大更新。
+
+---
+
+## 2026-07-23 — v3.10.1 — 量化 Pipeline 端到端跑通 (5 项 bug fix)
+
+### 🔧 Hotfix 1: PipelineStatus.step() 签名 (commit `6506c45`)
+- **问题**: `def step(self, name: str, **details)` 不接受 positional 第二参数
+  - 调用 `STATUS.step("1_gp_mining", "running")` → `TypeError: takes 2 positional arguments but 3 were given`
+- **修复**: 签名加 `status: str = "running"` keyword 参数, **details 不接受 positional
+- **额外**: `if "status" in details: status = details.pop("status")` 向后兼容
+
+### 🔧 Hotfix 2: step_1 best_factors 字段 (commit `6506c45`)
+- **问题**: step_1 detail 的 `candidates` 是 int (count), 但 generate_brief 当 list 用 `[:10]` 切片
+  - `'int' object is not subscriptable`
+- **修复**: 同时存 `candidates=int count` (前端用) + `best_factors=list` (简报用)
+
+### 🔧 Hotfix 3: step_3 warning_count + warnings list 拆分 (commit `6506c45`)
+- **问题**: step_3 detail 的 `warnings` 是 int, generate_brief L49 `len(decay_step.get("warnings", []))` → `int has no len()`
+- **修复**: 同时存 `warning_count=int` + `warnings=list of dicts`
+
+### 🔧 Hotfix 4: step_4 health_status 字段重命名 (commit `6506c45`)
+- **问题**: step_4 detail 的 `status=` 和 pipeline run status 同名字段冲突
+  - generate_brief 读到的是 "done"/"failed", 不是 overall health status
+- **修复**: 改名为 `health_status=` (业务字段) + `issues=` (count)
+- **附带**: generate_brief dict iteration 改 `.values()`, 适配 dict-shaped steps_data
+
+### 🔧 Hotfix 5: notify_service.send_notification 接口 (commit `6506c45`)
+- **问题**: step_5 调 `send_notification(body=..., title=...)`
+  - 真实签名是 `send_notification(markdown: str, title: str = "")` — 没有 body= 参数
+- **修复**: 改用 `markdown=` 参数, 自动从 generate_brief 输出截断 1500 字
+
+### 🆕 database.init_db 加 quant_briefs CREATE TABLE (commit `6506c45`)
+- **问题**: schema.sql 有 quant_briefs 表, 但 init_db 是硬编码 CREATE TABLE, 不读 schema.sql
+  - 上次重启会丢表
+- **修复**: init_db 加上 `CREATE TABLE IF NOT EXISTS quant_briefs`
+
+### 端到端验证 (8 次跑, 第 8 次成功)
+| 步骤 | 状态 | 输出 |
+|------|------|------|
+| 1_gp_mining | done | 10 个候选因子 (top IR=0.390) |
+| 2_ml_training | done | IR 提升 +7.94% (csi800 池子, 40 树) |
+| 3_factor_decay | done | 3 因子自动退役 (volatility / ma_disposition / vol_ratio) |
+| 4_data_health | done | stale, 1 issue (akshare 限频) |
+| 5_brief_notify | done | brief-20260723-204155 已保存到 reports/quant/ + DB |
+
+总耗时 ~151s (GP 训练 + ML 训练是主要耗时, factor_lifecycle IC 计算 13 次)
 
 ---
 
