@@ -70,7 +70,10 @@ jobs:
 
       - name: Install dependencies
         working-directory: frontend
-        run: npm ci
+        # --legacy-peer-deps: next@16.2.9 声明 peerOptional @playwright/test@^1.51.1,
+        # 但项目锁的是 1.49.0, npm ci 严格模式会 ERESOLVE 失败
+        # CI 不跑 e2e 测试, 只是为了让 npm ci 通过
+        run: npm ci --legacy-peer-deps
 
       - name: TypeScript type-check
         working-directory: frontend
@@ -95,7 +98,10 @@ jobs:
 
       - name: Install dependencies
         working-directory: frontend
-        run: npm ci
+        # --legacy-peer-deps: next@16.2.9 声明 peerOptional @playwright/test@^1.51.1,
+        # 但项目锁的是 1.49.0, npm ci 严格模式会 ERESOLVE 失败
+        # CI 不跑 e2e 测试, 只是为了让 npm ci 通过
+        run: npm ci --legacy-peer-deps
 
       - name: Build
         working-directory: frontend
