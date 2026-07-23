@@ -256,25 +256,29 @@ def get_quotes_batch(body: BatchQuoteBody):
     # 快速路径：Futu 批量获取（300只/次，不阻塞）
     codes = body.codes
     if codes:
-        try:
-            from services.futu_client import FutuClient
-            results = []
-            futu = FutuClient()
-            for i in range(0, len(codes), 300):
-                batch = codes[i:i+300]
-                for s in futu.get_snapshot(batch):
-                    if "error" not in s:
-                        results.append({
-                            "code": s["code"], "name": s.get("name",""), "price": s.get("price"),
-                            "change": s.get("change"), "change_pct": s.get("change_pct"),
-                            "high": s.get("high_price"), "low": s.get("low_price"),
-                            "open": s.get("open_price"), "volume": s.get("volume"),
-                            "source": "futu",
-                        })
-            if results:
-                return {"quotes": results, "source": "futu"}
-        except Exception:
-            pass
+        # 先 healthcheck (1 秒 socket 探测), OpenD 不可达直接跳到本地兜底,
+        # 避免 Futu SDK 内部死循环重试 (每 8 秒一次, 永不抛异常) 导致请求悬挂
+        from services.futu_client import FutuClient
+        futu = FutuClient()
+        futu_ok = futu.healthcheck().get("ok", False)
+        if futu_ok:
+            try:
+                results = []
+                for i in range(0, len(codes), 300):
+                    batch = codes[i:i+300]
+                    for s in futu.get_snapshot(batch):
+                        if "error" not in s:
+                            results.append({
+                                "code": s["code"], "name": s.get("name",""), "price": s.get("price"),
+                                "change": s.get("change"), "change_pct": s.get("change_pct"),
+                                "high": s.get("high_price"), "low": s.get("low_price"),
+                                "open": s.get("open_price"), "volume": s.get("volume"),
+                                "source": "futu",
+                            })
+                if results:
+                    return results
+            except Exception:
+                pass
         # Futu 不可用：从本地 historical_kline 取最新收盘价
         from database import query_all
         results = []
@@ -287,7 +291,7 @@ def get_quotes_batch(body: BatchQuoteBody):
                 results.append({"code": code, "name": "", "price": float(row[0]["close"]) if row[0]["close"] else 0, "source": "local"})
             else:
                 results.append({"code": code, "error": "无数据", "source": "local"})
-        return {"quotes": results, "source": "local"}
+        return results
 
     # 以下为旧代码（fund 路径保留，基本不会走到）
     results = []

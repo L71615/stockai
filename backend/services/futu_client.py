@@ -1,6 +1,7 @@
 """Futu OpenD / SDK 访问层 — 统一健康检查、A 股报价与 K 线获取。"""
 
 import logging
+import socket
 from typing import Any
 
 from services.utils import get_market
@@ -48,6 +49,11 @@ class FutuClient:
         return OpenQuoteContext(host=self.host, port=self.port)
 
     def healthcheck(self) -> dict[str, Any]:
+        """真实探测 OpenD 是否可达 (1 秒 socket connect)
+
+        之前只检查 SDK import, 没用真连 — 撞上 OpenD 未运行时会
+        进入 get_snapshot() 内部死循环重试, 永不抛异常, 整个 API 悬挂。
+        """
         if not is_futu_available():
             return {
                 "ok": False,
@@ -56,13 +62,26 @@ class FutuClient:
                 "port": self.port,
                 "message": str(_FUTU_IMPORT_ERROR),
             }
-        return {
-            "ok": True,
-            "source": "futu",
-            "host": self.host,
-            "port": self.port,
-            "message": "sdk import ok",
-        }
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.settimeout(1.0)
+            s.connect((self.host, self.port))
+            s.close()
+            return {
+                "ok": True,
+                "source": "futu",
+                "host": self.host,
+                "port": self.port,
+                "message": "OpenD reachable",
+            }
+        except Exception as e:
+            return {
+                "ok": False,
+                "source": "futu",
+                "host": self.host,
+                "port": self.port,
+                "message": f"OpenD unreachable: {e}",
+            }
 
     def get_snapshot(self, codes: list[str]) -> list[dict[str, Any]]:
         if not is_futu_available():
