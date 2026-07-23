@@ -30,8 +30,8 @@ def get_status():
 
 
 @router.post("/run")
-def trigger_run(background: BackgroundTasks):
-    """手动触发一次 pipeline (后台跑)"""
+def trigger_run():
+    """手动触发一次 pipeline (后台跑, 用真后台线程避免阻塞事件循环)"""
     state = STATUS.get()
     if state.get("status") == "running":
         raise HTTPException(409, f"Pipeline 正在跑 ({state.get('run_id', '?')}), 完成后重试")
@@ -42,7 +42,11 @@ def trigger_run(background: BackgroundTasks):
         except Exception as e:
             logger.exception("Pipeline 后台跑失败: %s", e)
 
-    background.add_task(_worker)
+    # 用 daemon 线程而不是 BackgroundTasks —
+    # BackgroundTasks 会占满 starlette anyio threadpool (默认 40),
+    # 阻塞所有后续请求的事件循环, 直到 5 分钟 pipeline 跑完
+    # daemon 线程完全独立于事件循环, 跑死也不影响 HTTP 服务
+    threading.Thread(target=_worker, daemon=True).start()
     return {
         "message": "Pipeline 已在后台启动, 用 GET /status 查进度",
         "started_at": datetime.now().isoformat(),
