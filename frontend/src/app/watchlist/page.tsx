@@ -85,8 +85,26 @@ export default function WatchlistPage() {
 
   useEffect(() => {
     fetchWatchlist()
-    const timer = setInterval(fetchWatchlist, 30000)
-    return () => clearInterval(timer)
+    // 30s → 60s: 行情刷新不需要这么频繁, 减半流量
+    // 窗口隐藏时不刷新 (document.visibilityState)
+    let timer: ReturnType<typeof setInterval> | null = null
+    const tick = () => {
+      if (document.visibilityState === "visible") fetchWatchlist()
+    }
+    const start = () => {
+      if (timer) return
+      timer = setInterval(tick, 60000)
+    }
+    const stop = () => {
+      if (timer) { clearInterval(timer); timer = null }
+    }
+    const onVis = () => (document.visibilityState === "visible" ? start() : stop())
+    document.addEventListener("visibilitychange", onVis)
+    start()
+    return () => {
+      stop()
+      document.removeEventListener("visibilitychange", onVis)
+    }
   }, [fetchWatchlist, router])
 
   const lookup = async (c: string) => {
