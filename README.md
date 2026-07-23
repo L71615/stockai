@@ -220,19 +220,22 @@ NOTIFY_ENABLED=true
 
 ## <a id="version-history"></a>📝 版本历史
 
-- **v3.9.1** (2026-07-20): 6 个 hotfix — Select 空字符串 crash · 行业涨幅榜横向→表格 · 板块列表默认折叠 + 过滤冷门 · **⭐ A 股交易日历判断 days_ago (fresh 0%→94.1%)** · 股票数显示"总数/有数据" · 批量加自选 API 路径 (404→200)
-- **v3.9** (2026-07-20): 🆕 `/browse` 全市场浏览页面 — 6 个数据运维 API (`/api/data-ops/*`) · 11 项功能 (搜索/板块过滤/Sparkline/完整性标签/补齐/批量勾选/行业涨幅榜等) · **🆕 Top 候选警告 (factor_warnings)** · **🆕 F10 K 线买卖点标注** · **🆕 回测内置保护 (6 维风险评估)** · **🆕 GP+ML 联合训练 (test IR +13.69%)** · **🆕 因子衰减评分 (decay_score)** · 量化方向 (因子挖掘+回测+预测) 5 大功能落地
-- **v3.9** (2026-07-16): 登录 JSON 解析防御(res.text + try/parse) + 双层 Header UI 重构(满足 DESIGN.md §Navigation)+ Top header 补 version 显示 + APP_VERSION 集中到 `frontend/src/lib/version.ts` + Tushare token 硬编码默认值脱敏(强制 .env 必填) + 数据源 Provider 抽象层(`backend/services/providers/`: akshare/baostock/tushare + Chain fallback) + 全量/优先级 K线同步脚本(`sync_kline_full.py` / `sync_kline_priority.py`)
-- **v3.9 后续** (2026-07-16): 性能优化(Tushare Provider + max_workers=12 + DB 索引) + 三层缓存(factor_snapshot/daily_north_flow/daily_inst_holding) + 数据扩充(5524 只全市场 K 线补齐) + **因子实验室**(/factor-lab 5 Tab: IC分析/相关性/散点图/GP 遗传编程挖掘/LightGBM ML 挖掘) + 清理板块资金北向资金(akshare 坏) + 双层 Header 重构 + Tushare token rotate。19 files, +2000/−700 lines
-- **v3.9** (2026-07-09): 登录 JSON 防御(res.text + try/parse) + 数据源 Provider + 安全脱敏。13 files, +1400/−500 lines
-- **v3.8** (2026-07-09): 策略系统升级(13策略,可调参数+来源) + 参数优化器(网格搜索) + 策略对比(多策略并排) + 回测增强(手续费/过拟合警告/买卖点标注/信号理由) + AI月报+对比诊断 + 交易记忆策略维度 + 连亏保护增强(3级警告) + 热点面板(板块资金+北向) + 板块过滤(默认主板) + Bug修复(run_multi_agent_screen等)。33 files, +2983/-115 lines
-- **v3.7** (2026-07-03): 策略回测引擎 + 多 Agent 分析 + 交易记忆系统 + 数据源抽象层 + 交易纪律强制 + AI 设置修复 + 性能优化(筛选页轮询修复/DataTable 3→1倍/批量报价/SWR去重/Futu跳过)。23 files, +1970/-1639 lines
-- **v3.6** (2026-07-01): Futu Phase A + P1 — A 股 `quote / minute / daily` 接入 Futu OpenD，新增 `futu_raw_quote` / `futu_raw_kline`，日线同步 `historical_kline`，现有报价 / 日线 / 1m 图表优先走 Futu；新增 `futu_sync_service`、`futu_sync_runs` / `futu_sync_run_items`、`intraday` / `nightly` 批量同步、告警逻辑与调度触发
-- **v3.6** (2026-07-01): P1 工程质量 100% — 认证解耦(ContextVar JWT, 24处硬编码清零) + AI 异常体系(5级层次) + K线 crosshair 标签 + 成交量格式化 + 连接池(busy_timeout) + data-table 拆分(730→4文件) + 全局异常处理 + TypeScript 零 :any
-- **v3.5** (2026-06-26): 条件选股四层过滤(L1-L4) + 因子清理(57→55, 删社交死因子, 修5阈值) + K线三合一修复(对齐+讲解栏+默认精简) + L3两阶段重构(AKShare快筛→Baostock精筛) + Baostock超时保护 + 废弃页面清理(duel/kol/review/skills)
-- **v3.5** (2026-06-23): AI 设置页重构(功能→供应商映射表+连通测试), Quant 页交互优化(统一查询按钮+因子AI解读), 根治 Turbopack disposed 错误(proxy→middleware+predev), 12 调用点按功能分发 AI 供应商
-- **v3.4** (2026-06-22): 因子体系 29→57 全面实现, 价格/成交量/BOLL/ACCELERATION/波动率/基本面因子实装, 量化页改版(海龟集成+因子面板), AKShare 兼容性修复, ATR 归一化
-- **v3.3** (2026-06-13): lightweight-charts K 线图表, 社交因子+通知推送+大佬观点页, 海龟交易法集成
-- **v3.2** (2026-06-06): 29 因子, 港股+美股行情, 多 Agent 交叉验证选股, SWR 缓存层, P0 安全修复
-- **v3.1** (2026-06-05): AI 对抗系统, 全球指数 11/15, 基本面因子, AI 供应商统一
-- **v3.0** (2026-06-04): AI 选股多因子扫描, 持仓管理, 部署 Docker
+| 版本 | 日期 | 主题 | 亮点 |
+|------|------|------|------|
+| **v3.10.2** | 2026-07-23 | Pipeline hotfix + UI | GP 表达式修复 · 状态汇总 race condition · /browse 板块下拉补齐 · freshness 30s 自动刷新 |
+| **v3.10.1** | 2026-07-23 | Pipeline 端到端 | 5 步 pipeline 5 项 bug 一次性修, 跑通简报推送 |
+| **v3.10** | 2026-07-23 | 🆕 自动量化 Pipeline | cron 自动跑 GP→ML→过拟合→衰减→简报, 邮件/Telegram 推送 |
+| **v3.9.1** | 2026-07-20 | /browse 6 项 hotfix | ⭐ A 股交易日历 (fresh 0%→94.1%) · 批量加自选 404→200 |
+| **v3.9** | 2026-07-20 | 🆕 全市场浏览 + 量化突破 | /browse · 因子实验室 5 Tab · GP+ML 联合 +13.69% · 回测保护 · F10 买卖点 |
+| **v3.9 后续** | 2026-07-16 | 性能 + 因子实验室 | Tushare 提速 4× · 三层缓存 · 因子 5 Tab (IC/相关性/散点/GP/LightGBM) |
+| **v3.8** | 2026-07-09 | 策略系统升级 | 13 策略 · 参数优化器 · 月报 · 连亏保护 3 级 |
+| **v3.7** | 2026-07-03 | 回测引擎 + 多 Agent | 策略回测 · 5 角色多空辩论 · 交易记忆 · 数据源抽象 |
+| **v3.6** | 2026-07-01 | Futu + 工程 100% | A 股接 Futu · 认证解耦 · AI 异常 5 级 · TypeScript 零 any |
+| **v3.5** | 2026-06-26 | 条件选股重构 | L1-L4 四层过滤 · 因子清理 57→55 · L3 两阶段 · K 线三合一 |
+| **v3.4** | 2026-06-22 | 因子 29→57 | 7 类因子实装 · 量化页改版 · 海龟集成 |
+| **v3.3** | 2026-06-13 | K 线升级 | lightweight-charts · 社交因子 · 大佬观点 |
+| **v3.2** | 2026-06-06 | 多市场 + P0 安全 | 港美股 · 多 Agent · SWR · 7 项 P0 安全 |
+| **v3.1** | 2026-06-05 | AI 对抗 + 全球指数 | AI 对抗 · 11/15 指数 · AI 供应商统一 |
+| **v3.0** | 2026-06-04 | AI 选股 MVP | 多因子扫描 · 持仓 · Docker |
+
+> 📖 **完整变更**: [CHANGELOG.md](CHANGELOG.md) 含每次更新的 bug 修复细节 + 文件统计
