@@ -46,8 +46,8 @@ def generate_brief(steps_data: dict) -> str:
 
     gp_count = gp_step.get("candidates", 0) if gp_step else 0
     ml_lift = ml_step.get("lift_pct", "N/A") if ml_step else "N/A"
-    decay_warns = len(decay_step.get("warnings", [])) if decay_step else 0
-    health_status = health_step.get("status", "unknown") if health_step else "unknown"
+    decay_warns = decay_step.get("warning_count", 0) if decay_step else 0
+    health_status = health_step.get("health_status", "unknown") if health_step else "unknown"
 
     md.append(f"- **GP 挖因子**: {gp_count} 个候选")
     md.append(f"- **ML 训练**: train→test IR 提升 **{ml_lift}%**")
@@ -57,10 +57,11 @@ def generate_brief(steps_data: dict) -> str:
 
     # ── GP 候选 ──
     md.append("## 🧬 新挖因子 (Top 10)\n")
-    if gp_step and gp_step.get("candidates"):
+    best_factors = gp_step.get("best_factors", []) if gp_step else []
+    if best_factors:
         md.append("| 因子表达式 | IR | 备注 |")
         md.append("|---|---|---|")
-        for c in gp_step["candidates"][:10]:
+        for c in best_factors[:10]:
             expr = c.get("expr_text", "")[:60]
             ir = c.get("ir", 0)
             md.append(f"| `{expr}...` | {ir:.3f} | - |")
@@ -83,14 +84,9 @@ def generate_brief(steps_data: dict) -> str:
     # ── 数据源健康 ──
     md.append("## 🏥 数据源健康\n")
     if health_step:
-        md.append(f"- **整体状态**: {health_step.get('status', 'unknown')}")
-        issues = health_step.get("issues", [])
-        if issues:
-            md.append(f"- **问题数**: {len(issues)}")
-            for issue in issues[:5]:
-                md.append(f"  - {issue}")
-        else:
-            md.append("- **问题数**: 0")
+        md.append(f"- **整体状态**: {health_step.get('health_status', 'unknown')}")
+        issue_count = health_step.get("issues", 0)
+        md.append(f"- **问题数**: {issue_count}")
     else:
         md.append("_未获取到健康度数据_\n")
     md.append("")
@@ -98,7 +94,9 @@ def generate_brief(steps_data: dict) -> str:
     # ── 状态汇总 ──
     md.append("## 📈 状态汇总\n")
     if steps_data:
-        for step in steps_data:
+        # steps_data 是 dict {step_name: step_dict} 或 list
+        items = steps_data.values() if isinstance(steps_data, dict) else steps_data
+        for step in items:
             name = step.get("name", "?")
             status = step.get("status", "?")
             emoji = "✅" if status == "done" else "❌" if status == "failed" else "⏳"

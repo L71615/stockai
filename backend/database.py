@@ -220,6 +220,13 @@ def init_db():
             key             TEXT PRIMARY KEY,
             value           TEXT NOT NULL
         )""")
+        conn.execute("""CREATE TABLE IF NOT EXISTS quant_briefs (
+            id           TEXT PRIMARY KEY,
+            content_md   TEXT NOT NULL,
+            summary_json TEXT,
+            created_at   TEXT NOT NULL
+        )""")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_quant_briefs_created ON quant_briefs(created_at)")
         # 向后兼容：为已有数据库添加缺失字段
         for col, col_def in [
             ("asset_type", "TEXT DEFAULT ''"),

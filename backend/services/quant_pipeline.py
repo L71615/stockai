@@ -52,10 +52,13 @@ class PipelineStatus:
         with self._lock:
             if "steps" not in self._state:
                 self._state["steps"] = []
+            # 如果 details 里传了 status 字段, 用它覆盖参数 (向后兼容)
+            if "status" in details:
+                status = details.pop("status")
             # 找已存在的 step, 或新增
             existing = next((s for s in self._state["steps"] if s["name"] == name), None)
             if existing:
-                existing.update({"status": status, **details, "updated_at": datetime.now().isoformat()})
+                existing.update({**details, "status": status, "updated_at": datetime.now().isoformat()})
             else:
                 self._state["steps"].append({
                     "name": name,
@@ -100,14 +103,15 @@ def step_1_gp_mining() -> dict:
     STATUS.step("1_gp_mining", "running")
     try:
         result = gp_mine(
-            pool="csi800",
+            stock_pool="csi800",
             population=15,
             generations=3,
             top_k=10,
             seed=42,
         )
-        STATUS.step("1_gp_mining", "done",
+        STATUS.step("1_gp_mining", status="done",
                     candidates=len(result.get("best", [])),
+                    best_factors=result.get("best", []),
                     kept=result.get("stats", {}).get("kept", 0))
         return {"candidates": result.get("best", []), "stats": result.get("stats", {})}
     except Exception as e:
@@ -154,13 +158,14 @@ def step_3_factor_decay() -> dict:
                     "factors": retired[:10],
                     "message": f"{len(retired)} 个因子自动退役",
                 })
-        STATUS.step("3_factor_decay", "done",
-                    warnings=len(warnings),
+        STATUS.step("3_factor_decay", status="done",
+                    warning_count=len(warnings),
+                    warnings=warnings,  # 列表详情 (generate_brief 用)
                     retired_count=len(warnings[0]["factors"]) if warnings else 0)
         return {"warnings": warnings, "result": result}
     except Exception as e:
         STATUS.error("3_factor_decay", str(e))
-        STATUS.step("3_factor_decay", "failed", error=str(e)[:200])
+        STATUS.step("3_factor_decay", status="failed", error=str(e)[:200])
         return {"warnings": [], "error": str(e)}
 
 
@@ -170,13 +175,13 @@ def step_4_data_health() -> dict:
     STATUS.step("4_data_health", "running")
     try:
         result = check_health()
-        STATUS.step("4_data_health", "done",
-                    status=result.get("overall_status"),
+        STATUS.step("4_data_health", status="done",
+                    health_status=result.get("overall_status"),
                     issues=len(result.get("issues", [])))
         return result
     except Exception as e:
         STATUS.error("4_data_health", str(e))
-        STATUS.step("4_data_health", "failed", error=str(e)[:200])
+        STATUS.step("4_data_health", status="failed", error=str(e)[:200])
         return {"overall_status": "unknown", "issues": [], "error": str(e)}
 
 
@@ -196,8 +201,8 @@ def step_5_brief_and_notify() -> dict:
 
         # 2. 推送
         notify_result = send_notification(
+            markdown=(brief_md if isinstance(brief_md, str) else str(brief_md))[:1500] + "\n\n完整简报: /api/pipeline/brief",
             title=f"StockAI 量化日报 {datetime.now().strftime('%Y-%m-%d')}",
-            body=brief_md[:1500] + "...\n\n完整简报: /api/pipeline/brief",
         )
 
         STATUS.step("5_brief_notify", "done",
