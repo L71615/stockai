@@ -4,6 +4,37 @@
 
 ---
 
+## 2026-07-23 — v3.10.2 — Pipeline 简报质量 + /browse 自动刷新 + 板块补齐
+
+### 🔧 Hotfix 1: 简报 GP 表达式显示
+- **问题**: 简报"新挖因子 Top 10"里表达式全是 `...` 被截断
+  - 后端 GP 输出字段叫 `expr`, 但简报读 `c.get("expr_text", "")` 拿到空字符串
+- **修复**: `quant_brief.py` 改读 `c.get("expr", c.get("expr_text", ""))` (向后兼容)
+- **验证**: 第 8 次 pipeline 跑通后, 简报里 10 个真实表达式 (`returns` / `delta(open, 10)` / `(close - abs(volume))` 等)
+
+### 🔧 Hotfix 2: 简报状态汇总 race condition
+- **问题**: 简报"状态汇总"里 5_brief_notify 显示 `running`, 实际已 done
+  - `generate_brief()` 在 `STATUS.step("done")` 之前被调用, 看到的是 running
+- **修复**: `quant_pipeline.py step_5` 在 `generate_brief()` 前手动标记 `steps_data["5_brief_notify"]["status"] = "done"`
+- **验证**: 第 8 次 + 最新 1 次 pipeline, 状态汇总都显示 5/5 ✅ done
+
+### 🆕 /browse UI 增强
+- **顶部板块下拉补齐** (`FreshnessBar` 新增):
+  - 6 个板块 Select: 沪深主板 / 深证主板 / 创业板 / 科创板 / 北交所 / ETF
+  - 选中板块 → 点"补齐此板块"按钮 → 后台 sync 该板块所有股票
+  - 替代每板块卡片右上角的小按钮 (不容易找)
+- **freshness 30s 自动刷新** (`useFreshness`):
+  - 之前只在挂载时 fetch 1 次
+  - 现在加 `setInterval(fetchFreshness, 30000)`, 停留能看到数据自动更新
+
+### 文件变更
+- `backend/services/quant_brief.py` (1 行修复)
+- `backend/services/quant_pipeline.py` (3 行 race fix)
+- `frontend/src/app/browse/page.tsx` (FreshnessBar 加板块 Select + useFreshness 加 setInterval)
+- TS check: 0 错误 (browse/page.tsx)
+
+---
+
 ## 2026-07-23 — v3.10.1 — 量化 Pipeline 端到端跑通 (5 项 bug fix)
 
 ### 🔧 Hotfix 1: PipelineStatus.step() 签名 (commit `6506c45`)
