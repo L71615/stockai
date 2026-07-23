@@ -196,6 +196,11 @@ def step_5_brief_and_notify() -> dict:
         state = STATUS.get()
         steps_data = {s["name"]: s for s in state.get("steps", [])}
 
+        # race condition 修复: generate_brief 看到的状态汇总里 5_brief_notify 应为 done
+        # (简报生成时, 推送尚未跑, 但跑推送是 done 状态的子步骤)
+        if "5_brief_notify" in steps_data:
+            steps_data["5_brief_notify"]["status"] = "done"
+
         brief_md = generate_brief(steps_data=steps_data)
         brief_id = save_brief(brief_md)
 

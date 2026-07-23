@@ -344,8 +344,10 @@ function FreshnessBar({ data, onRefresh, syncing, syncProgress, onSync }: {
   onRefresh: () => void
   syncing: boolean
   syncProgress: SyncStatusResponse | null
-  onSync: (scope: string) => void
+  onSync: (scope: string, sector?: string) => void
 }) {
+  const [syncSector, setSyncSector] = useState<string>("__none__")
+
   if (!data) {
     return <Skeleton className="h-20 w-full" />
   }
@@ -386,6 +388,36 @@ function FreshnessBar({ data, onRefresh, syncing, syncProgress, onSync }: {
           </div>
         ) : (
           <div className="flex items-center gap-2">
+            {/* 板块下拉补齐 */}
+            <Select value={syncSector} onValueChange={setSyncSector}>
+              <SelectTrigger className="h-7 w-[120px] text-xs">
+                <SelectValue placeholder="选择板块" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__none__">选择板块</SelectItem>
+                <SelectItem value="main_sh">沪深主板</SelectItem>
+                <SelectItem value="main_sz">深证主板</SelectItem>
+                <SelectItem value="gem">创业板</SelectItem>
+                <SelectItem value="star">科创板</SelectItem>
+                <SelectItem value="bse">北交所</SelectItem>
+                <SelectItem value="etf">ETF/基金</SelectItem>
+                <SelectItem value="index">指数</SelectItem>
+              </SelectContent>
+            </Select>
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-7 text-xs"
+              disabled={syncSector === "__none__"}
+              onClick={() => {
+                if (syncSector !== "__none__") {
+                  onSync("sector", syncSector)
+                  setSyncSector("__none__")
+                }
+              }}
+            >
+              <IconRefresh className="size-3 mr-1" />补齐此板块
+            </Button>
             <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => onSync("stale")}>
               <IconRefresh className="size-3 mr-1" />一键补齐滞后
             </Button>
@@ -688,9 +720,16 @@ function useFreshness() {
   const refresh = useCallback(() => setTick((t) => t + 1), [])
 
   useEffect(() => {
-    apiGet<FreshnessResponse>("/api/data-ops/freshness")
-      .then(setData)
-      .catch(() => {})
+    const fetchFreshness = () => {
+      apiGet<FreshnessResponse>("/api/data-ops/freshness")
+        .then(setData)
+        .catch(() => {})
+    }
+    // 立即拉一次
+    fetchFreshness()
+    // 30s 自动刷新 (停留时能看到数据更新)
+    const interval = setInterval(fetchFreshness, 30000)
+    return () => clearInterval(interval)
   }, [tick])
 
   return { data, refresh }

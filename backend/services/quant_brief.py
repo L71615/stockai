@@ -62,9 +62,9 @@ def generate_brief(steps_data: dict) -> str:
         md.append("| 因子表达式 | IR | 备注 |")
         md.append("|---|---|---|")
         for c in best_factors[:10]:
-            expr = c.get("expr_text", "")[:60]
+            expr = c.get("expr", c.get("expr_text", ""))[:60]
             ir = c.get("ir", 0)
-            md.append(f"| `{expr}...` | {ir:.3f} | - |")
+            md.append(f"| `{expr}` | {ir:.3f} | - |")
     else:
         md.append("_本次 GP 未产出候选_\n")
     md.append("")
