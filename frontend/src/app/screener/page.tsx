@@ -22,6 +22,7 @@ interface ScreenerResultsResponse {
 interface ScanResult {
   code: string; name: string; industry?: string; score: number; top_factors?: string[]
   price?: number; change_pct?: number
+  score_neutral?: number  // 行业中性化分数 (industry_neutralize 后), 后端排序键
   factor_warnings?: { factor: string; status: string; label: string; warning_days?: number; ir_current?: number | null }[]
   has_critical_warnings?: boolean
 }
@@ -40,35 +41,30 @@ interface WatchItem {
   backtest_strategy?: string; backtest_sharpe?: number
 }
 
-interface AgentPick {
-  code: string; name: string; score: number; confidence: string; reason: string; risk_flag?: string | null
-}
-
-interface AgentResult {
-  agent_key: string; agent_name: string; icon: string; color: string; focus: string
-  picks: AgentPick[]; summary: string; top_themes?: string[]; error?: string
-}
-
-interface AggregatedPick {
-  code: string; name: string; industry: string; price?: number
-  quant_score?: number; agent_score: number
-  votes: number; total_agents: number
-  consensus: string; consensus_class: string
-  reasons: { agent: string; color: string; reason: string; confidence: string }[]
-  agents: string[]; risk_flags?: { agent: string; flag: string }[] | null
-  risk_veto: boolean
-}
-
 interface MultiAgentResult {
-  agent_results: AgentResult[]
-  aggregation: {
-    aggregated: AggregatedPick[]
-    consensus_summary: string
-    top_themes: string[]
-    agent_count: number
-    error_agents: AgentResult[]
+  // 后端 /api/screener/multi-agent-screen 实际返回:
+  // { results: AgentResultItem[], summary: AgentSummary, top_picks: [] }
+  results: AgentResultItem[]
+  summary: {
+    total: number
+    buy_count: number
+    hold_count: number
+    sell_count: number
+    avg_confidence: number
   }
-  provider: string; elapsed_ms: number
+  top_picks: unknown[]  // 后端目前返回空数组, 保留占位
+}
+
+interface AgentResultItem {
+  rank: number
+  code: string
+  name: string
+  verdict: "买入" | "持有" | "卖出"
+  confidence: number
+  score: number
+  key_reasons: string[]
+  risk_warning: string
+  technical_report: string
 }
 
 export default function ScreenerPage() {
@@ -142,8 +138,11 @@ export default function ScreenerPage() {
   const aiScreen = async () => {
     setAiScreenLoading(true)
     try {
-      const picks = await apiPost<AIPick[]>("/api/screener/ai-screen", { provider: "", top_n: 5 })
-      setAiPicks(Array.isArray(picks) ? picks : [])
+      // 后端返回 { picks: AIPick[], summary: string, total_candidates: number }
+      const result = await apiPost<{ picks?: AIPick[]; summary?: string }>(
+        "/api/screener/ai-screen", { provider: "", top_n: 5 }
+      )
+      setAiPicks(Array.isArray(result?.picks) ? result.picks : [])
     } catch { /* */ }
     finally { setAiScreenLoading(false) }
   }
@@ -153,11 +152,14 @@ export default function ScreenerPage() {
     setMultiAgentError(null)
     setMultiAgentResult(null)
     try {
+      // 后端返回 { results, summary, top_picks } - 5 角色多空辩论结构
       const result = await apiPost<MultiAgentResult>("/api/screener/multi-agent-screen", { provider: "" })
-      if (result && result.aggregation) {
+      if (result && Array.isArray(result.results)) {
         setMultiAgentResult(result)
       } else if (result && "error" in result) {
         setMultiAgentError((result as { error?: string }).error || "Agent 分析返回异常")
+      } else {
+        setMultiAgentError("Agent 分析返回结构异常")
       }
     } catch (e: unknown) {
       setMultiAgentError((e as Error).message || "Agent 分析请求失败，请检查网络后重试")
@@ -303,9 +305,15 @@ export default function ScreenerPage() {
                               <td className="p-2">
                                 <div className="flex items-center gap-1.5">
                                   <div className="w-16 h-1.5 bg-muted rounded-none overflow-hidden">
-                                    <div className="h-full bg-primary transition-all" style={{ width: `${Math.min(r.score || 0, 100)}%` }} />
+                                    {/* 后端排序键是 score_neutral (行业中性化); 如果存在则用, 否则 fallback 到 score */}
+                                    <div className="h-full bg-primary transition-all" style={{ width: `${Math.min((r.score_neutral ?? r.score) || 0, 100) * 10}%` }} />
                                   </div>
-                                  <span className="font-mono text-muted-foreground">{r.score != null ? r.score.toFixed(1) : "--"}</span>
+                                  <span
+                                    className="font-mono text-muted-foreground"
+                                    title={r.score_neutral != null ? `原始 score=${r.score?.toFixed(2)} | 行业中性化=${r.score_neutral.toFixed(2)}` : undefined}
+                                  >
+                                    {r.score_neutral != null ? r.score_neutral.toFixed(2) : (r.score != null ? r.score.toFixed(1) : "--")}
+                                  </span>
                                 </div>
                               </td>
                               <td className="p-2">
@@ -488,91 +496,78 @@ export default function ScreenerPage() {
                 <CardTitle className="text-sm flex items-center gap-1.5 flex-wrap">
                   <IconUsers className="size-4 text-purple-400" />
                   5 Agent 交叉验证
-                  <Badge variant="secondary" className="text-[10px]">
-                    {(multiAgentResult.elapsed_ms / 1000).toFixed(1)}s
-                  </Badge>
-                  <span className="text-xs text-muted-foreground font-normal">
-                    {multiAgentResult.aggregation.agent_count} 位分析师
-                  </span>
                 </CardTitle>
-                <CardDescription>{multiAgentResult.aggregation.consensus_summary}</CardDescription>
+                <CardDescription>
+                  5 角色多空辩论 · 共 {multiAgentResult.summary.total} 只 · 平均置信 {(multiAgentResult.summary.avg_confidence * 100).toFixed(0)}%
+                </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
-                {/* Top Themes */}
-                {multiAgentResult.aggregation.top_themes.length > 0 && (
-                  <div className="flex items-center gap-1.5 flex-wrap">
-                    <span className="text-[10px] text-muted-foreground uppercase tracking-wider">共识主题</span>
-                    {multiAgentResult.aggregation.top_themes.map((t, i) => (
-                      <Badge key={i} variant="outline" className="text-[10px]">{t}</Badge>
-                    ))}
-                  </div>
-                )}
+                {/* Verdict Distribution */}
+                <div className="flex items-center gap-3 text-xs">
+                  <span className="text-emerald-400">买入 {multiAgentResult.summary.buy_count}</span>
+                  <span className="text-yellow-400">持有 {multiAgentResult.summary.hold_count}</span>
+                  <span className="text-red-400">卖出 {multiAgentResult.summary.sell_count}</span>
+                </div>
 
-                {/* Aggregated Picks */}
-                <div className="overflow-auto max-h-[400px]">
+                {/* Per-Stock Results */}
+                <div className="overflow-auto max-h-[500px]">
                   <table className="w-full text-xs">
                     <thead className="bg-muted sticky top-0">
                       <tr>
+                        <th className="text-left p-2 font-medium">#</th>
                         <th className="text-left p-2 font-medium">股票</th>
-                        <th className="text-left p-2 font-medium hidden sm:table-cell">行业</th>
-                        <th className="text-center p-2 font-medium">投票</th>
+                        <th className="text-center p-2 font-medium">结论</th>
+                        <th className="text-center p-2 font-medium">置信</th>
                         <th className="text-center p-2 font-medium">评分</th>
-                        <th className="text-left p-2 font-medium">共识</th>
-                        <th className="text-left p-2 font-medium">Agent 意见</th>
+                        <th className="text-left p-2 font-medium">关键理由</th>
                         <th className="text-center p-2 font-medium">操作</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {multiAgentResult.aggregation.aggregated.map((a, i) => (
-                        <tr key={a.code} className={cn(
-                          "border-t border-border hover:bg-accent/30 transition-colors",
-                          a.risk_veto && "bg-red-500/5"
-                        )}>
+                      {multiAgentResult.results.map((a) => (
+                        <tr key={a.code} className="border-t border-border hover:bg-accent/30 transition-colors">
+                          <td className="p-2 text-muted-foreground font-mono">{a.rank}</td>
                           <td className="p-2">
                             <span className="font-mono">{a.code}</span>
                             <span className="ml-1 font-medium text-[11px]">{a.name}</span>
                           </td>
-                          <td className="p-2 text-muted-foreground hidden sm:table-cell">{a.industry || "--"}</td>
                           <td className="p-2 text-center">
-                            <span className={cn(
-                              "font-mono font-medium",
-                              a.votes >= 4 ? "text-emerald-400" : a.votes >= 3 ? "text-yellow-400" : "text-muted-foreground"
-                            )}>
-                              {a.votes}/{a.total_agents}
-                            </span>
-                          </td>
-                          <td className="p-2 text-center font-mono">
-                            {a.agent_score > 0 ? a.agent_score.toFixed(1) : "--"}
-                          </td>
-                          <td className="p-2">
                             <Badge variant="outline" className={cn(
                               "text-[10px]",
-                              a.consensus_class === "all" && "border-emerald-500/50 text-emerald-400",
-                              a.consensus_class === "majority" && "border-yellow-500/50 text-yellow-400",
-                              a.consensus_class === "divided" && "border-orange-500/50 text-orange-400",
-                              a.consensus_class === "vetoed" && "border-red-500/50 text-red-500",
-                              a.consensus_class === "minority" && "border-muted text-muted-foreground",
+                              a.verdict === "买入" && "border-emerald-500/50 text-emerald-400",
+                              a.verdict === "持有" && "border-yellow-500/50 text-yellow-400",
+                              a.verdict === "卖出" && "border-red-500/50 text-red-400",
                             )}>
-                              {a.consensus_class === "all" && <IconCheck className="size-3 mr-0.5" />}
-                              {a.consensus_class === "vetoed" && <IconX className="size-3 mr-0.5" />}
-                              {a.consensus}
+                              {a.verdict === "买入" && <IconCheck className="size-3 mr-0.5" />}
+                              {a.verdict === "卖出" && <IconX className="size-3 mr-0.5" />}
+                              {a.verdict}
                             </Badge>
                           </td>
+                          <td className="p-2 text-center font-mono text-muted-foreground">
+                            {(a.confidence * 100).toFixed(0)}%
+                          </td>
+                          <td className="p-2 text-center font-mono">
+                            {a.score > 0 ? a.score.toFixed(2) : "--"}
+                          </td>
                           <td className="p-2">
-                            <div className="space-y-0.5 max-w-[280px]">
-                              {a.reasons.map((r, j) => (
-                                <div key={j} className="text-[10px] leading-tight">
-                                  <span className="font-medium">{r.agent}</span>
-                                  <span className="text-muted-foreground">: {r.reason.length > 40 ? r.reason.slice(0, 40) + "..." : r.reason}</span>
+                            <div className="space-y-0.5 max-w-[320px]">
+                              {a.key_reasons.slice(0, 2).map((r, j) => (
+                                <div key={j} className="text-[10px] leading-tight text-muted-foreground line-clamp-2">
+                                  {r.length > 60 ? r.slice(0, 60) + "..." : r}
                                 </div>
                               ))}
+                              {a.risk_warning && (
+                                <div className="text-[10px] leading-tight text-yellow-400 line-clamp-1 mt-1">
+                                  ⚠ {a.risk_warning.length > 60 ? a.risk_warning.slice(0, 60) + "..." : a.risk_warning}
+                                </div>
+                              )}
                             </div>
                           </td>
                           <td className="p-2 text-center">
                             <Button
                               size="sm"
                               variant="outline"
-                              className="h6 text-[10px] px-2 py-0.5"
+                              className="h-6 text-[10px] px-2 py-0.5"
                               onClick={() => router.push(`/quant?code=${a.code}&from=screener`)}
                             >
                               分析
@@ -582,59 +577,6 @@ export default function ScreenerPage() {
                       ))}
                     </tbody>
                   </table>
-                </div>
-
-                {/* Individual Agent Summaries */}
-                <Separator />
-                <div>
-                  <h4 className="text-xs font-medium text-muted-foreground mb-2 uppercase tracking-wider">
-                    各 Agent 独立分析
-                  </h4>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
-                    {multiAgentResult.agent_results.map((agent, i) => (
-                      <div key={i} className="border border-border rounded-none p-3">
-                        <div className="flex items-center gap-1.5 mb-1.5">
-                          {agent.agent_key === "value" && <IconCoin className="size-4 text-emerald-400" />}
-                          {agent.agent_key === "technical" && <IconChartBar className="size-4 text-blue-400" />}
-                          {agent.agent_key === "risk" && <IconShield className="size-4 text-red-400" />}
-                          {agent.agent_key === "sentiment" && <IconFlame className="size-4 text-orange-400" />}
-                          {agent.agent_key === "macro" && <IconWorld className="size-4 text-purple-400" />}
-                          {!["value","technical","risk","sentiment","macro"].includes(agent.agent_key) && (
-                            <IconBrain className="size-4 text-muted-foreground" />
-                          )}
-                          <span className="text-xs font-medium">{agent.agent_name}</span>
-                          <span className="text-[10px] text-muted-foreground">· {agent.focus}</span>
-                        </div>
-                        {agent.error ? (
-                          <p className="text-[10px] text-red-400">{agent.error}</p>
-                        ) : (
-                          <>
-                            <p className="text-[11px] text-muted-foreground line-clamp-2 mb-2">
-                              {agent.summary}
-                            </p>
-                            {agent.picks.length > 0 && (
-                              <div className="space-y-1">
-                                {agent.picks.map((pick, j) => (
-                                  <div key={j} className="flex items-center justify-between text-[10px] py-0.5">
-                                    <span className="font-mono">{pick.code}</span>
-                                    <span className="text-muted-foreground">
-                                      评分: {pick.score?.toFixed(1)}
-                                      <span className={cn(
-                                        "ml-1 text-[9px]",
-                                        pick.confidence === "high" ? "text-emerald-400" : "text-yellow-400"
-                                      )}>
-                                        {pick.confidence === "high" ? "确信" : pick.confidence === "medium" ? "一般" : "保留"}
-                                      </span>
-                                    </span>
-                                  </div>
-                                ))}
-                              </div>
-                            )}
-                          </>
-                        )}
-                      </div>
-                    ))}
-                  </div>
                 </div>
               </CardContent>
             </Card>
