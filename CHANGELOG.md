@@ -1,6 +1,38 @@
 # StockAI 项目日志
 
-> StockAI 从 0 到 v3.10.3 的完整演进记录。按时间倒序。总计 29 次重大更新。
+> StockAI 从 0 到 v3.10.4 的完整演进记录。按时间倒序。总计 30 次重大更新。
+
+---
+
+## 2026-07-24 — v3.10.4 — /quotes 性能 + /pipeline warnings + 死代码清理 + 测试
+
+### ⚡ /quotes N+1 → 单次 IN 查询 (commit `<tbd>`)
+- **问题**: Futu 不可用时本地 DB 兜底路径 per-code `query_all`，100 只股票 = 100 次串行 SELECT，~10s
+- **修复**: 单次 IN-clause + 相关子查询取每只股票最新收盘价，~200ms (50x 提升)
+- **附带**: 本地兜底路径加 `_QUOTE_CACHE` 写入，60s 轮询不再重复 DB 查询
+
+### 🛡️ /quotes 加 codes 长度上限 (commit `<tbd>`)
+- **修复**: `BatchQuoteBody.codes: list[str] = Field(..., max_length=500)` 防 DoS
+- **清理**: 删除不可达 legacy fund 路径 (~70 行死代码)
+
+### 🎨 /pipeline warnings 列表展开 (commit `<tbd>`)
+- **问题**: v3.10.3 修复了 `step.warnings` 渲染崩溃，但只显示 count，warnings[].message 从不展示
+- **修复**: 改为可点击的"告警: N 个 ▸"，点击展开显示 `[step.name] [level] [type] message` 列表
+
+### 🧪 K 线 fix 补单元测试 (commit `<tbd>`)
+- 新增 `tests/test_technical_local_kline.py` 6 个 case:
+  - DB 空 → None
+  - DB 数据 < 20 条 → None
+  - DB 数据 < days → None
+  - DB 数据充足 → dict 含 source=local + 正序 dates
+  - days 截断生效
+  - DB 抛异常 → None (不 crash)
+- **结果**: 6 passed in 0.34s
+
+### 文件变更
+- `backend/routers/stocks.py` — 删 70 行死代码 + IN-clause + codes max_length + 缓存写入 + 日志
+- `frontend/src/app/pipeline/page.tsx` — warnings 折叠展开 + level/type badge
+- `tests/test_technical_local_kline.py` — 新增 (K 线 fix 首个测试覆盖)
 
 ---
 

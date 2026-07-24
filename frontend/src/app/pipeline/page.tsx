@@ -119,6 +119,8 @@ export default function PipelinePage() {
 
   const steps = status?.steps ?? []
   const stepEmoji = (s: string) => s === "done" ? "✅" : s === "failed" ? "❌" : s === "running" ? "⏳" : "·"
+  const [openWarnings, setOpenWarnings] = useState<Record<string, boolean>>({})
+  const toggleWarnings = (name: string) => setOpenWarnings((m) => ({ ...m, [name]: !m[name] }))
 
   return (
     <>
@@ -248,12 +250,13 @@ export default function PipelinePage() {
                         <span className="text-xs text-muted-foreground">IR 提升: {step.lift_pct}%</span>
                       )}
                       {(step.warning_count ?? step.warnings?.length ?? 0) > 0 && (
-                        <span
-                          className="text-xs text-yellow-400"
-                          title={step.warnings?.[0]?.message}
+                        <button
+                          type="button"
+                          onClick={() => toggleWarnings(step.name)}
+                          className="text-xs text-yellow-400 hover:underline"
                         >
-                          告警: {step.warning_count ?? step.warnings?.length ?? 0} 个
-                        </span>
+                          告警: {step.warning_count ?? step.warnings?.length ?? 0} 个 {openWarnings[step.name] ? "▾" : "▸"}
+                        </button>
                       )}
                       {step.error && (
                         <span className="text-xs text-red-400 truncate" title={step.error}>err: {step.error}</span>
@@ -261,6 +264,22 @@ export default function PipelinePage() {
                     </li>
                   ))}
                 </ol>
+                {steps.some((s) => openWarnings[s.name] && (s.warnings?.length ?? 0) > 0) && (
+                  <ul className="mt-3 space-y-1 border-t border-border/40 pt-2">
+                    {steps
+                      .filter((s) => openWarnings[s.name] && (s.warnings?.length ?? 0) > 0)
+                      .flatMap((s) =>
+                        (s.warnings ?? []).map((w, i) => (
+                          <li key={`${s.name}-${i}`} className="text-xs text-yellow-400/90">
+                            <span className="font-mono text-[10px] text-muted-foreground mr-1">[{s.name}]</span>
+                            <Badge variant="outline" className="mr-1 text-[10px] py-0">{w.level}</Badge>
+                            {w.type && <Badge variant="outline" className="mr-1 text-[10px] py-0">{w.type}</Badge>}
+                            {w.message}
+                          </li>
+                        )),
+                      )}
+                  </ul>
+                )}
               </CardContent>
             </Card>
             )}
