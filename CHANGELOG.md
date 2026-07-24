@@ -1,6 +1,68 @@
 # StockAI 项目日志
 
-> StockAI 从 0 到 v3.10 的完整演进记录。按时间倒序。总计 29 次重大更新。
+> StockAI 从 0 到 v3.10.3 的完整演进记录。按时间倒序。总计 29 次重大更新。
+
+---
+
+## 2026-07-23 — v3.10.3 — K 线时间修正 + screener 解构 + 自选股 + CI
+
+### 🔧 Hotfix 1: /quant K 线时间戳错位 (commit `7e382a7`)
+- **问题**: `/quant` 页 K 线最后日期显示 `2026-01-19`（6 个月前）
+  - DB 实际 `historical_kline` 最新是 `2026-07-09`
+  - 根因: `fetch_kline()` A 股分支走 `vendor_router` → akshare/sina/baostock，远程 API 被限频/缓存命中老数据
+- **修复**: `technical.py` 新增 `_fetch_local_daily_kline()`，优先读本地 DB（≥20 条或 1/4 数据才认），不足时回退远程
+- **影响**: 个股 K 线时间永远跟 DB 对齐，远程限频不再让 K 线日期穿越
+
+### 🔧 Hotfix 2: screener AI 精选 + 5 Agent 解构错误 (commit `d63c0e7`)
+- **问题**: `screener/page.tsx` 三处解构错位
+  - `aiScreen()` 用 `Array.isArray(picks)` 过滤，但后端返回 `{ picks: [...] }` → 永远空数组
+  - `MultiAgentResult` 接口与后端结构不匹配（误以为是 `decisions: [...]`，实为 `results: [...]`）
+  - 评分列展示原始 `score`，不展示排序后的 `score_neutral` Z-score
+- **修复**:
+  - `setAiPicks(result?.picks ?? [])` — 读正确字段
+  - 重写 `MultiAgentResult` interface 与渲染块，匹配后端实际返回 `{ results, summary: {total,buy_count,hold_count,sell_count,avg_confidence}, top_picks }`
+  - 评分列优先 `score_neutral`，tooltip 显示原始 `score`
+
+### ⚡ 性能优化: 自选股 30s → 60s + 窗口隐藏停刷 (commit `2525cbc`)
+- **改动**: `watchlist/page.tsx`
+  - `setInterval(tick, 60000)` 减半流量
+  - `document.visibilitychange` 监听，hidden 时停刷新
+- **背景**: 60s 行情刷新对自选股已足够（盘中价格波动没那么快），后台标签页浪费请求
+
+### 🔧 Hotfix 3: /api/stocks/quotes 防 Futu 死循环 + 返回数组 (commit `abf639d`)
+- **问题**: OpenD 没启动时 `/api/stocks/quotes` 永久 hang
+  - 旧 `futu_client.healthcheck()` 只 `import` 检查，OpenD 关闭仍返回 True
+- **修复**: 加 socket 探针（1 秒 `connect_ex('127.0.0.1', 11111)`），健康检查失败直接走 akshare fallback
+- **附带**: 改返回 `{quotes: [...]}` → 直接数组，跟 OpenAPI 一致
+
+### 🔧 Hotfix 4: CI npm ci EUSAGE + ERESOLVE (commits `23002ff` / `d8e98fb`)
+- **ERESOLVE**: `@playwright/test@1.49.0` 与 `next@16.2.9` peer 冲突（要求 `^1.51.1`）
+  - 加 `--legacy-peer-deps`
+- **EUSAGE**: Windows 生成的 lock 缺 `fsevents@2.3.2`（macOS only package），Linux CI `npm ci` 失败
+  - `npm ci` → `npm install --legacy-peer-deps --no-audit --no-fund`
+
+### 🎨 UI: /pipeline 放宽宽度 + 双列布局 + TS 类型修复 (commits `0897d01` / `05168df`)
+- **问题**: /pipeline 宽度太窄（`max-w-5xl`），单列堆叠，告警字段渲染崩溃 `Objects are not valid as a React child`
+- **修复**:
+  - `max-w-5xl` → `max-w-7xl`（不再局促）
+  - 数据健康 + 5 步进度左右双列
+  - `step.warnings` 改读 `step.warning_count ?? step.warnings?.length ?? 0`
+
+### 📦 工程: 前后端版本号同步 v3.9 → v3.10.2 (commit `b9cd9a0`)
+- **问题**: 前端 `version.ts` 写 `v3.9`，后端 `config.py` 写 `3.9`，与实际功能严重脱节
+- **修复**: 双端同步到 `v3.10.2` / `3.10.2`
+- **附带**: `README.md` 版本历史从列表重排为 4 列表格（版本/日期/主题/亮点），并补全 v3.10 系列
+
+### 文件变更
+- `backend/services/technical.py` — 新增 `_fetch_local_daily_kline` (~50 行)
+- `frontend/src/app/screener/page.tsx` — 3 处解构 + 接口重写
+- `frontend/src/app/watchlist/page.tsx` — 60s + visibilitychange
+- `backend/routers/stocks.py` — quotes 防 Futu 死循环
+- `backend/services/futu_client.py` — healthcheck 加 socket 探针
+- `.github/workflows/ci.yml` — npm install + --legacy-peer-deps
+- `frontend/src/app/pipeline/page.tsx` — UI 宽度 + TS 类型
+- `frontend/src/lib/version.ts` + `backend/config.py` — VERSION 同步
+- `README.md` — 版本历史表格化
 
 ---
 

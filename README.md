@@ -222,6 +222,7 @@ NOTIFY_ENABLED=true
 
 | 版本 | 日期 | 主题 | 亮点 |
 |------|------|------|------|
+| **v3.10.3** | 2026-07-23 | K 线修正 + screener + CI | K 线本地 DB 优先 · AI 精选+5Agent 解构 · 自选股 60s+隐窗停刷 · /quotes 防 Futu 死循环 · CI npm legacy-peer-deps · /pipeline 双列+TS 修复 |
 | **v3.10.2** | 2026-07-23 | Pipeline hotfix + UI | GP 表达式修复 · 状态汇总 race condition · /browse 板块下拉补齐 · freshness 30s 自动刷新 |
 | **v3.10.1** | 2026-07-23 | Pipeline 端到端 | 5 步 pipeline 5 项 bug 一次性修, 跑通简报推送 |
 | **v3.10** | 2026-07-23 | 🆕 自动量化 Pipeline | cron 自动跑 GP→ML→过拟合→衰减→简报, 邮件/Telegram 推送 |
