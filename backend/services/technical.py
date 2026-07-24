@@ -9,6 +9,60 @@ logger = logging.getLogger("stockai")
 
 from services.utils import run_curl, get_market
 
+
+def _fetch_local_daily_kline(code: str, days: int) -> dict[str, Any] | None:
+    """优先从本地 historical_kline 表取 K 线
+
+    修复: 之前 fetch_kline 走 vendor_router 远程 API (akshare/sina/baostock),
+    受 API 限频/缓存影响, 拿到的可能是几个月前的旧数据 (e.g. 600519 返回 1-19
+    但 DB 实际是 7-09)。优先用本地 DB, 数据不足时回退远程。
+    """
+    from database import query_all
+    try:
+        # 多取一些冗余, 方便过滤停牌日; 取最近 days 天
+        rows = query_all(
+            """SELECT trade_date, open, high, low, close, volume
+               FROM historical_kline
+               WHERE stock_code=?
+               ORDER BY trade_date DESC
+               LIMIT ?""",
+            (code, days + 10),
+        )
+    except Exception as e:
+        logger.warning("fetch_kline: 本地 DB 查询失败 (%s): %s", code, e)
+        return None
+
+    if not rows or len(rows) < max(days // 4, 20):  # 至少要有 1/4 数据, 或 20 条
+        logger.info("fetch_kline: 本地 %s 数据不足 (%d 条), fallback 远程", code, len(rows) if rows else 0)
+        return None
+
+    # DB 是降序, 反转成正序 (时间从早到晚)
+    rows.reverse()
+    dates = [r["trade_date"] for r in rows]
+    opens = [r["open"] for r in rows]
+    highs = [r["high"] for r in rows]
+    lows = [r["low"] for r in rows]
+    closes = [r["close"] for r in rows]
+    volumes = [r["volume"] for r in rows]
+    # 只截取最后 days 天
+    if len(dates) > days:
+        dates = dates[-days:]
+        opens = opens[-days:]
+        highs = highs[-days:]
+        lows = lows[-days:]
+        closes = closes[-days:]
+        volumes = volumes[-days:]
+    return {
+        "code": code,
+        "dates": dates,
+        "opens": opens,
+        "highs": highs,
+        "lows": lows,
+        "closes": closes,
+        "volumes": volumes,
+        "source": "local",
+    }
+
 # ── K线数据源健康状态 ──
 # 快速源（腾讯/东方财富）连续失败计数，超过阈值后直接使用 Baostock 兜底
 _FAST_SOURCE_FAILS = 0
@@ -117,7 +171,10 @@ def fetch_kline(code: str, market: str = None, days: int = 120) -> dict[str, Any
             logger.warning("technical: 美股K线获取失败 (%s)", code, exc_info=True)
         return {"error": "获取美股K线失败", "code": code}
 
-    # ── A 股日线：配置驱动的多源 fallback ──
+    # ── A 股日线：本地 DB 优先 (最新), 不足时回退远程 ──
+    local = _fetch_local_daily_kline(code, days)
+    if local is not None:
+        return local
     from services.vendor_router import route
     return route("get_daily_kline", code=code, days=days)
 
