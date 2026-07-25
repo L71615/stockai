@@ -581,8 +581,9 @@ def correlation():
 
 @router.get("/benchmarks")
 def benchmarks():
-    """获取组合 vs 多个基准指数的对比"""
-    return get_benchmark_comparison()
+    """获取组合 vs 多个基准指数的对比 (v3.11: 从 contextvar 取 user_id, 不再 default=1)"""
+    from dependencies import get_current_user_id
+    return get_benchmark_comparison(get_current_user_id())
 
 
 @router.get("/export/{export_type}")

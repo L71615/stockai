@@ -6,6 +6,9 @@
   GET  /api/data-ops/sector-performance  - 行业涨幅榜 TOP N
   GET  /api/stocks/{code}/sparkline      - 单只股票最近 N 天收盘价序列
   POST /api/data-ops/sync-stocks         - 异步补齐 K 线（单只 / 板块 / 全市场）
+
+v3.11 (T3 D4): _get_a_share_calendar / _trading_days_lag 已搬到
+  services.trading_calendar, 这里只保留 router 内部完整性判定.
 """
 import logging
 import threading
@@ -19,60 +22,11 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
 from database import query_all, query_one
 from services.screener_service import detect_board
 from services.akshare_adapter import get_kline
+from services.trading_calendar import trading_days_lag as _trading_days_lag
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/data-ops", tags=["DataOps"])
-
-# ═══════════════════════════════════════════════════════════
-#  A 股交易日历（启动时拉一次，缓存到内存）
-# ═══════════════════════════════════════════════════════════
-_A_SHARE_TRADING_DAYS: set[str] | None = None
-
-
-def _get_a_share_calendar() -> set[str]:
-    """从 akshare 拉官方 A 股交易日历（含节假日剔除）
-
-    返回: set of 'YYYY-MM-DD' 字符串
-    """
-    global _A_SHARE_TRADING_DAYS
-    if _A_SHARE_TRADING_DAYS is None:
-        try:
-            import akshare as ak
-            df = ak.tool_trade_date_hist_sina()
-            _A_SHARE_TRADING_DAYS = set(df["trade_date"].astype(str).tolist())
-            logger.info("A 股交易日历加载: %d 天", len(_A_SHARE_TRADING_DAYS))
-        except Exception as e:
-            logger.warning("akshare 交易日历拉取失败，回退到日历天数: %s", e)
-            _A_SHARE_TRADING_DAYS = set()
-    return _A_SHARE_TRADING_DAYS
-
-
-def _trading_days_lag(last_trade_date: date, today: Optional[date] = None) -> int:
-    """计算 A 股交易日差距（不算 last_trade_date 本身）
-
-    Returns:
-        0 = 今天就是最新交易日
-        1 = 滞后 1 个交易日
-        N = 滞后 N 个交易日
-
-    Fallback: akshare 拉不到时用日历天数（周末也算）
-    """
-    if today is None:
-        today = date.today()
-    if last_trade_date >= today:
-        return 0
-    calendar = _get_a_share_calendar()
-    if not calendar:
-        # fallback: 简单日历天数
-        return (today - last_trade_date).days
-    d = last_trade_date
-    n = 0
-    while d < today:
-        d = d + timedelta(days=1)
-        if d.isoformat() in calendar:
-            n += 1
-    return n
 
 # 板块定义（与 screener_service._BOARD_RULES 一致 + 补充 ETF/指数）
 _SECTOR_LABELS = {

@@ -1,6 +1,146 @@
 # StockAI 项目日志
 
-> StockAI 从 0 到 v3.10.4 的完整演进记录。按时间倒序。总计 30 次重大更新。
+> StockAI 从 0 到 v3.11 的完整演进记录。按时间倒序。
+
+---
+
+## 2026-07-25 — v3.11 — 研究→决策证据闭环（9 个 step 全部交付）
+
+按 plan-ceo-review 2026-07-24 + plan-eng-review 2026-07-25 + plan-design-review 2026-07-25
+三关 ALL CLEARED 后实施. **Gate 1 路径走通 + Gate 2 框架就绪**, **append-only 证据链完整**.
+
+### 🎯 系统定位转变
+
+```
+v3.10:  跑因子 → 简报
+v3.11:  跑因子 → 冻结假设 → 样本外验证 → 影子组合 → 人工审批 → 复盘
+       (决策可追溯, 反事实可对比)
+```
+
+### 🆕 T1 — 实验账本 + 三轴状态机
+
+- **新增表**: `experiments` / `experiment_runs` / `experiment_run_events` / `pipeline_lock` (+ 防御性补 `factor_candidates` / `factor_lifecycle_status` schema)
+- **新服务** `backend/services/experiment_service.py`:
+  - 三轴状态: `lifecycle_status` (candidate/validated/blocked/stale/rejected/paper/champion/retired) + `portfolio_role` (none/baseline/paper/champion/challenger) + `proposal_status` (pending/approved/rejected/expired/withdrawn)
+  - 迁移白名单 + 版本 CAS + append-only 审计
+  - 单飞锁 `pipeline_lock(scope)` 抢占过期锁
+- **Pipeline write-through**: `quant_pipeline.run_pipeline()` 每步写 `experiment_runs` (不再纯内存)
+- **`/api/factor-lab/mine/candidate/{id}/promote`** 改走 `create_experiment()`, 不再裸 UPDATE
+- **测试**: 20 passed
+
+### 🆕 T2 — Point-in-time OOS 快照
+
+- **新增表**: `experiment_snapshots(experiment_id, version, policy_hash, input_version_hash, as_of_date, snapshot_json, UNIQUE(experiment_id, version))`
+- **新服务** `backend/services/snapshot_service.py`: `freeze_snapshot` / `get_snapshot` / `replay_from_snapshot` / `assert_no_future_data`
+- **`strategy_backtest_service._evaluate_overfit_from_snapshot()`** — OOS 重算从 snapshot 读 (不再切同一条 equity curve)
+- **Fixture builder** `backend/scripts/build_freeze_fixture.py` → `tests/fixtures/freeze_demo.json`
+- **测试**: 23 passed
+
+### 🆕 T3 — 验证策略层
+
+- **新增表**: `validation_policies(version, hash, body_json, activated_at)`
+- **新服务** `backend/services/validation_policy.py` — 纯规则无 IO, 单例 dataclass + sha256 hash:
+  - `v1.0.0` 默认: ir_active=0.15, ir_warning=0.05, warning_days_retire=14
+  - **v1 Gate**: forward ≥60 交易日 且 ≥8 次独立决策
+  - **Champion Gate**: forward ≥120 交易日 且 ≥12 次独立决策
+  - 三档成本 (basis 30bps / conservative 60bps / extreme 120bps) × 周月调仓 = 6 行 matrix
+  - bull/bear/sideways/unknown 状态分层
+  - 5 个固定种子 + 5 次标签置换的负对照
+- **`factor_lifecycle.py`** 委托给 policy (删魔数), 仍暴露兼容常量
+- **`quant_service.get_benchmark_comparison(user_id: int)`** 删 default (D8)
+- **`routers/data_ops.py`** 私有 `_trading_days_lag` → `services/trading_calendar.py` (D4 公共工具, 含 `next_trading_day` / `is_trading_day`)
+- **测试**: 50 passed
+
+### 🆕 T4 — 影子组合结算
+
+- **新增表**: `shadow_portfolios` + `shadow_portfolio_snapshots(UNIQUE(portfolio_id, observation_date, input_version))`
+- **新服务** `backend/services/fees.py` — A 股佣金万三+最低5, 印花税千一(仅卖), 过户费十万分之一
+- **新服务** `backend/services/shadow_portfolio_service.py`:
+  - 收盘后生成信号 → 下一可交易日 T+1 执行
+  - 整手 (100 股) + 现金约束 + fee buffer (默认 100 元)
+  - 缺价 → `blocked` / 部分缺价 → 跳过该代码 / 整组合缺价 → `blocked`
+  - UNIQUE 防重复结算 (同日同 input_version 仅一条)
+- **测试**: 23 passed
+
+### 🆕 T5 — 审批 API + 对象级授权 + TTL lease + CAS
+
+- **新增表**: `approval_proposals` (含 policy_hash / snapshot_hash / lease_id / lease_expires_at / version CAS) + `approval_attempts` (append-only 审计)
+- **新服务** `backend/services/approval_service.py`:
+  - 三层 CAS: `proposal.version` + `proposal.lease_id` + `proposal.lease_expires_at`
+  - 默认 lease 24h, 可 `reopen_lease()` 重开发新 lease
+  - approve 自动触发 `experiment_service.transition()` 到目标 lifecycle / portfolio_role
+- **新 routers**: `/api/pipeline/proposals` + `/api/pipeline/experiments` + `/api/pipeline/shadow` (全部 owner 校验)
+- **测试**: 19 passed (含双 submit 并发竞争)
+
+### 🆕 T6 — `/pipeline` 前端页面 (Gate 1 收件箱)
+
+- **`frontend/src/app/pipeline/page.tsx`** 改 Tabs 布局:
+  - 默认 Tab **收件箱**: 待审批 / 已通过 / 已拒绝 / 已过期 (4 子 tab)
+  - 第 2 Tab **运行**: 原 auto-pipeline runner 内容保留
+- **新组件**: `ProposalRow.tsx` (接受/拒绝/稍后/过期 reopen, 44px 触摸目标) + `GateBadgeGroup.tsx`
+- **新 hook**: `use-pipeline.ts` — SWR fetcher + 3 个 mutation helpers + lease 倒计时工具
+- **新类型**: `api-types.ts` 加 9 个 TS interface
+- 视觉契约: 照搬 `~/.gstack/.../inbox.html` 设计 wireframe
+- 编译通过 (pre-existing playwright 模块缺失与本版本无关)
+
+### 🆕 T7 — 回归测试 + 故障注入
+
+- **新增 e2e** `tests/e2e/test_one_proposal_to_retro.py` — 3 个链路测试: 完整链路 / 拒绝路径 / 多 proposal
+- **新增 integration** `tests/integration/test_restart_recovery.py` — 6 个: 过期锁抢占 / stale run 标记 / 多 worker 抢锁 / DB 状态重建
+- **新增 integration** `tests/integration/test_budget_partial.py` — 13 个: 样本不足 unknown / NaN 数据 / 负价 / 全部缺价
+- **测试**: 22 passed
+
+### 🆕 T8 — 灰度发布 + 单飞锁 + 预算 + 告警 + 回滚
+
+- **新增表**: `feature_flags(flag_key, enabled, scope)` + `notification_log(run_id, channel, success)`
+- **新服务** `backend/services/feature_flag_service.py` — 5min TTL 缓存, 默认 OFF
+- **5 个 bootstrap flag** (全 OFF):
+  - `pipeline.shadow.enabled`
+  - `pipeline.approval.enabled`
+  - `pipeline.negative_control.enabled`
+  - `pipeline.champion_replacement.enabled`
+  - `pipeline.auto_promote.enabled` (永远 OFF, 自动晋级必须人工)
+- **`quant_pipeline.run_pipeline()`** 加 `pipeline_lock` 单飞 + flag check, 第二次调用立即返回 `status=skipped`
+- **`notify_service.send_notification(markdown, title, run_id)`** 独立 audit (D7: 通知失败不掩盖研究状态)
+- **新文档** `docs/RUNBOOK.md` — 应急响应 / 一键回 OFF / stale run 检测 / counterfactual SQL
+- **测试**: 15 passed
+
+### 🆕 T9 — 复盘 + Counterfactual + AI Prompt 注入
+
+- **新增表**: `proposal_outcomes(UNIQUE proposal_id)` + `proposal_retrospectives`
+- **新服务** `backend/services/retrospective_service.py`:
+  - `record_outcome()` 自动按 `decision + fwd_baseline_diff` 分类 good/bad/neutral
+  - `counterfactual_summary()` 算接受 vs 拒绝的 edge
+- **`trading_memory.record_proposal_retrospective()`** 写入 proposal lesson, `get_research_lessons(n)` 拉出来供后续 AI prompt 引用
+- **测试**: 15 passed
+
+### 📦 累计交付
+
+| 阶段 | 任务 | 测试 |
+|---|---|---|
+| T1 状态机 | 4 | 20 ✓ |
+| T2 OOS 快照 | 3 | 23 ✓ |
+| T3 策略层 | 3 | 50 ✓ |
+| T4 影子组合 | 3 | 23 ✓ |
+| T5 审批 | 3 | 19 ✓ |
+| T6 前端页 | 3 | 编译 ✓ |
+| T7 故障注入 | 3 | 22 ✓ |
+| T8 灰度审计 | 3 | 15 ✓ |
+| T9 复盘 | 4 | 15 ✓ |
+| **总计** | **31 任务** | **187 测试 + 1 编译** |
+
+### 🔑 关键工程取舍 (为什么这样设计)
+
+| 取舍 | 选择 | 理由 |
+|---|---|---|
+| 三轴 vs 单 boolean | **三轴** | 区分 "research 通过" 和 "组合里挂了" 和 "用户批没批" |
+| OOS replay 怎么读数据 | **独立 snapshot 表** | `historical_kline` 重读会泄露未来行 |
+| Gate 验证放哪 | **纯函数 policy + hash** | 便于 audit, version 化追溯 |
+| Champion 替换自动 vs 人工 | **只建议 + 人工** | 一人项目也保命 |
+| Auto-promote | **永远 OFF** | flag 写入, 不允许误开 |
+| 通知失败 | **独立 audit** | 研究结论不能被通知拖下水 |
+| 复盘 lesson | **写进 trading_memory** | AI 选股 prompt 引用, 闭环 |
+| 任何 append-only 表 | **永不 DELETE** | 反事实证据链是研究系统的灵魂 |
 
 ---
 

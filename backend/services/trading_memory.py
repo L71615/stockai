@@ -26,6 +26,7 @@
 import logging
 import os
 import re
+from datetime import datetime
 from pathlib import Path
 
 from database import query_all
@@ -334,6 +335,61 @@ class TradingMemoryLog:
                 lines.append(f"  [{e['date']}] {e['code']} 盈亏 {raw}")
 
         return "\n".join(lines)
+
+# ════════════════════════════════════════════════════════════
+#  v3.11 (T9): proposal 复盘 → trading_memory 注入
+# ════════════════════════════════════════════════════════════
+
+    def record_proposal_retrospective(
+        self,
+        *,
+        experiment_id: str,
+        proposal_id: int,
+        decision: str,
+        expr_text: str,
+        fwd_return: float,
+        fwd_baseline_diff: float,
+        lesson: str,
+    ) -> None:
+        """把 proposal 复盘写进 trading_memory (供后续 AI prompt 引用).
+
+        格式: [YYYY-MM-DD | proposal:{id} | {decision} | {fwd_return} | {diff} | research]
+        """
+        if not self._log_path.exists():
+            self._log_path.parent.mkdir(parents=True, exist_ok=True)
+            self._log_path.touch()
+        today = datetime.now().strftime("%Y-%m-%d")
+        pnl_str = f"{fwd_return:+.2f}"
+        diff_str = f"{fwd_baseline_diff:+.2f}"
+        tag = f"[{today} | proposal:{proposal_id} | {decision} | {pnl_str} | {diff_str} | research]"
+        body = (
+            f"experiment: {experiment_id}\n"
+            f"expr: {expr_text}\n"
+            f"fwd_return: {pnl_str}\n"
+            f"fwd_baseline_diff (vs csi300): {diff_str}\n"
+            f"\nLESSON:\n{lesson or '(no lesson captured)'}"
+        )
+        entry = f"{tag}\n\n{body}\n\n{_SEPARATOR}"
+        with self._log_path.open("a", encoding="utf-8") as f:
+            f.write(entry)
+
+    def get_research_lessons(self, n: int = 5) -> str:
+        """拉最近 N 条 research 类条目, 用于注入 AI prompt."""
+        if not self._log_path.exists():
+            return ""
+        text = self._log_path.read_text(encoding="utf-8")
+        blocks = text.split(_SEPARATOR)
+        research_blocks = []
+        for b in blocks:
+            stripped = b.strip()
+            if stripped and "| research]" in stripped.splitlines()[0]:
+                research_blocks.append(stripped)
+        research_blocks = research_blocks[-n:]
+        if not research_blocks:
+            return ""
+        lines = ["=== 最近研究复盘 ==="]
+        lines.extend(research_blocks)
+        return "\n\n---\n\n".join(lines)
 
     # ── 解析辅助 ──
 

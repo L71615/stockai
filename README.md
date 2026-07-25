@@ -1,8 +1,8 @@
-# StockAI v3.10 — AI 量化选股 + 自动量化 Pipeline
+# StockAI v3.11 — 研究→决策证据闭环 (AI 量化选股 + 自动量化 Pipeline)
 
-> 55 因子多因子选股 · 13 策略模板 · 参数优化 · 策略对比 · AI 月报 · 因子实验室(IC/相关性/GP/ML 联合训练) · **全市场浏览 /browse** · **数据运维（一键补齐 K 线）** · **🆕 量化 Pipeline（5 步 cron 编排 + 简报 + 推送）**
+> 55 因子多因子选股 · 13 策略模板 · 参数优化 · 策略对比 · AI 月报 · 因子实验室(IC/相关性/GP/ML 联合训练) · **全市场浏览 /browse** · **数据运维（一键补齐 K 线）** · **量化 Pipeline（5 步 cron 编排 + 简报 + 推送）** · **🆕 v3.11 研究→决策证据闭环（三轴状态机 + OOS 快照 + 影子组合 + 审批收件箱 + 复盘）**
 >
-> A 股投资者的量化工具箱。数据驱动，AI 增强。
+> A 股投资者的量化工具箱。数据驱动，AI 增强，反事实可追溯。
 
 > 🌐 中文 · [English](README.en.md)
 
@@ -45,6 +45,11 @@
 | 📉 **K 线图表** | TradingView lightweight-charts 蜡烛图，MA/BOLL/MACD/RSI/KDJ 五指标 + 海龟通道线 + 指标讲解栏 |
 | 📡 **Futu 行情接入** | A 股 `quote / minute / daily` 接入 Futu OpenD，日线同步 `historical_kline` |
 | 🔄 **Futu 同步系统** | `watchlist + holdings` 批量目标，`intraday` / `nightly` 同步，落库并支持告警 |
+| 🆕 **v3.11 实验账本** | 三轴状态机 (lifecycle/portfolio_role/proposal) + 版本 CAS + append-only 审计 + 单飞锁 |
+| 🆕 **v3.11 OOS 快照** | 冻结假设 (snapshot_hash) + point-in-time replay (不复用 historical_kline) + leakage 检测 |
+| 🆕 **v3.11 影子组合** | 收盘后信号 → T+1 执行 + 整手(100 股) + 缺价 blocked + UNIQUE 防重复 |
+| 🆕 **v3.11 审批收件箱** | `/pipeline` 默认 Tab + TTL lease + 三层 CAS + counterfactual 复盘 |
+| 🆕 **v3.11 灰度开关** | 5 个 feature flag (默认 OFF) + 一键回 OFF + notification_log 独立审计 |
 
 ## <a id="factor-system"></a>🔬 因子体系（55 个）
 
@@ -187,6 +192,9 @@ python backend/scripts/sync_futu_data.py --mode nightly --scope watchlist+holdin
 | 分析 | 条件选股 | `/screener/condition` | 四层过滤(L1-L4) + 14 预设策略 + YAML 引擎 |
 | 分析 | AI 选股 | `/screener` | 多因子扫描 + AI 精选 + 策略回测 + 盯盘 + **🆕 候选警告 (factor_warnings)** |
 | 分析 | 因子实验室 | `/factor-lab` | 5 Tab: IC/相关性/散点/GP 挖掘/ML 挖掘 + **🆕 GP+ML 联合训练 (+13.69% IR lift)** + **🆕 衰减评分 (decay_score)** |
+| 🆕 v3.11 | **Pipeline 收件箱** | `/pipeline` | **默认 Tab**: 待审批/已通过/已拒绝/已过期 + lease 倒计时 + 三轴状态 CAS + 第 2 Tab: 运行 |
+| 🆕 v3.11 | 实验查询 | `/api/pipeline/experiments` | 实验列表/详情/事件 (owner 校验) |
+| 🆕 v3.11 | 影子组合查询 | `/api/pipeline/shadow` | 组合列表 + 每日 NAV/换手/成本快照 |
 | 工具 | 交易记录 | `/transactions` | 交易 CRUD |
 | 工具 | AI 对话 | `/ai-assistant` | 多模型 SSE 流式对话 |
 | 工具 | 设置 | `/settings` | AI Key(功能→供应商映射表) + 通知配置 |
@@ -222,6 +230,7 @@ NOTIFY_ENABLED=true
 
 | 版本 | 日期 | 主题 | 亮点 |
 |------|------|------|------|
+| **v3.11** | 2026-07-25 | 研究→决策证据闭环 | 9 个 step 全部交付: T1三轴状态机+T2 OOS快照+T3策略层+T4影子组合+T5审批CAS+T6 /pipeline收件箱+T7故障注入+T8灰度flag+T9复盘counterfactual · 187 测试 + 1 编译 · Gate 1 路径走通 · append-only 证据链完整 · RUNBOOK 一键回滚 |
 | **v3.10.4** | 2026-07-24 | /quotes 性能 + 测试 | N+1→单次IN查询 (50×加速) · codes 上限防DoS · 删70行死代码 · /pipeline warnings 折叠展开 · K线 fix 6 个单元测试 |
 | **v3.10.3** | 2026-07-23 | K 线修正 + screener + CI | K 线本地 DB 优先 · AI 精选+5Agent 解构 · 自选股 60s+隐窗停刷 · /quotes 防 Futu 死循环 · CI npm legacy-peer-deps · /pipeline 双列+TS 修复 |
 | **v3.10.2** | 2026-07-23 | Pipeline hotfix + UI | GP 表达式修复 · 状态汇总 race condition · /browse 板块下拉补齐 · freshness 30s 自动刷新 |

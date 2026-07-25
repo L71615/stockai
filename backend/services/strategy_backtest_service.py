@@ -9,12 +9,15 @@
     5. 记录每日净值曲线
 
 依赖: historical_kline 表必须有足够的历史数据
-"""
 
+v3.11 (T2): _evaluate_overfit_from_snapshot() — 用冻结快照做 OOS 判定,
+  任何 trade/curve 日期 > as_of_date 都视为泄漏, 直接抛 SnapshotLeakageError.
+"""
 import logging
 from datetime import datetime, timedelta
 
 from database import query_all
+from services.snapshot_service import SnapshotLeakageError
 
 logger = logging.getLogger(__name__)
 
@@ -433,6 +436,80 @@ def _evaluate_overfit(
         "verdict": verdict,
         "message": msg,
     }
+
+
+# ═══════════════════════════════════════════════════════════════
+#  v3.11 (T2): snapshot-aware OOS replay
+# ═══════════════════════════════════════════════════════════════
+
+def _evaluate_overfit_from_snapshot(
+    snapshot: dict,
+    equity_curve: list[dict],
+    trades: list[dict],
+    initial_cash: float,
+    split_ratio: float = 0.7,
+) -> dict:
+    """用冻结快照做 OOS 过拟合判定.
+
+    与 _evaluate_overfit 的关键区别:
+      1. 先 assert curve/trades 里的日期 ≤ snapshot.as_of_date (防未来数据泄漏)
+      2. 用 snapshot.input_version_hash 标注结果, 调用方可据此比 hash
+      3. 把 snapshot 的 as_of_date / policy_version / input_hash 写进返回值
+
+    Args:
+        snapshot: 解码后的 snapshot dict (从 snapshot_service.get_snapshot()['snapshot'])
+        equity_curve: [{date, value, ...}, ...] 必须 ≤ as_of_date
+        trades: [{date, code, ...}, ...] 必须 ≤ as_of_date
+        initial_cash: 起始资金
+        split_ratio: train/test 切分比
+
+    Returns:
+        _evaluate_overfit() 的返回值 + snapshot_meta 字段
+
+    Raises:
+        SnapshotLeakageError: 任一日期 > as_of_date
+    """
+    as_of = snapshot.get("as_of_date")
+    if not as_of:
+        raise SnapshotLeakageError("snapshot 缺 as_of_date")
+
+    # 1. Leakage check
+    leaks = []
+    for c in equity_curve:
+        d = c.get("date")
+        if d and d > as_of:
+            leaks.append(("curve", d))
+    for t in trades:
+        d = t.get("date")
+        if d and d > as_of:
+            leaks.append(("trade", d))
+    if leaks:
+        raise SnapshotLeakageError(
+            f"检测到 {len(leaks)} 行日期 > as_of_date ({as_of}); "
+            f"sample={leaks[:5]}"
+        )
+
+    # 2. 跑现有判定 (无泄漏时与原版结果一致)
+    start_date = equity_curve[0]["date"] if equity_curve else "1970-01-01"
+    end_date = equity_curve[-1]["date"] if equity_curve else as_of
+
+    result = _evaluate_overfit(
+        equity_curve=equity_curve,
+        initial_cash=initial_cash,
+        trades=trades,
+        start_date=start_date,
+        end_date=end_date,
+        split_ratio=split_ratio,
+    )
+
+    # 3. 加 snapshot meta
+    result["snapshot_meta"] = {
+        "as_of_date": as_of,
+        "input_version_hash": snapshot.get("__input_hash", ""),
+        "policy_version": snapshot.get("config", {}).get("policy_version", ""),
+        "stock_pool": snapshot.get("stock_pool", []),
+    }
+    return result
 
 
 # ═══════════════════════════════════════════════════════════════

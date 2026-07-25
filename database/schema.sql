@@ -162,3 +162,261 @@ CREATE TABLE IF NOT EXISTS quant_briefs (
     created_at   TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_quant_briefs_created ON quant_briefs(created_at);
+
+-- ── v3.11: 实验账本 (三轴状态机) ──
+-- 历史 gap 补建：factor_candidates / factor_lifecycle_status
+CREATE TABLE IF NOT EXISTS factor_candidates (
+    id          SERIAL PRIMARY KEY,
+    run_id      TEXT NOT NULL,
+    expr_text   TEXT NOT NULL,
+    ic_mean     REAL,
+    ir          REAL,
+    win_rate    REAL,
+    valid_days  INTEGER,
+    tree_depth  INTEGER,
+    promoted    INTEGER NOT NULL DEFAULT 0,
+    created_at  TEXT NOT NULL,
+    UNIQUE(run_id, expr_text)
+);
+CREATE INDEX IF NOT EXISTS idx_factor_candidates_ir ON factor_candidates(ir DESC);
+
+CREATE TABLE IF NOT EXISTS factor_lifecycle_status (
+    factor_name  TEXT PRIMARY KEY,
+    status       TEXT NOT NULL DEFAULT 'candidate',
+    ir           REAL,
+    warning_days INTEGER NOT NULL DEFAULT 0,
+    last_updated TEXT NOT NULL,
+    note         TEXT DEFAULT ''
+);
+
+-- 实验主表：三轴状态 (lifecycle_status / portfolio_role / proposal_status) + 版本 CAS
+CREATE TABLE IF NOT EXISTS experiments (
+    experiment_id     TEXT PRIMARY KEY,
+    owner_user_id     INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    expr_text         TEXT NOT NULL,
+    candidate_id      INT REFERENCES factor_candidates(id) ON DELETE SET NULL,
+    policy_version    TEXT NOT NULL DEFAULT 'v1.0.0',
+    snapshot_hash     TEXT NOT NULL DEFAULT '',
+    lifecycle_status  TEXT NOT NULL DEFAULT 'candidate',
+    portfolio_role    TEXT NOT NULL DEFAULT 'none',
+    proposal_status   TEXT NOT NULL DEFAULT 'pending',
+    version           INTEGER NOT NULL DEFAULT 1,
+    snapshot_json     TEXT NOT NULL DEFAULT '{}',
+    note              TEXT NOT NULL DEFAULT '',
+    created_at        TEXT NOT NULL,
+    updated_at        TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_experiments_user ON experiments(owner_user_id);
+CREATE INDEX IF NOT EXISTS idx_experiments_lifecycle ON experiments(lifecycle_status);
+CREATE INDEX IF NOT EXISTS idx_experiments_role ON experiments(portfolio_role);
+
+-- 运行历史
+CREATE TABLE IF NOT EXISTS experiment_runs (
+    run_id        SERIAL PRIMARY KEY,
+    experiment_id TEXT NOT NULL REFERENCES experiments(experiment_id) ON DELETE CASCADE,
+    scope         TEXT NOT NULL DEFAULT 'pipeline',
+    status        TEXT NOT NULL DEFAULT 'running',
+    current_step  TEXT NOT NULL DEFAULT '',
+    started_at    TEXT NOT NULL,
+    finished_at   TEXT,
+    error_json    TEXT NOT NULL DEFAULT '{}'
+);
+CREATE INDEX IF NOT EXISTS idx_experiment_runs_exp ON experiment_runs(experiment_id);
+CREATE INDEX IF NOT EXISTS idx_experiment_runs_status ON experiment_runs(status);
+
+-- append-only 审计事件
+CREATE TABLE IF NOT EXISTS experiment_run_events (
+    event_id         SERIAL PRIMARY KEY,
+    experiment_id    TEXT NOT NULL REFERENCES experiments(experiment_id) ON DELETE CASCADE,
+    run_id           INT REFERENCES experiment_runs(run_id) ON DELETE SET NULL,
+    actor            TEXT NOT NULL DEFAULT 'system',
+    event_type       TEXT NOT NULL,
+    from_state       TEXT,
+    to_state         TEXT,
+    from_version     INT,
+    to_version       INT,
+    reason           TEXT NOT NULL DEFAULT '',
+    evidence_version TEXT NOT NULL DEFAULT '',
+    created_at       TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_exp_events_exp ON experiment_run_events(experiment_id);
+CREATE INDEX IF NOT EXISTS idx_exp_events_time ON experiment_run_events(created_at);
+
+-- 单飞锁：同 scope 只允许一个 worker 跑
+CREATE TABLE IF NOT EXISTS pipeline_lock (
+    scope       TEXT PRIMARY KEY,
+    holder_pid  TEXT NOT NULL,
+    acquired_at TEXT NOT NULL,
+    expires_at  TEXT NOT NULL
+);
+
+-- v3.11 (T2): 实验快照 — point-in-time 输入冻结, OOS replay 唯一数据源
+CREATE TABLE IF NOT EXISTS experiment_snapshots (
+    snapshot_id        SERIAL PRIMARY KEY,
+    experiment_id      TEXT NOT NULL REFERENCES experiments(experiment_id) ON DELETE CASCADE,
+    version            INT  NOT NULL DEFAULT 1,
+    policy_hash        TEXT NOT NULL DEFAULT '',
+    input_version_hash TEXT NOT NULL DEFAULT '',
+    as_of_date         TEXT NOT NULL,
+    snapshot_json      TEXT NOT NULL,
+    note               TEXT NOT NULL DEFAULT '',
+    created_at         TEXT NOT NULL,
+    UNIQUE(experiment_id, version)
+);
+CREATE INDEX IF NOT EXISTS idx_exp_snapshots_exp ON experiment_snapshots(experiment_id);
+CREATE INDEX IF NOT EXISTS idx_exp_snapshots_asof ON experiment_snapshots(as_of_date);
+
+-- v3.11 (T3): 验证策略版本表 — 集中所有阈值 + 双基线 + 成本矩阵 + 状态分层
+CREATE TABLE IF NOT EXISTS validation_policies (
+    version      TEXT PRIMARY KEY,
+    hash         TEXT NOT NULL,
+    body_json    TEXT NOT NULL,
+    note         TEXT NOT NULL DEFAULT '',
+    created_at   TEXT NOT NULL,
+    activated_at TEXT
+);
+
+-- v3.11 (T4): 影子组合 + 每日结算快照
+CREATE TABLE IF NOT EXISTS shadow_portfolios (
+    portfolio_id        SERIAL PRIMARY KEY,
+    owner_user_id       INT  NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    experiment_id       TEXT REFERENCES experiments(experiment_id) ON DELETE SET NULL,
+    candidate_id        INT  REFERENCES factor_candidates(id) ON DELETE SET NULL,
+    name                TEXT NOT NULL DEFAULT '',
+    policy_version      TEXT NOT NULL DEFAULT 'v1.0.0',
+    initial_cash        REAL NOT NULL DEFAULT 100000,
+    target_weights_json TEXT NOT NULL DEFAULT '{}',
+    scope               TEXT NOT NULL DEFAULT 'paper',
+    status              TEXT NOT NULL DEFAULT 'active',
+    created_at          TEXT NOT NULL,
+    updated_at          TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_shadow_pf_user ON shadow_portfolios(owner_user_id);
+CREATE INDEX IF NOT EXISTS idx_shadow_pf_exp ON shadow_portfolios(experiment_id);
+
+CREATE TABLE IF NOT EXISTS shadow_portfolio_snapshots (
+    snapshot_id         SERIAL PRIMARY KEY,
+    portfolio_id        INT  NOT NULL REFERENCES shadow_portfolios(portfolio_id) ON DELETE CASCADE,
+    observation_date    TEXT NOT NULL,
+    nav                 REAL NOT NULL,
+    cash                REAL NOT NULL,
+    holdings_json       TEXT NOT NULL DEFAULT '{}',
+    target_weights_json TEXT NOT NULL DEFAULT '{}',
+    actual_weights_json TEXT NOT NULL DEFAULT '{}',
+    turnover            REAL NOT NULL DEFAULT 0,
+    costs               REAL NOT NULL DEFAULT 0,
+    drawdown            REAL NOT NULL DEFAULT 0,
+    baseline_diff_json  TEXT NOT NULL DEFAULT '{}',
+    status              TEXT NOT NULL DEFAULT 'settled',
+    reason              TEXT NOT NULL DEFAULT '',
+    input_version       TEXT NOT NULL DEFAULT '',
+    created_at          TEXT NOT NULL,
+    UNIQUE(portfolio_id, observation_date, input_version)
+);
+CREATE INDEX IF NOT EXISTS idx_shadow_snap_pf ON shadow_portfolio_snapshots(portfolio_id);
+CREATE INDEX IF NOT EXISTS idx_shadow_snap_date ON shadow_portfolio_snapshots(observation_date);
+
+-- v3.11 (T5): 审批提案 + 审计 (append-only)
+CREATE TABLE IF NOT EXISTS approval_proposals (
+    proposal_id        SERIAL PRIMARY KEY,
+    experiment_id      TEXT NOT NULL REFERENCES experiments(experiment_id) ON DELETE CASCADE,
+    candidate_id       INT  REFERENCES factor_candidates(id) ON DELETE SET NULL,
+    owner_user_id      INT  NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    evidence_version   TEXT NOT NULL DEFAULT '',
+    candidate_version  INT  NOT NULL DEFAULT 0,
+    experiment_version INT  NOT NULL DEFAULT 0,
+    action             TEXT NOT NULL DEFAULT 'promote',
+    target_lifecycle   TEXT,
+    target_portfolio   TEXT,
+    target_proposal    TEXT,
+    policy_version     TEXT NOT NULL DEFAULT 'v1.0.0',
+    policy_hash        TEXT NOT NULL DEFAULT '',
+    snapshot_hash      TEXT NOT NULL DEFAULT '',
+    lease_id           TEXT NOT NULL DEFAULT '',
+    lease_expires_at   TEXT,
+    status             TEXT NOT NULL DEFAULT 'pending',
+    decided_at         TEXT,
+    decided_by         TEXT,
+    decision_reason    TEXT NOT NULL DEFAULT '',
+    version            INT  NOT NULL DEFAULT 1,
+    created_at         TEXT NOT NULL,
+    updated_at         TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_appr_prop_user ON approval_proposals(owner_user_id);
+CREATE INDEX IF NOT EXISTS idx_appr_prop_status ON approval_proposals(status);
+CREATE INDEX IF NOT EXISTS idx_appr_prop_exp ON approval_proposals(experiment_id);
+CREATE INDEX IF NOT EXISTS idx_appr_prop_lease ON approval_proposals(lease_expires_at);
+
+CREATE TABLE IF NOT EXISTS approval_attempts (
+    attempt_id         SERIAL PRIMARY KEY,
+    proposal_id        INT  NOT NULL REFERENCES approval_proposals(proposal_id) ON DELETE CASCADE,
+    lease_id           TEXT NOT NULL DEFAULT '',
+    action             TEXT NOT NULL,
+    actor              TEXT NOT NULL DEFAULT '',
+    result             TEXT NOT NULL,
+    error_json         TEXT NOT NULL DEFAULT '{}',
+    expected_version   INT  NOT NULL DEFAULT 0,
+    current_version    INT  NOT NULL DEFAULT 0,
+    created_at         TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_appr_att_prop ON approval_attempts(proposal_id);
+CREATE INDEX IF NOT EXISTS idx_appr_att_lease ON approval_attempts(lease_id);
+
+-- v3.11 (T8): 灰度开关 (feature flags)
+CREATE TABLE IF NOT EXISTS feature_flags (
+    flag_key     TEXT PRIMARY KEY,
+    enabled      INT  NOT NULL DEFAULT 0,
+    scope        TEXT NOT NULL DEFAULT 'global',
+    description  TEXT NOT NULL DEFAULT '',
+    updated_by   TEXT NOT NULL DEFAULT '',
+    updated_at   TEXT NOT NULL
+);
+
+-- v3.11 (T8): 通知审计 (与研究状态独立, 不掩盖研究结论)
+CREATE TABLE IF NOT EXISTS notification_log (
+    log_id      SERIAL PRIMARY KEY,
+    run_id      TEXT,
+    channel     TEXT NOT NULL,
+    target      TEXT NOT NULL DEFAULT '',
+    success     INT  NOT NULL DEFAULT 0,
+    error_json  TEXT NOT NULL DEFAULT '{}',
+    created_at  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_notif_run ON notification_log(run_id);
+CREATE INDEX IF NOT EXISTS idx_notif_time ON notification_log(created_at);
+
+-- v3.11 (T9): 复盘 — proposal 前向表现 + 反思
+CREATE TABLE IF NOT EXISTS proposal_outcomes (
+    outcome_id        SERIAL PRIMARY KEY,
+    proposal_id       INT  NOT NULL REFERENCES approval_proposals(proposal_id) ON DELETE CASCADE,
+    decision          TEXT NOT NULL,            -- 'approved' | 'rejected' | 'withdrawn'
+    realized_at       TEXT NOT NULL,
+    fwd_days          INT  NOT NULL DEFAULT 0,
+    fwd_return        REAL NOT NULL DEFAULT 0,
+    fwd_shadow_return REAL NOT NULL DEFAULT 0,
+    fwd_baseline_diff REAL NOT NULL DEFAULT 0,
+    baseline_code     TEXT NOT NULL DEFAULT 'csi300',
+    label             TEXT NOT NULL DEFAULT '',
+    created_at        TEXT NOT NULL,
+    UNIQUE(proposal_id)
+);
+CREATE INDEX IF NOT EXISTS idx_outcomes_decision ON proposal_outcomes(decision);
+CREATE INDEX IF NOT EXISTS idx_outcomes_realized ON proposal_outcomes(realized_at);
+
+CREATE TABLE IF NOT EXISTS proposal_retrospectives (
+    retro_id          SERIAL PRIMARY KEY,
+    proposal_id       INT  NOT NULL REFERENCES approval_proposals(proposal_id) ON DELETE CASCADE,
+    experiment_id     TEXT NOT NULL,
+    decision          TEXT NOT NULL,
+    fwd_days          INT  NOT NULL,
+    fwd_return        REAL NOT NULL,
+    fwd_baseline_diff REAL NOT NULL,
+    hypothesis        TEXT NOT NULL DEFAULT '',
+    evidence_summary  TEXT NOT NULL DEFAULT '',
+    realized_summary  TEXT NOT NULL DEFAULT '',
+    lesson            TEXT NOT NULL DEFAULT '',
+    confidence        REAL NOT NULL DEFAULT 0,
+    created_at        TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_retro_exp ON proposal_retrospectives(experiment_id);
+CREATE INDEX IF NOT EXISTS idx_retro_decision ON proposal_retrospectives(decision);

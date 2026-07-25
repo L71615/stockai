@@ -229,3 +229,171 @@ export interface SyncStatusResponse {
   started_at: string
   finished_at: string | null
 }
+
+// ════════════════════════════════════════════════════════════
+//  v3.11 (T6): /pipeline 审批收件箱类型
+// ════════════════════════════════════════════════════════════
+
+export type LifecycleStatus =
+  | "candidate" | "validated" | "blocked" | "stale" | "rejected"
+  | "paper" | "champion" | "retired"
+
+export type PortfolioRole =
+  | "none" | "baseline" | "paper" | "champion" | "challenger"
+
+export type ProposalStatus =
+  | "pending" | "approved" | "rejected" | "expired" | "withdrawn"
+
+export interface Experiment {
+  experiment_id: string
+  owner_user_id: number
+  expr_text: string
+  candidate_id: number | null
+  policy_version: string
+  snapshot_hash: string
+  lifecycle_status: LifecycleStatus
+  portfolio_role: PortfolioRole
+  proposal_status: ProposalStatus
+  version: number
+  snapshot_json: string
+  note: string
+  created_at: string
+  updated_at: string
+}
+
+export interface ExperimentListResponse {
+  experiments: Experiment[]
+  count: number
+}
+
+export interface ExperimentEvent {
+  event_id: number
+  experiment_id: string
+  run_id: number | null
+  actor: string
+  event_type: string
+  from_state: string | null
+  to_state: string | null
+  from_version: number | null
+  to_version: number | null
+  reason: string
+  evidence_version: string
+  created_at: string
+}
+
+export interface ExperimentEventsResponse {
+  events: ExperimentEvent[]
+}
+
+export interface ApprovalProposal {
+  proposal_id: number
+  experiment_id: string
+  candidate_id: number | null
+  owner_user_id: number
+  evidence_version: string
+  candidate_version: number
+  experiment_version: number
+  action: string
+  target_lifecycle: string | null
+  target_portfolio: string | null
+  target_proposal: string | null
+  policy_version: string
+  policy_hash: string
+  snapshot_hash: string
+  lease_id: string
+  lease_expires_at: string | null
+  status: ProposalStatus
+  decided_at: string | null
+  decided_by: string | null
+  decision_reason: string
+  version: number
+  created_at: string
+  updated_at: string
+}
+
+export interface ApprovalListResponse {
+  proposals: ApprovalProposal[]
+  count: number
+}
+
+export interface ApprovalAttempt {
+  attempt_id: number
+  proposal_id: number
+  lease_id: string
+  action: string
+  actor: string
+  result: string            // "ok" | "conflict"
+  error_json: string
+  expected_version: number
+  current_version: number
+  created_at: string
+}
+
+export interface ApprovalAttemptsResponse {
+  attempts: ApprovalAttempt[]
+  proposal_id: number
+}
+
+export interface CreateProposalRequest {
+  experiment_id: string
+  action?: string
+  target_lifecycle?: string
+  target_portfolio?: string
+  target_proposal?: string
+  candidate_id?: number
+  evidence_version?: string
+  policy_version?: string
+  policy_hash?: string
+  snapshot_hash?: string
+  lease_ttl_seconds?: number
+}
+
+export interface DecisionRequest {
+  expected_version: number
+  lease_id: string
+  reason?: string
+}
+
+export interface ShadowPortfolio {
+  portfolio_id: number
+  owner_user_id: number
+  experiment_id: string | null
+  candidate_id: number | null
+  name: string
+  policy_version: string
+  initial_cash: number
+  target_weights: Record<string, number>
+  scope: string
+  status: string
+  created_at: string
+  updated_at: string
+}
+
+export interface ShadowPortfolioListResponse {
+  portfolios: ShadowPortfolio[]
+  count: number
+}
+
+export interface ShadowSnapshot {
+  snapshot_id: number
+  portfolio_id: number
+  observation_date: string
+  nav: number
+  cash: number
+  holdings: Record<string, number>
+  target_weights: Record<string, number>
+  actual_weights: Record<string, number>
+  turnover: number
+  costs: number
+  drawdown: number
+  baseline_diff: Record<string, number>
+  status: string           // "settled" | "stale" | "blocked"
+  reason: string
+  input_version: string
+  created_at: string
+}
+
+export interface ShadowSnapshotsResponse {
+  snapshots: ShadowSnapshot[]
+  count: number
+}

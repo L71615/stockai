@@ -221,15 +221,20 @@ def _send_email(markdown: str, cfg: dict) -> bool:
 # 统一入口
 # ═══════════════════════════════════════════════════════════
 
-def send_notification(markdown: str, title: str = "") -> dict:
+def send_notification(markdown: str, title: str = "", *, run_id: str = "") -> dict:
     """向所有已配置的渠道发送通知
 
     Args:
         markdown: Markdown 格式的消息
         title:   消息标题（邮件主题 / Telegram 首行加粗）
+        run_id: 关联的 pipeline run_id, 用于 notification_log 审计
 
     Returns:
         {wechat: bool, telegram: bool, email: bool}
+
+    v3.11 (T8 D7): 通知失败不掩盖研究状态 — 每个 channel 独立 audit,
+    返回的 result 是研究结论本身 (调用方按 'sent' 判断),
+    research done/partial/blocked 永远先于 notify.
     """
     cfg = _get_config()
     if not cfg.get("notify_enabled", False):
@@ -249,7 +254,26 @@ def send_notification(markdown: str, title: str = "") -> dict:
 
     success = any(results.values())
     logger.info(f"通知发送完成 ({(elapsed):.0f}ms): {results}")
+
+    # v3.11 (T8): 独立审计, 每个 channel 写一条 log
+    _log_notification(run_id=run_id, results=results)
     return {"sent": success, "channels": results}
+
+
+def _log_notification(run_id: str, results: dict) -> None:
+    """每个 channel 写一条 notification_log, 与研究状态完全独立."""
+    try:
+        from database import execute
+        from datetime import datetime
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        for channel, ok in results.items():
+            execute(
+                "INSERT INTO notification_log (run_id, channel, target, success, error_json, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (run_id or "", channel, channel, 1 if ok else 0, "{}", now),
+            )
+    except Exception as e:
+        logger.warning("notification_log write failed: %s", str(e)[:200])
 
 
 def send_alert(stock_code: str, stock_name: str, alert_msg: str,

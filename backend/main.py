@@ -88,6 +88,13 @@ app.include_router(prediction.router)
 app.include_router(factor_lab.router)
 app.include_router(data_ops.router)
 app.include_router(pipeline.router)
+# T5: 审批 + 实验 + 影子组合查询 (新 /api/pipeline/* 路由, 不与旧 pipeline.router 冲突)
+from routers import approvals as approvals_router
+from routers import experiments as experiments_router
+from routers import shadow as shadow_router
+app.include_router(approvals_router.router)
+app.include_router(experiments_router.router)
+app.include_router(shadow_router.router)
 
 # 健康检查
 @app.get("/api/health")

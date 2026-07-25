@@ -17,7 +17,16 @@ from services.factor_lifecycle import (
     get_all_statuses,
     reset_factor,
 )
-from database import query_all
+from services.experiment_service import (
+    create_experiment,
+    get_experiment,
+    transition,
+    ExperimentNotFoundError,
+    ExperimentConflictError,
+    ExperimentTransitionError,
+)
+from dependencies import get_current_user_id
+from database import query_all, query_one
 
 logger = logging.getLogger(__name__)
 
@@ -139,13 +148,86 @@ def get_candidate_detail(id: int = Query(..., description="候选因子 ID")):
 
 @router.post("/mine/candidate/{candidate_id}/promote")
 def promote_candidate(candidate_id: int):
-    """标记候选因子为'已采纳' (人工审核后调用)"""
+    """人工审核通过 → 创建实验 + 走三轴状态机 (T1).
+
+    v3.11 行为变更:
+      - 不再简单 UPDATE factor_candidates.promoted=1
+      - 创建 experiments 行 (lifecycle_status=candidate, version=1)
+      - 返回新 experiment_id, 后续验证走 transition()
+    老的 promoted 字段保留兼容 (写 1, 不影响下游读取)
+    """
+    user_id = get_current_user_id()
+
+    # 1. 查候选 (必须存在)
+    cand = query_one(
+        "SELECT id, expr_text, ir FROM factor_candidates WHERE id = ?",
+        (candidate_id,),
+    )
+    if not cand:
+        raise HTTPException(404, f"候选因子 {candidate_id} 不存在")
+
+    # 2. 写老字段 (兼容)
     from database import execute
-    cur = execute(
+    execute(
         "UPDATE factor_candidates SET promoted = 1 WHERE id = ?",
         (candidate_id,),
     )
-    return {"promoted": candidate_id, "rows": cur.rowcount if hasattr(cur, "rowcount") else 0}
+
+    # 3. 创建实验 (state machine 起点)
+    exp_id = create_experiment(
+        owner_user_id=user_id,
+        expr_text=cand["expr_text"],
+        candidate_id=candidate_id,
+        policy_version="v1.0.0",
+        note=f"promoted from factor_candidates id={candidate_id}, ir={cand['ir']}",
+    )
+
+    return {
+        "candidate_id": candidate_id,
+        "experiment_id": exp_id,
+        "lifecycle_status": "candidate",
+        "portfolio_role": "none",
+        "proposal_status": "pending",
+        "version": 1,
+        "rows": 1,
+    }
+
+
+@router.post("/mine/candidate/{candidate_id}/reject")
+def reject_candidate(candidate_id: int, reason: str = Query("manual reject")):
+    """人工拒绝候选 → 创建实验后直接走 rejected 终态."""
+    user_id = get_current_user_id()
+    cand = query_one(
+        "SELECT id, expr_text FROM factor_candidates WHERE id = ?",
+        (candidate_id,),
+    )
+    if not cand:
+        raise HTTPException(404, f"候选因子 {candidate_id} 不存在")
+
+    exp_id = create_experiment(
+        owner_user_id=user_id,
+        expr_text=cand["expr_text"],
+        candidate_id=candidate_id,
+        note=f"rejected: {reason[:200]}",
+    )
+    # candidate → rejected 是一次合法迁移
+    try:
+        row = transition(
+            experiment_id=exp_id,
+            axis="lifecycle_status",
+            target="rejected",
+            expected_version=1,
+            actor=f"user:{user_id}",
+            reason=reason[:200],
+        )
+    except (ExperimentConflictError, ExperimentTransitionError) as e:
+        raise HTTPException(e.http_status, str(e)[:200])
+    return {
+        "candidate_id": candidate_id,
+        "experiment_id": exp_id,
+        "lifecycle_status": row["lifecycle_status"],
+        "version": row["version"],
+    }
 
 
 # ═══════════════════════════════════════════════════════════

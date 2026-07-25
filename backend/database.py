@@ -110,6 +110,10 @@ def init_db():
         conn.execute("PRAGMA foreign_keys=ON")
         conn.execute("PRAGMA journal_mode=WAL")
 
+        # 内部时间辅助
+        from datetime import datetime as _dt
+        _now_iso = lambda: _dt.now().strftime("%Y-%m-%d %H:%M:%S")
+
         # 核心表
         conn.execute("""CREATE TABLE IF NOT EXISTS users (
             id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -482,6 +486,262 @@ def init_db():
             params_json TEXT DEFAULT '{}',
             created_at TEXT DEFAULT (datetime('now','localtime'))
         )""")
+
+        # ── 实验账本 (T1: 三轴状态机) ──
+        # 防御性补建：factor_candidates / factor_lifecycle_status 早期手工建过
+        # 这里加 IF NOT EXISTS 防止新部署时缺失
+        conn.execute("""CREATE TABLE IF NOT EXISTS factor_candidates (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id          TEXT NOT NULL,
+            expr_text       TEXT NOT NULL,
+            ic_mean         REAL,
+            ir              REAL,
+            win_rate        REAL,
+            valid_days      INTEGER,
+            tree_depth      INTEGER,
+            promoted        INTEGER NOT NULL DEFAULT 0,
+            created_at      TEXT NOT NULL,
+            UNIQUE(run_id, expr_text)
+        )""")
+        conn.execute("""CREATE TABLE IF NOT EXISTS factor_lifecycle_status (
+            factor_name     TEXT PRIMARY KEY,
+            status          TEXT NOT NULL DEFAULT 'candidate',
+            ir              REAL,
+            warning_days    INTEGER NOT NULL DEFAULT 0,
+            last_updated    TEXT NOT NULL,
+            note            TEXT DEFAULT ''
+        )""")
+        conn.execute("""CREATE TABLE IF NOT EXISTS experiments (
+            experiment_id       TEXT PRIMARY KEY,
+            owner_user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            expr_text           TEXT NOT NULL,
+            candidate_id        INTEGER REFERENCES factor_candidates(id) ON DELETE SET NULL,
+            policy_version      TEXT NOT NULL DEFAULT 'v1.0.0',
+            snapshot_hash       TEXT NOT NULL DEFAULT '',
+            lifecycle_status    TEXT NOT NULL DEFAULT 'candidate',
+            portfolio_role      TEXT NOT NULL DEFAULT 'none',
+            proposal_status     TEXT NOT NULL DEFAULT 'pending',
+            version             INTEGER NOT NULL DEFAULT 1,
+            snapshot_json       TEXT NOT NULL DEFAULT '{}',
+            note                TEXT NOT NULL DEFAULT '',
+            created_at          TEXT NOT NULL,
+            updated_at          TEXT NOT NULL
+        )""")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_experiments_user ON experiments(owner_user_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_experiments_lifecycle ON experiments(lifecycle_status)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_experiments_role ON experiments(portfolio_role)")
+        conn.execute("""CREATE TABLE IF NOT EXISTS experiment_runs (
+            run_id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            experiment_id       TEXT NOT NULL REFERENCES experiments(experiment_id) ON DELETE CASCADE,
+            scope               TEXT NOT NULL DEFAULT 'pipeline',
+            status              TEXT NOT NULL DEFAULT 'running',
+            current_step        TEXT NOT NULL DEFAULT '',
+            started_at          TEXT NOT NULL,
+            finished_at         TEXT,
+            error_json          TEXT NOT NULL DEFAULT '{}'
+        )""")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_experiment_runs_exp ON experiment_runs(experiment_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_experiment_runs_status ON experiment_runs(status)")
+        conn.execute("""CREATE TABLE IF NOT EXISTS experiment_run_events (
+            event_id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            experiment_id       TEXT NOT NULL REFERENCES experiments(experiment_id) ON DELETE CASCADE,
+            run_id              INTEGER REFERENCES experiment_runs(run_id) ON DELETE SET NULL,
+            actor               TEXT NOT NULL DEFAULT 'system',
+            event_type          TEXT NOT NULL,
+            from_state          TEXT,
+            to_state            TEXT,
+            from_version        INTEGER,
+            to_version          INTEGER,
+            reason              TEXT NOT NULL DEFAULT '',
+            evidence_version    TEXT NOT NULL DEFAULT '',
+            created_at          TEXT NOT NULL
+        )""")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_exp_events_exp ON experiment_run_events(experiment_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_exp_events_time ON experiment_run_events(created_at)")
+        # 单飞锁：同 scope 只允许一个 worker 跑
+        conn.execute("""CREATE TABLE IF NOT EXISTS pipeline_lock (
+            scope               TEXT PRIMARY KEY,
+            holder_pid          TEXT NOT NULL,
+            acquired_at         TEXT NOT NULL,
+            expires_at          TEXT NOT NULL
+        )""")
+        # ── T2 实验快照 (point-in-time 输入冻结) ──
+        conn.execute("""CREATE TABLE IF NOT EXISTS experiment_snapshots (
+            snapshot_id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            experiment_id       TEXT NOT NULL REFERENCES experiments(experiment_id) ON DELETE CASCADE,
+            version             INTEGER NOT NULL DEFAULT 1,
+            policy_hash         TEXT NOT NULL DEFAULT '',
+            input_version_hash  TEXT NOT NULL DEFAULT '',
+            as_of_date          TEXT NOT NULL,
+            snapshot_json       TEXT NOT NULL,
+            note                TEXT NOT NULL DEFAULT '',
+            created_at          TEXT NOT NULL,
+            UNIQUE(experiment_id, version)
+        )""")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_exp_snapshots_exp ON experiment_snapshots(experiment_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_exp_snapshots_asof ON experiment_snapshots(as_of_date)")
+        # ── T3 验证策略版本表 ──
+        conn.execute("""CREATE TABLE IF NOT EXISTS validation_policies (
+            version         TEXT PRIMARY KEY,
+            hash            TEXT NOT NULL,
+            body_json       TEXT NOT NULL,
+            note            TEXT NOT NULL DEFAULT '',
+            created_at      TEXT NOT NULL,
+            activated_at    TEXT
+        )""")
+        # ── T4 影子组合 ──
+        conn.execute("""CREATE TABLE IF NOT EXISTS shadow_portfolios (
+            portfolio_id        INTEGER PRIMARY KEY AUTOINCREMENT,
+            owner_user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            experiment_id       TEXT REFERENCES experiments(experiment_id) ON DELETE SET NULL,
+            candidate_id        INTEGER REFERENCES factor_candidates(id) ON DELETE SET NULL,
+            name                TEXT NOT NULL DEFAULT '',
+            policy_version      TEXT NOT NULL DEFAULT 'v1.0.0',
+            initial_cash        REAL NOT NULL DEFAULT 100000,
+            target_weights_json TEXT NOT NULL DEFAULT '{}',
+            scope               TEXT NOT NULL DEFAULT 'paper',
+            status              TEXT NOT NULL DEFAULT 'active',
+            created_at          TEXT NOT NULL,
+            updated_at          TEXT NOT NULL
+        )""")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_shadow_pf_user ON shadow_portfolios(owner_user_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_shadow_pf_exp ON shadow_portfolios(experiment_id)")
+        conn.execute("""CREATE TABLE IF NOT EXISTS shadow_portfolio_snapshots (
+            snapshot_id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            portfolio_id        INTEGER NOT NULL REFERENCES shadow_portfolios(portfolio_id) ON DELETE CASCADE,
+            observation_date    TEXT NOT NULL,
+            nav                 REAL NOT NULL,
+            cash                REAL NOT NULL,
+            holdings_json       TEXT NOT NULL DEFAULT '{}',
+            target_weights_json TEXT NOT NULL DEFAULT '{}',
+            actual_weights_json TEXT NOT NULL DEFAULT '{}',
+            turnover            REAL NOT NULL DEFAULT 0,
+            costs               REAL NOT NULL DEFAULT 0,
+            drawdown            REAL NOT NULL DEFAULT 0,
+            baseline_diff_json  TEXT NOT NULL DEFAULT '{}',
+            status              TEXT NOT NULL DEFAULT 'settled',
+            reason              TEXT NOT NULL DEFAULT '',
+            input_version       TEXT NOT NULL DEFAULT '',
+            created_at          TEXT NOT NULL,
+            UNIQUE(portfolio_id, observation_date, input_version)
+        )""")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_shadow_snap_pf ON shadow_portfolio_snapshots(portfolio_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_shadow_snap_date ON shadow_portfolio_snapshots(observation_date)")
+        # ── T5 审批 ──
+        conn.execute("""CREATE TABLE IF NOT EXISTS approval_proposals (
+            proposal_id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            experiment_id       TEXT NOT NULL REFERENCES experiments(experiment_id) ON DELETE CASCADE,
+            candidate_id        INTEGER REFERENCES factor_candidates(id) ON DELETE SET NULL,
+            owner_user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            evidence_version    TEXT NOT NULL DEFAULT '',
+            candidate_version   INTEGER NOT NULL DEFAULT 0,
+            experiment_version  INTEGER NOT NULL DEFAULT 0,
+            action              TEXT NOT NULL DEFAULT 'promote',
+            target_lifecycle    TEXT,
+            target_portfolio    TEXT,
+            target_proposal     TEXT,
+            policy_version      TEXT NOT NULL DEFAULT 'v1.0.0',
+            policy_hash         TEXT NOT NULL DEFAULT '',
+            snapshot_hash       TEXT NOT NULL DEFAULT '',
+            lease_id            TEXT NOT NULL DEFAULT '',
+            lease_expires_at    TEXT,
+            status              TEXT NOT NULL DEFAULT 'pending',
+            decided_at          TEXT,
+            decided_by          TEXT,
+            decision_reason     TEXT NOT NULL DEFAULT '',
+            version             INTEGER NOT NULL DEFAULT 1,
+            created_at          TEXT NOT NULL,
+            updated_at          TEXT NOT NULL
+        )""")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_appr_prop_user ON approval_proposals(owner_user_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_appr_prop_status ON approval_proposals(status)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_appr_prop_exp ON approval_proposals(experiment_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_appr_prop_lease ON approval_proposals(lease_expires_at)")
+        conn.execute("""CREATE TABLE IF NOT EXISTS approval_attempts (
+            attempt_id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            proposal_id         INTEGER NOT NULL REFERENCES approval_proposals(proposal_id) ON DELETE CASCADE,
+            lease_id            TEXT NOT NULL DEFAULT '',
+            action              TEXT NOT NULL,
+            actor               TEXT NOT NULL DEFAULT '',
+            result              TEXT NOT NULL,
+            error_json          TEXT NOT NULL DEFAULT '{}',
+            expected_version    INTEGER NOT NULL DEFAULT 0,
+            current_version     INTEGER NOT NULL DEFAULT 0,
+            created_at          TEXT NOT NULL
+        )""")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_appr_att_prop ON approval_attempts(proposal_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_appr_att_lease ON approval_attempts(lease_id)")
+        # ── T8 灰度开关 ──
+        conn.execute("""CREATE TABLE IF NOT EXISTS feature_flags (
+            flag_key            TEXT PRIMARY KEY,
+            enabled             INTEGER NOT NULL DEFAULT 0,
+            scope               TEXT NOT NULL DEFAULT 'global',
+            description         TEXT NOT NULL DEFAULT '',
+            updated_by          TEXT NOT NULL DEFAULT '',
+            updated_at          TEXT NOT NULL
+        )""")
+        # ── T8 通知审计 (独立于研究状态) ──
+        conn.execute("""CREATE TABLE IF NOT EXISTS notification_log (
+            log_id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id              TEXT,
+            channel             TEXT NOT NULL,
+            target              TEXT NOT NULL DEFAULT '',
+            success             INTEGER NOT NULL DEFAULT 0,
+            error_json          TEXT NOT NULL DEFAULT '{}',
+            created_at          TEXT NOT NULL
+        )""")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_notif_run ON notification_log(run_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_notif_time ON notification_log(created_at)")
+        # 默认全 OFF 的 flag
+        for key, desc in [
+            ("pipeline.shadow.enabled", "启用影子组合 (T4)"),
+            ("pipeline.approval.enabled", "启用审批收件箱 (T5)"),
+            ("pipeline.negative_control.enabled", "启用负对照 (T3)"),
+            ("pipeline.champion_replacement.enabled", "启用 Champion/Challenger 替换建议 (Gate 2)"),
+            ("pipeline.auto_promote.enabled", "自动晋级 (默认 OFF, 必须人工)"),
+        ]:
+            try:
+                conn.execute(
+                    "INSERT INTO feature_flags (flag_key, enabled, scope, description, updated_by, updated_at) "
+                    "VALUES (?, 0, 'global', ?, 'bootstrap', ?)",
+                    (key, desc, _now_iso()),
+                )
+            except Exception:
+                pass  # IF NOT EXISTS implied (key PK), 重复运行 init_db 时跳过
+        # ── T9 复盘 ──
+        conn.execute("""CREATE TABLE IF NOT EXISTS proposal_outcomes (
+            outcome_id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            proposal_id         INTEGER NOT NULL REFERENCES approval_proposals(proposal_id) ON DELETE CASCADE,
+            decision            TEXT NOT NULL,    -- 'approved' | 'rejected' | 'withdrawn'
+            realized_at         TEXT NOT NULL,
+            fwd_days            INTEGER NOT NULL DEFAULT 0,
+            fwd_return          REAL NOT NULL DEFAULT 0,
+            fwd_shadow_return   REAL NOT NULL DEFAULT 0,
+            fwd_baseline_diff   REAL NOT NULL DEFAULT 0,
+            baseline_code       TEXT NOT NULL DEFAULT 'csi300',
+            label               TEXT NOT NULL DEFAULT '',   -- 'good' | 'bad' | 'neutral'
+            created_at          TEXT NOT NULL,
+            UNIQUE(proposal_id)
+        )""")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_outcomes_decision ON proposal_outcomes(decision)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_outcomes_realized ON proposal_outcomes(realized_at)")
+        conn.execute("""CREATE TABLE IF NOT EXISTS proposal_retrospectives (
+            retro_id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            proposal_id         INTEGER NOT NULL REFERENCES approval_proposals(proposal_id) ON DELETE CASCADE,
+            experiment_id       TEXT NOT NULL,
+            decision            TEXT NOT NULL,
+            fwd_days            INTEGER NOT NULL,
+            fwd_return          REAL NOT NULL,
+            fwd_baseline_diff   REAL NOT NULL,
+            hypothesis          TEXT NOT NULL DEFAULT '',
+            evidence_summary    TEXT NOT NULL DEFAULT '',
+            realized_summary    TEXT NOT NULL DEFAULT '',
+            lesson              TEXT NOT NULL DEFAULT '',
+            confidence          REAL NOT NULL DEFAULT 0,
+            created_at          TEXT NOT NULL
+        )""")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_retro_exp ON proposal_retrospectives(experiment_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_retro_decision ON proposal_retrospectives(decision)")
 
         # ── 数据库索引（性能关键）──
         # 使用 IF NOT EXISTS 幂等，已有索引不重复创建

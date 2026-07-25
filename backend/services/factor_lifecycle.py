@@ -1,10 +1,9 @@
-"""因子生命周期管理 — 自动评估/告警/退役
+"""因子生命周期管理 — 自动评估/告警/退役 (v3.11+)
 
-规则:
-  IR >= 0.30           → active
-  0.10 <= IR < 0.30    → warning (累加 warning_days)
-  IR <  0.10            → warning
-  warning_days >= 14    → retired (自动退役)
+规则 (从 validation_policy 读, 不再写死):
+  IR >= ir_active            → active
+  0 <= IR < ir_active        → warning (累加 warning_days)
+  warning_days >= policy.warning_days_retire → retired
 
 表: factor_lifecycle_status (factor_name PK)
 """
@@ -15,15 +14,30 @@ from database import query_all, execute
 
 logger = logging.getLogger(__name__)
 
-# 阈值 (基于实际市场现实: A 股纯价格因子 IR 通常 0.0~0.2)
-#   IR >= 0.15           → active (实用)
-#   0.05 <= IR < 0.15    → warning (信号弱)
-#   IR <  0.05            → warning_days +1
-#   warning_days >= 14    → retired
+
+# 向后兼容: 旧调用方可能引用这些常量, 启动时从 policy 注入
 IR_ACTIVE = 0.15
 IR_WARNING = 0.05
 WARNING_DAYS_RETIRE = 14
-EVAL_DAYS = 120  # 评估窗口 (最近 4 个月)
+EVAL_DAYS = 120
+
+
+def _load_thresholds_into_globals() -> None:
+    """从 policy 读阈值写到模块全局, 兼容老代码引用 IR_ACTIVE 等常量."""
+    global IR_ACTIVE, IR_WARNING, WARNING_DAYS_RETIRE, EVAL_DAYS
+    try:
+        from services.validation_policy import get_current_policy
+        p = get_current_policy()
+        IR_ACTIVE = p.ir_active
+        IR_WARNING = p.ir_warning
+        WARNING_DAYS_RETIRE = p.warning_days_retire
+        EVAL_DAYS = p.eval_days
+    except Exception as e:
+        logger.debug("policy 加载失败, 用模块默认值: %s", str(e)[:200])
+
+
+# 启动时尝试同步一次 (失败用默认值)
+_load_thresholds_into_globals()
 
 
 def evaluate_factor(factor_name: str, end_date: str = None, days: int = EVAL_DAYS) -> dict:
@@ -63,28 +77,29 @@ def evaluate_factor(factor_name: str, end_date: str = None, days: int = EVAL_DAY
 
 
 def classify(ir: float, warning_days: int) -> str:
-    """根据 IR 和连续 warning 天数, 返回状态"""
-    if ir >= IR_ACTIVE:
-        return "active"
-    if warning_days >= WARNING_DAYS_RETIRE:
-        return "retired"
-    return "warning"
+    """根据 IR 和连续 warning 天数, 返回状态 (委托给 validation_policy)."""
+    from services.validation_policy import classify_lifecycle
+    return classify_lifecycle(ir, warning_days)
 
 
 def update_all_factors() -> dict:
-    """评估所有 15 个内置因子, 更新 lifecycle_status 表
+    """评估所有内置因子, 更新 lifecycle_status 表
 
     Returns:
-        {updated: N, statuses: {factor: status}, retired: [...]}
+        {updated, statuses, retired, warnings, thresholds{policy_version, policy_hash}, evaluated_at}
     """
     from services.factor_lab import FACTOR_REGISTRY
+    from services.validation_policy import get_current_policy, compute_next_warning_days
 
+    p = get_current_policy()
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     # 读已有状态 (用来算 warning_days 累计)
     existing = {
         r["factor_name"]: r
-        for r in query_all("SELECT factor_name, status, warning_days, ir_current FROM factor_lifecycle_status")
+        for r in query_all(
+            "SELECT factor_name, status, warning_days FROM factor_lifecycle_status"
+        )
     }
 
     updated = 0
@@ -105,29 +120,23 @@ def update_all_factors() -> dict:
         prev_status = prev.get("status", "active")
         prev_warning_days = prev.get("warning_days", 0) or 0
 
-        # 计算 warning_days: 当前是 warning 时 +1, 否则重置为 0
-        if ir < IR_WARNING:
-            new_warning_days = prev_warning_days + 1
-        elif prev_status == "warning":
-            # 从 warning 恢复 (例如 IR 回到 active 区间)
-            new_warning_days = 0
-        else:
-            new_warning_days = 0
-
+        new_warning_days = compute_next_warning_days(ir, prev_status, prev_warning_days)
         status = classify(ir, new_warning_days)
 
-        # 备注
+        # 备注 (含 policy version 便于审计)
         note = ""
         if status == "retired":
-            note = f"IR={ir:.3f} 连续 {new_warning_days} 天低于阈值 (IR<{IR_WARNING})"
+            note = (f"IR={ir:.3f} 连续 {new_warning_days} 天低于阈值 "
+                    f"(IR<{p.ir_warning}, policy={p.version})")
             retired_list.append(factor_name)
         elif status == "warning":
-            note = f"IR={ir:.3f} 接近退役阈值 ({new_warning_days}/{WARNING_DAYS_RETIRE} 天)"
+            note = (f"IR={ir:.3f} 接近退役阈值 "
+                    f"({new_warning_days}/{p.warning_days_retire} 天, policy={p.version})")
             new_warnings.append(factor_name)
         elif status == "active":
-            note = f"IR={ir:.3f} 胜率={win_rate:.2%}"
+            note = f"IR={ir:.3f} 胜率={win_rate:.2%} (policy={p.version})"
 
-        # 写表
+        # 写表 (ic_current 字段在 schema 里是 ic_current, 沿用)
         try:
             execute(
                 """INSERT INTO factor_lifecycle_status
@@ -153,10 +162,12 @@ def update_all_factors() -> dict:
         "retired": retired_list,
         "warnings": new_warnings,
         "thresholds": {
-            "ir_active": IR_ACTIVE,
-            "ir_warning": IR_WARNING,
-            "warning_days_retire": WARNING_DAYS_RETIRE,
-            "eval_days": EVAL_DAYS,
+            "ir_active": p.ir_active,
+            "ir_warning": p.ir_warning,
+            "warning_days_retire": p.warning_days_retire,
+            "eval_days": p.eval_days,
+            "policy_version": p.version,
+            "policy_hash": p.hash(),
         },
         "evaluated_at": now,
     }
@@ -173,7 +184,7 @@ def get_all_statuses() -> list[dict]:
 
 
 def reset_factor(factor_name: str) -> bool:
-    """手动重置因子状态 (例如发现误判)"""
+    """手动重置因子状态 (例如发现误判时)"""
     cur = execute(
         "UPDATE factor_lifecycle_status SET warning_days=0, status='active', "
         "note='手动重置' WHERE factor_name = ?",

@@ -549,8 +549,12 @@ def monte_carlo_sim(prices: list[float], days: int = 252, sims: int = 1000, conf
 
 # ==================== 组合级别聚合 ====================
 
-def get_benchmark_comparison(user_id: int = 1) -> dict:
+def get_benchmark_comparison(user_id: int) -> dict:
     """对比投资组合 vs 多个基准指数的表现
+
+    Args:
+        user_id: 必须显式传入, 不再有 default=1 (D8).
+               上游路由从 get_current_user_id() 取.
 
     Returns:
         { "benchmarks": { "000300": {...}, "000905": {...}, ... },
