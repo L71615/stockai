@@ -1,113 +1,147 @@
-# StockAI v3.11 — A 股 AI 量化选股 · 研究→决策证据闭环
+<div align="center">
 
-> 55 因子多因子选股 · 13 策略模板 · 参数优化 · 策略对比 · AI 月报 · 因子实验室(IC/相关性/GP/ML 联合训练) · **全市场浏览 /browse** · **数据运维（一键补齐 K 线）** · **量化 Pipeline（5 步 cron 编排 + 简报 + 推送）** · **🆕 v3.11 研究→决策证据闭环（三轴状态机 + OOS 快照 + 影子组合 + 审批收件箱 + 复盘）** · **🆕 后端监视器 (Electron 桌面 app)**
->
-> A 股投资者的量化工具箱。数据驱动，AI 增强，反事实可追溯。
+# StockAI
 
-> 🌐 中文 · [English](stockai-project-docs/README.en.md)
+### A 股 AI 量化选股 · 研究→决策证据闭环
 
-> 📑 完整文档导航: [INDEX.md](INDEX.md) · 📚 项目文档: [stockai-project-docs/](stockai-project-docs/) · 🖥️ 监视器计划: [monitor-desktop-docs/](monitor-desktop-docs/)
+**55 因子 · 13 策略 · 5 角色多 Agent · 自动量化 Pipeline · 后端监视器**
+
+![Version](https://img.shields.io/badge/version-v3.11-success?style=flat-square)
+![Python](https://img.shields.io/badge/python-3.11+-blue?style=flat-square&logo=python&logoColor=white)
+![Next.js](https://img.shields.io/badge/Next.js-16-black?style=flat-square&logo=next.js&logoColor=white)
+![TypeScript](https://img.shields.io/badge/TypeScript-5.6-3178C6?style=flat-square&logo=typescript&logoColor=white)
+![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)
+
+[English](stockai-project-docs/README.en.md) · [中文](#) · [文档导航](INDEX.md)
+
+</div>
 
 ---
 
-## 🎯 核心能力
+## 🎯 TL;DR
 
-| 模块 | 功能 |
+StockAI 是一个**纯本地化**的 A 股量化工具箱,定位**预测 + 回测**,不接实时交易。
+
+- **多因子选股**: 55 因子(9 大类) + IC 加权打分 + AI 二次精选 + 5 角色多空辩论
+- **策略回测**: 13 YAML 策略模板 + 参数优化 + 滑点/成本模型 + 过拟合警告
+- **证据闭环**: v3.11 新增 — 三轴状态机 + OOS 快照 + 影子组合 + 审批收件箱 + 灰度 flag,**所有决策可追溯**
+- **自动 Pipeline**: 每日收盘后 cron 跑 GP→ML→衰减→数据健康→简报推送
+- **后端监视器**: Electron 桌面 app,实时观察 stockai 后端进程 / 日志 / 数据库
+
+> 📖 完整文档: [stockai-project-docs/](stockai-project-docs/) · 📋 监视器: [monitor-desktop/](monitor-desktop/)
+
+---
+
+## 🏗️ 架构一览
+
+```
+┌────────────────────────────────────────────────────────────────────┐
+│                    StockAI v3.11 系统架构                            │
+├────────────────────────────────────────────────────────────────────┤
+│                                                                     │
+│   ① 研究层 (R)              ② 决策层 (D)            ③ 执行层 (E)   │
+│   ┌──────────────┐          ┌──────────────┐        ┌───────────┐ │
+│   │ 55 因子计算  │          │ 多 Agent     │        │ 影子组合  │ │
+│   │ GP/ML 挖掘   │  ──────► │ 多空辩论     │ ─────► │ T+1 模拟  │ │
+│   │ IC/相关性    │   信号   │ 置信度评分   │  决策  │ 整手/缺价 │ │
+│   │ 散点图       │          │ 风险一票否决 │        │ 单飞锁    │ │
+│   └──────────────┘          └──────────────┘        └───────────┘ │
+│         │                          │                     │         │
+│         ▼                          ▼                     ▼         │
+│   ┌──────────────────────────────────────────────────────────┐    │
+│   │              SQLite (WAL 模式, 25+ 表)                     │    │
+│   │   experiments / snapshots / shadow_portfolio / proposals    │    │
+│   └──────────────────────────────────────────────────────────┘    │
+│                                                                     │
+│   ④ Pipeline: cron 18:00 → GP→ML→衰减→数据健康→简报推送 (T+1)      │
+│   ⑤ 监控: Electron 监视器(进程/日志/DB,只读不写)                   │
+│                                                                     │
+└────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## ✨ 核心能力
+
+| 模块 | 描述 |
 |------|------|
-| 🔍 **AI 选股** | 全市场多因子扫描（55 因子）→ IC 加权打分 → AI 二次精选 → 板块过滤(默认沪深主板) → 策略回测 → 盯盘 |
-| 🎯 **条件选股** | 四层过滤架构(L1-L4)，13 个策略模板，YAML 策略引擎，AND/OR 组合，每策略可调参数+来源说明 |
-| 🎛️ **参数优化** | 网格搜索最优参数组合（上限300组），按最大回撤→夏普排序，一键应用到回测 |
-| 🌐 **全市场浏览** | `/browse` — 5530 只股票按板块分组、Sparkline 走势、完整性标签、一键加自选 / 跑回测 |
-| 🛠️ **数据运维** | K 线新鲜度仪表盘（akshare A 股交易日历）+ 一键补齐（scope=missing/stale/sector/all）+ 同步进度可查 |
-| ⚖️ **策略对比** | 多策略独立回测并排排名（交易数/胜率/夏普/回撤/总收益） |
-| 📊 **策略回测** | 18 个策略模板(13 YAML + 5 内置)，选股→模拟交易→绩效报告(夏普/最大回撤/胜率/卡玛)，手续费自动计入，买卖点K线标注，过拟合警告 |
-| 🤖 **多 Agent 分析** | 5 角色多空辩论(技术面+基本面→多头+空头→裁判)，结构化决策输出(买入/持有/卖出+置信度)，自动注入交易记忆+策略历史 |
-| 🧠 **交易记忆** | 决策→验证→反思→注入 自动闭环，策略维度追踪(每笔交易记录触发策略)，AI 分析时自动引用 |
-| 📋 **AI 月报** | 当月交易聚合→AI 结构化报告(总成绩/赚最多/亏最多/策略PK/改进建议)，上月对比诊断(进步/退步) |
-| 🛡 **交易纪律** | 买入前强制校验(止损检查+仓位限制+追涨停禁止)，连亏保护(3级警告+亏损明细+行动建议) |
-| 🔌 **数据源抽象** | 配置驱动多源 fallback(Futu→新浪→AKShare→Baostock)，环境变量一键切换，新数据源插拔式接入 |
-| 📊 **量化分析** | 个股 K 线(5 指标+讲解栏) + 55 因子全景透视(9 类+雷达图) + 组合风险指标(Sharpe/回撤/波动率/Beta) / 蒙特卡洛 |
-| 🔬 **因子实验室** | IC 分析(因子预测能力) + 相关性矩阵(剔除冗余因子) + 散点图(因子vs收益) + GP 遗传编程挖掘新因子 + LightGBM ML 因子生成(测试集 IR=0.45) |
-| 🧠 **AI 对话** | SSE 流式响应，DeepSeek/MiniMax/OpenAI/Claude 多供应商，功能独立配置 |
-| 🔔 **通知推送** | 企业微信 / Telegram / 邮件，盯盘异动自动推送 |
-| 💼 **持仓管理** | 实时盈亏 + 分散度饼图 + 行业自动分类（20+ 板块） |
-| 📉 **K 线图表** | TradingView lightweight-charts 蜡烛图，MA/BOLL/MACD/RSI/KDJ 五指标 + 海龟通道线 + 指标讲解栏 |
-| 📡 **Futu 行情接入** | A 股 `quote / minute / daily` 接入 Futu OpenD，日线同步 `historical_kline` |
-| 🔄 **Futu 同步系统** | `watchlist + holdings` 批量目标，`intraday` / `nightly` 同步，落库并支持告警 |
-| 🆕 **v3.11 实验账本** | 三轴状态机 (lifecycle/portfolio_role/proposal) + 版本 CAS + append-only 审计 + 单飞锁 |
-| 🆕 **v3.11 OOS 快照** | 冻结假设 (snapshot_hash) + point-in-time replay (不复用 historical_kline) + leakage 检测 |
-| 🆕 **v3.11 影子组合** | 收盘后信号 → T+1 执行 + 整手(100 股) + 缺价 blocked + UNIQUE 防重复 |
-| 🆕 **v3.11 审批收件箱** | `/pipeline` 默认 Tab + TTL lease + 三层 CAS + counterfactual 复盘 |
-| 🆕 **v3.11 灰度开关** | 5 个 feature flag (默认 OFF) + 一键回 OFF + notification_log 独立审计 |
-| 🖥 **后端监视器** | Electron 桌面 app · 5 模块 · 0 改动主项目 · 详见 [monitor-desktop/](monitor-desktop/) |
+| 🔍 **AI 选股** | 全市场多因子扫描 → IC 加权 → AI 精选 → 板块过滤 → 回测 → 盯盘 |
+| 🎯 **条件选股** | L1-L4 四层过滤 + 13 YAML 策略 + 参数可调 + 来源说明 |
+| 🎛️ **参数优化** | 网格搜索(上限 300 组),按最大回撤→夏普排序 |
+| 📊 **策略回测** | 18 模板 + 手续费自动计入 + 买卖点 K 线标注 + 过拟合警告 |
+| 🤖 **多 Agent 分析** | 5 角色多空辩论 → 结构化决策(买入/持有/卖出+置信度) |
+| 🧠 **交易记忆** | 决策→验证→反思→注入 自动闭环,策略维度追踪 |
+| 📋 **AI 月报** | 月度聚合 → AI 结构化报告 + 上月对比诊断 |
+| 🛡️ **交易纪律** | 买入前强制校验 + 连亏保护 3 级 + 行动建议 |
+| 🔬 **因子实验室** | IC/相关性/散点 + GP 遗传编程 + LightGBM ML 因子 |
+| 🧠 **AI 对话** | SSE 流式响应,5 供应商独立路由(Claude/DeepSeek/OpenAI/MiniMax/Xiaomi) |
+| 📡 **数据源** | Futu→新浪→AKShare→Baostock fallback,环境变量切换 |
+| 🖥️ **后端监视器** | Electron 桌面 app · 5 模块 · 只读 · **详见 [monitor-desktop/](monitor-desktop/)** |
 
-## 🔬 因子体系（55 个）
+---
+
+## 🆕 v3.11 — 研究→决策证据闭环
+
+5 个核心模块协同,实现**决策可追溯 + 反事实可对比**:
+
+| 模块 | 作用 | 关键能力 |
+|------|------|---------|
+| **T1 实验账本** | 因子候选的全生命周期管理 | 三轴状态机 (lifecycle/portfolio_role/proposal) + 版本 CAS + append-only 审计 |
+| **T2 OOS 快照** | 冻结假设,防数据穿越 | snapshot_hash + point-in-time replay + leakage 检测 |
+| **T3 影子组合** | 收盘后模拟实盘 | T+1 执行 + 整手(100 股) + 缺价 blocked + UNIQUE 防重复 |
+| **T4 审批收件箱** | 人工最终决策 | TTL lease + 三层 CAS + counterfactual 复盘 |
+| **T5 灰度开关** | 安全渐进上线 | 5 个 feature flag (默认 OFF) + 一键回 OFF + notification_log 独立审计 |
+
+> 跑通后,任何一笔影子组合决策都能追溯到:因子表达式 → 历史回测 → OOS 验证 → 多 Agent 投票 → 人工审批 → 实际表现 → 反思注入。详见 [CHANGELOG.md](stockai-project-docs/CHANGELOG.md) 2026-07-25 段。
+
+---
+
+## 🔬 因子体系(55 个 / 9 类)
+
+<details>
+<summary><b>展开 9 类因子清单</b></summary>
 
 | 类别 | 数量 | 因子 |
 |------|------|------|
-| 价格 | 9 | MA5, MA10, MA20, MA60, PRICE_POS, HIGH_LOW_RATIO, CLOSE_OPEN_RATIO, TYPICAL_PRICE, WEIGHTED_CLOSE |
-| 成交量 | 6 | VOL_MA5, VOL_MA10, VOL_MA20, VOL_RATIO, VOL_STD, PRICE_VOLUME |
+| 价格 | 9 | MA5/10/20/60, PRICE_POS, HIGH_LOW_RATIO, CLOSE_OPEN_RATIO, TYPICAL_PRICE, WEIGHTED_CLOSE |
+| 成交量 | 6 | VOL_MA5/10/20, VOL_RATIO, VOL_STD, PRICE_VOLUME |
 | 技术指标 | 5 | RSI, MACD, BOLL_UPPER, BOLL_LOWER, BOLL_POSITION |
-| 动量 | 9 | RET_5D, RET_20D, RET_60D, MOMENTUM_5/10/20, ACCELERATION, TREND_STRENGTH, MOMENTUM_COMPOSITE |
-| 波动率 | 8 | VOLATILITY_5, VOLATILITY_20, VOLATILITY_RATIO, RANGE_VOLATILITY, ATR, DOWNSIDE_VOL, BB_WIDTH, HV_20 |
+| 动量 | 9 | RET_5D/20D/60D, MOMENTUM_5/10/20, ACCELERATION, TREND_STRENGTH, MOMENTUM_COMPOSITE |
+| 波动率 | 8 | VOLATILITY_5/20, VOLATILITY_RATIO, RANGE_VOLATILITY, ATR, DOWNSIDE_VOL, BB_WIDTH, HV_20 |
 | 量价 | 3 | TURNOVER_RATE, OBV_DIVERGENCE, AVG_AMOUNT |
 | 基本面 | 11 | PE, PB, ROE, EPS_GROWTH, MARKET_CAP, DIVIDEND_YIELD, PS_TTM, DEBT_RATIO, GROSS_MARGIN, REVENUE_GROWTH, NET_PROFIT_GROWTH |
 | 情绪 | 2 | STRENGTH_20D, MOMENTUM_COMPOSITE_2 |
 | 资金 | 2 | NORTH_FLOW(北向), INST_CHANGE(机构持仓变动) |
 
+</details>
+
+---
+
 ## 📡 数据源
 
-```text
-A 股:
-  实时行情:    Futu OpenD → AKShare fallback            (vendor_config: realtime_quote)
-  批量报价:    AKShare (内部调腾讯/东财行情接口)            (vendor_config: batch_quotes)
-  日 K 线:    Futu 日线优先 → 新浪 → AKShare → Baostock fallback
-  1m K 线:    仅 Futu (无 fallback)                      (vendor_config: minute_kline)
-  基本面:      AKShare(同花顺) → Baostock 兜底 (PE/PB/ROE/EPS/市值/行业/分红)
-
-港股:        新浪 (行情) + AKShare (K线 + 基本面)
-美股:        AKShare
-ETF:         东方财富/腾讯(主) + 天天基金(净值兜底)
-全球指数 (15 个): 东方财富 ulist API 一次拉全 15 个
-
-AI 供应商 (config.py, 7 功能 × 5 供应商独立路由):
-  MiniMax / DeepSeek / Claude / OpenAI / Xiaomi
-
-图表:        lightweight-charts v5.2 (TradingView 开源)
+```
+A 股:  Futu OpenD (实时) → 新浪 → AKShare → Baostock (fallback 链)
+港股:  新浪 (行情) + AKShare (K 线/基本面)
+美股:  AKShare
+ETF:   东方财富/腾讯 (主) + 天天基金 (净值兜底)
+指数:  东方财富 ulist 一次拉全 15 个全球指数
+AI:    5 供应商独立路由(7 功能 × 5 模型)
+图表:  TradingView lightweight-charts v5
 ```
 
-## 🏗 项目结构
-
-```text
-stocks/
-├── frontend/                    # Next.js 16 + React 19 + shadcn/ui + Tailwind CSS 4
-├── backend/                     # Python FastAPI
-│   ├── routers/                 # API 路由 (12 个)
-│   ├── services/                # 业务服务 (40+ 个)
-│   ├── strategies/              # 条件选股策略 YAML (13 个)
-│   └── sync_kline_*.py          # 历史 K 线同步入口
-├── database/                    # SQLite (WAL 模式)
-├── tests/                       # pytest 回归测试
-├── scripts/                     # 工具脚本
-├── stockai-project-docs/        # 📘 项目文档 (README/CHANGELOG/DESIGN/...)
-├── monitor-desktop/             # 🖥️ 后端监视器 (Electron + Vite + React)
-├── monitor-desktop-docs/        # 📘 监视器文档 (PLAN/DAILY-LOG)
-├── CLAUDE.md                    # Claude Code 入会文档
-├── INDEX.md                     # 文档导航
-└── start.bat                    # 一键启动 (Windows)
-```
+---
 
 ## 🚀 快速启动
 
-### 推荐：Windows 控制面板
+### Windows(推荐)
 
 ```bat
 D:\stocks\start.bat
 ```
 
-菜单选项 3 = 启动全部（后端 + 前端）。后端 startup 会自动接入：DCA 提醒、止损检查、Futu intraday 同步、Futu nightly 同步、交易记忆解析。
+菜单 `[3]` 一键启动后端 (3000) + 前端 (3001)。后端 startup 自动接入:DCA 提醒 / 止损检查 / Futu intraday 同步 / Futu nightly 同步 / 交易记忆解析。
 
-### 手动启动
+### 手动
 
 ```bash
 # 后端 (端口 3000)
@@ -123,95 +157,119 @@ npm run dev
 # 浏览器打开 http://localhost:3001
 ```
 
-### 启动后端监视器
+### 后端监视器
 
 ```bat
 cd D:\stocks\monitor-desktop
 run.bat
 ```
 
-独立桌面 app,只读观察后端进程 + 访问日志 + 数据库结构,**Deep Freeze 操作**(不污染主项目)。
+独立 Electron 桌面 app,只读观察后端进程 + 访问日志 + 数据库结构。
 
-## 🛣 页面路由
+---
 
-| 分组 | 页面 | 路由 | 说明 |
-|------|------|------|------|
-| 投资 | 持仓概览 | `/` | KPI 卡片 + 走势图 + 行业饼图 + 持仓表 |
-| 投资 | 自选股 | `/watchlist` | 实时行情 + 批量报价 |
-| 投资 | **股票浏览** | `/browse` | **v3.9** 全市场浏览 — 5530 只股票按板块分组 |
-| 投资 | 大盘指数 | `/market` | 全球 15 指数 |
-| 分析 | 量化分析 | `/quant` | 个股透视 + 因子面板(9类55因子+雷达图) + 策略回测 + 蒙特卡洛 + F10 买卖点标注 |
-| 分析 | 条件选股 | `/screener/condition` | 四层过滤(L1-L4) + 13 预设策略 + YAML 引擎 |
-| 分析 | AI 选股 | `/screener` | 多因子扫描 + AI 精选 + 策略回测 + 盯盘 + 候选警告 |
-| 分析 | 因子实验室 | `/factor-lab` | 5 Tab: IC/相关性/散点/GP 挖掘/ML 挖掘 + 衰减评分 |
-| 🆕 v3.11 | **Pipeline 收件箱** | `/pipeline` | **默认 Tab**: 待审批/已通过/已拒绝/已过期 + lease 倒计时 + 三轴状态 CAS + 第 2 Tab: 运行 |
-| 工具 | 交易记录 | `/transactions` | 交易 CRUD |
-| 工具 | AI 对话 | `/ai-assistant` | 多模型 SSE 流式对话 |
-| 工具 | 设置 | `/settings` | AI Key(功能→供应商映射表) + 通知配置 |
+## 🛣️ 页面路由
 
-## ⚙️ 环境变量
+| 路由 | 说明 |
+|------|------|
+| `/` | 持仓概览 — KPI 卡片 + 走势图 + 行业饼图 |
+| `/browse` | 全市场浏览 — 5530 只股票按板块分组 + 完整性标签 + Sparkline |
+| `/quant` | 量化分析 — 个股透视 + 55 因子雷达 + 策略回测 + 蒙特卡洛 + F10 买卖点 |
+| `/screener` | AI 选股 — 多因子扫描 + AI 精选 + 5 Agent 验证 + 候选警告 |
+| `/screener/condition` | 条件选股 — 四层过滤 + 13 YAML 策略 |
+| `/factor-lab` | 因子实验室 — IC/相关性/散点/GP/ML + 衰减评分 |
+| **`/pipeline`** | **v3.11 收件箱** — 待审批/已通过/已拒绝/已过期 + lease 倒计时 |
+| `/watchlist` | 自选股 — 实时行情 + 批量报价 |
+| `/market` | 大盘指数 — 全球 15 指数 |
+| `/transactions` | 交易记录 CRUD |
+| `/ai-assistant` | AI 对话 — SSE 流式 |
+| `/settings` | AI Key + 通知配置 |
+
+---
+
+## ⚙️ 环境变量(无真实密钥,仅占位符)
 
 ```bash
-# 管理员
 ADMIN_EMAIL=admin@stockai.com
 ADMIN_PASSWORD=<你的密码>
 
-# 安全 (必填,缺失会启动失败)
-JWT_SECRET=<64 位 hex>
-ENCRYPTION_KEY=<64 位 hex>
+JWT_SECRET=<64 位 hex>          # 必填
+ENCRYPTION_KEY=<64 位 hex>      # 必填
+CORS_ORIGINS=http://localhost:3001  # 必填
 
-# CORS 白名单 (必填)
-CORS_ORIGINS=http://localhost:3001
-
-# AI (至少配一个)
-DEEPSEEK_API_KEY=sk-xxx
-MINIMAX_API_KEY=xxx
+DEEPSEEK_API_KEY=sk-xxx         # 至少配一个
 CLAUDE_API_KEY=sk-ant-xxx
 OPENAI_API_KEY=sk-xxx
+MINIMAX_API_KEY=xxx
 XIAOMI_API_KEY=xxx
 
-# 通知 (可选)
 WECHAT_WEBHOOK_URL=https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=xxx
 TELEGRAM_BOT_TOKEN=xxx
 TELEGRAM_CHAT_ID=xxx
 ```
 
-> ⚠️ **敏感信息警示**: `.env` 已在 `.gitignore` 内,**永不提交**。本仓库所有密钥占位符(`xxx` / `your_password` 等)都是示例,部署时**必须替换为真实值**。
+> ⚠️ `.env` 已在 `.gitignore` 内,**永不提交**。占位符必须替换为真实值。
+
+---
+
+## 🏗️ 项目结构
+
+```
+stocks/
+├── frontend/                  # Next.js 16 + React 19 + Tailwind 4 + shadcn/ui
+├── backend/                   # FastAPI + 12 路由 + 40 服务
+│   ├── routers/               # API endpoints
+│   ├── services/              # 业务服务 + 数据源 Provider 抽象
+│   ├── strategies/            # 13 YAML 策略模板
+│   └── sync_kline_*.py        # K 线同步入口
+├── database/                  # SQLite (WAL 模式, 25+ 表)
+├── tests/                     # pytest 回归
+├── monitor-desktop/           # 🖥️ 后端监视器 (Electron + Vite + React)
+├── stockai-project-docs/      # 📘 项目文档
+├── monitor-desktop-docs/      # 📘 监视器文档
+├── CLAUDE.md                  # Claude Code 入会文档
+├── INDEX.md                   # 文档导航
+└── start.bat                  # 一键启动 (Windows)
+```
+
+---
 
 ## 📝 版本历史
 
-| 版本 | 日期 | 主题 | 亮点 |
-|------|------|------|------|
-| **v3.11** | 2026-07-25 | 研究→决策证据闭环 | 9 个 step 全部交付: T1三轴状态机+T2 OOS快照+T3策略层+T4影子组合+T5审批CAS+T6 /pipeline收件箱+T7故障注入+T8灰度flag+T9复盘counterfactual · 187 测试 + 1 编译 · Gate 1 路径走通 · append-only 证据链完整 · RUNBOOK 一键回滚 |
-| **v3.10.4** | 2026-07-24 | /quotes 性能 + 测试 | N+1→单次IN查询 (50×加速) · codes 上限防DoS · 删70行死代码 · /pipeline warnings 折叠展开 · K线 fix 6 个单元测试 |
-| **v3.10** | 2026-07-23 | 🆕 自动量化 Pipeline | cron 自动跑 GP→ML→过拟合→衰减→简报, 邮件/Telegram 推送 |
-| **v3.9** | 2026-07-20 | 🆕 全市场浏览 + 量化突破 | /browse · 因子实验室 5 Tab · GP+ML 联合 +13.69% · 回测保护 · F10 买卖点 |
-| **v3.6** | 2026-07-01 | Futu + 工程 100% | A 股接 Futu · 认证解耦 · AI 异常 5 级 · TypeScript 零 any |
-| **v3.0** | 2026-06-04 | AI 选股 MVP | 多因子扫描 · 持仓 · Docker |
+| 版本 | 日期 | 主题 |
+|------|------|------|
+| **v3.11** | 2026-07-25 | 研究→决策证据闭环(9 step 交付, 187 测试) |
+| v3.10.4 | 2026-07-24 | /quotes 性能 50× + K 线测试 |
+| v3.10 | 2026-07-23 | 🆕 自动量化 Pipeline(cron + 简报 + 推送) |
+| v3.9 | 2026-07-20 | 🆕 /browse 全市场 + 因子实验室 5 Tab |
+| v3.6 | 2026-07-01 | Futu + 工程 100% + TypeScript 零 any |
+| v3.0 | 2026-06-04 | AI 选股 MVP |
 
-> 📖 **完整变更**: [CHANGELOG.md](stockai-project-docs/CHANGELOG.md) 含每次更新的 bug 修复细节 + 文件统计
+> 📖 完整变更: [CHANGELOG.md](stockai-project-docs/CHANGELOG.md)
 
 ---
 
 ## 📂 文档导航
 
-- 📘 **项目文档**: [stockai-project-docs/](stockai-project-docs/)
-  - 简介: [README.md](stockai-project-docs/README.md) · [README.en.md](stockai-project-docs/README.en.md)
-  - 设计: [DESIGN.md](stockai-project-docs/DESIGN.md)
-  - 历史: [CHANGELOG.md](stockai-project-docs/CHANGELOG.md)
-  - 待办: [TODOS.md](stockai-project-docs/TODOS.md)
-- 🖥️ **监视器文档**: [monitor-desktop-docs/](monitor-desktop-docs/)
-  - 计划: [PLAN.md](monitor-desktop-docs/PLAN.md)
-  - 日志: [DAILY-LOG.md](monitor-desktop-docs/DAILY-LOG.md)
-- 🧭 **入口**: [INDEX.md](INDEX.md)
-
-## 🛡️ 安全与隐私
-
-- **敏感信息策略**: `.env` / `*.db` / `*.db-wal` / `*.log` 全部 `.gitignore`,仓库无密钥泄露风险
-- **设计系统**: 暗色主题 (oklch) · `rounded-none` · Tabler Icons · 数字列 `tabular-nums`
-- **AI 调用**: 失败必抛 `AIServiceError`(带 `provider_name` + `function_key`),全局 handler 返 503
-- **认证解耦**: JWT 通过 `ContextVar(_current_user_id)` 传递,**禁止硬编码 user_id**
+| 入口 | 说明 |
+|------|------|
+| 🧭 [INDEX.md](INDEX.md) | 文档总入口 |
+| 📘 [stockai-project-docs/](stockai-project-docs/) | 项目文档(详细 README/CHANGELOG/DESIGN/...) |
+| 🖥️ [monitor-desktop-docs/](monitor-desktop-docs/) | 监视器文档(PLAN/DAILY-LOG) |
+| 🚀 [V4-PLAN.md](stockai-project-docs/V4-PLAN.md) | v4.0 大更新计划 |
 
 ---
 
-**当前版本: v3.11** · **下一大版本: v4.0** (规划中)
+## 🛡️ 安全与隐私
+
+- `.env` / `*.db` / `*.db-wal` / `*.log` 全部 `.gitignore`,**仓库无密钥泄露**
+- AI 失败抛 `AIServiceError` (provider_name + function_key),全局 handler 返 503
+- JWT 通过 `ContextVar(_current_user_id)` 传递,**禁止硬编码 user_id**
+
+---
+
+<div align="center">
+
+**[⭐ 给个 Star](https://github.com/L71615/stockai)** · **[📖 阅读文档](stockai-project-docs/)** · **[🐛 提 Issue](https://github.com/L71615/stockai/issues)**
+
+</div>
