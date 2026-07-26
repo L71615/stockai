@@ -7,6 +7,31 @@
 
 ## 2026-07-26(今天)
 
+### 🚀 监视器 v0.1.0 commit + push 完成 ✅
+
+- 3 个 commit 全部推送到 main:
+  - `3b186cb` fix: 近期 bug 修复(stale-state + multi_agent 测试 + screener TDZ)
+  - `f36537a` docs: 重构 MD 文档结构 + 新建根目录 INDEX.md
+  - `cc3562e` feat(monitor): 引入 StockAI 后端监视器 v0.1.0 (Electron 桌面 app)
+- **30 个监视器文件**, 6570 行新增, 全部入仓
+- `package-lock.json` 一并入仓, 方便复现依赖
+- `.gitignore` 排除了 `monitor-desktop/{node_modules,dist,dist-electron,release,*.log}`
+
+### 📚 CHANGELOG.md 同步
+
+- `stockai-project-docs/CHANGELOG.md` 顶部新增 `2026-07-26 — v3.11.x 补丁 + Monitor v0.1.0 引入` 段
+- 记录:bug fixes / docs 重构 / monitor v0.1.0
+- 预告:**v4.0** 大更新(规划中)
+
+### 📚 PLAN.md 同步
+
+- `monitor-desktop-docs/PLAN.md` 全部 4 步标记完成
+- "当前状态"段加入 v0.1.0 commit 信息 + 下一阶段(v4.0 / v0.2.0)
+
+---
+
+## 2026-07-26(今天,之前记录)
+
 ### 📋 文档结构重组
 
 - **新增** `D:\stocks\stockai-project-docs/` — 放 stockai 项目 MD

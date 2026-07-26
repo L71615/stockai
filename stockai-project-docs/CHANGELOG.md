@@ -1,6 +1,47 @@
 # StockAI 项目日志
 
 > StockAI 从 0 到 v3.11 的完整演进记录。按时间倒序。
+> **当前版本: v3.11** · **下一大版本: v4.0** (规划中,见 `/monitor-desktop-docs/PLAN.md` v4.0 段)
+
+---
+
+## 2026-07-26 — v3.11.x 补丁 + Monitor v0.1.0 引入
+
+### 🛠 补丁(bug fixes, commit `3b186cb`)
+
+- **`multi_agent_service.py`**: 补全 `_aggregate_results` / `_build_candidate_text` 等多 agent 测试所需内部函数 + 风险一票否决阈值
+- **`quant/page.tsx`**: 修复 URL 切换代码时 K 线/insight 卡 stale 问题(`useRef` 锁住 lastFetchedCode,Strict Mode 双调用不再覆盖最新数据)
+- **`plan/page.tsx`**: ESLint TDZ 警告修复(`resetForm` 提前声明)
+- **`screener/page.tsx`**: ESLint TDZ 警告修复(`pollScan` 改 named function expression)
+- **`test_retrospective.py`**: 修复 `limit=100` 默认截断导致 subset 断言失败
+- **`frontend/tests/`** (新增): 4 个前端测试文件 — auth-redirect / holding-row-actions 等
+
+### 📚 文档重构(commit `f36537a`)
+
+- **6 个根目录 MD 移到 `stockai-project-docs/`**:
+  `AGENTS.md` / `CHANGELOG.md` / `DESIGN.md` / `README.md` / `README.en.md` / `TODOS.md`
+- **新建 `INDEX.md`** (根目录入口): 文档导航 + 项目说明 + 监视器链接
+- **`CLAUDE.md`**: 引用路径更新到 `stockai-project-docs/`
+- **`.gitignore`**: 新增 `monitor-desktop/` 构建产物规则
+
+### 🖥 后端监视器 v0.1.0(commit `cc3562e`)
+
+**新功能**: 独立桌面 app,只读观察 stockai 后端,**Deep Freeze 操作**(不污染主项目)。
+
+- **新增子项目** `D:\stocks\monitor-desktop\`(完整 Electron + Vite + React + Tailwind 工程)
+- **新增子项目** `D:\stocks\monitor-desktop-docs\`(`PLAN.md` + `DAILY-LOG.md`)
+- **5 个面板模块**:
+  - ① 进程总览(backend uvicorn + frontend next-server,CPU/RAM/PID/uptime)
+  - ② 实时访问日志(虚拟 access log,监视器心跳 ping /api/health)
+  - ③ 数据库结构(表清单 + 字段 + 外键 + 索引 + 抽样)
+  - ④ Pipeline 状态(5 步进度 + 元信息)
+  - ⑤ 错误统计(INFO/WARN/ERROR 计数)
+- **技术栈**: Electron 32 + Vite 5 + React 18 + TS 5 + Tailwind 3 + systeminformation 5
+- **DB 探针**: Python `sqlite3` 子进程(避免 better-sqlite3 native 编译失败 + sql.js 245MB 全量加载内存爆)
+- **启动**: `cd monitor-desktop && run.bat`
+- **红线**: 0 改动 stockai 主项目代码 / 只读 stockai.db / 5s 轮询
+
+### 🚀 下一步: v4.0 大更新(规划中)
 
 ---
 

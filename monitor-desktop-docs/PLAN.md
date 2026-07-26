@@ -221,9 +221,13 @@ monitor-desktop-dist/
 ## 🚥 当前状态
 
 - [x] **Step 0**: 10 个决策全部敲定 ✅
-- [ ] **Step 1**: Electron + Vite + React 骨架 + 进程监控
-- [ ] **Step 2**: 日志 tail 面板
-- [ ] **Step 3**: DB 探针
-- [ ] **Step 4**: Pipeline 状态 + 错误统计 + 完善
+- [x] **Step 1**: Electron + Vite + React 骨架 + 进程监控 ✅
+- [x] **Step 2**: 日志 tail 面板 ✅
+- [x] **Step 3**: DB 探针 ✅
+- [x] **Step 4**: Pipeline 状态 + 错误统计 + 完善 ✅
+- [x] **v0.1.0 commit + push 到 main** ✅ (commit `cc3562e` 2026-07-26)
 
-**等待用户确认 MD 文件分类后,开始执行 Step 0 (探查) + Step 1 (骨架)**。
+### 下一阶段
+
+- [ ] **v4.0**: StockAI 项目第四次大更新(待规划)
+- [ ] **v0.2.0 监视器**: 真实 tail `backend/logs/*.log`(需用户允许改 start.bat)
