@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState, useCallback, Suspense } from "react"
+import { useEffect, useState, useCallback, useRef, Suspense } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { SiteHeader } from "@/components/site-header"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -427,6 +427,9 @@ function QuantPageInner() {
   const [factorExplain, setFactorExplain] = useState<FactorExplainResult | null>(null)
   const [factorExplainLoading, setFactorExplainLoading] = useState(false)
 
+  // 追踪最近一次为哪个 code 拉过 insight — 避免重渲染 / deps 变化导致的重复 fetch
+  const lastFetchedCodeRef = useRef<string | null>(null)
+
   // URL 参数变化时自动恢复状态 + 保存到 sessionStorage（切页回来不丢失）
   const isMounted = useIsMounted()
   useEffect(() => {
@@ -437,25 +440,32 @@ function QuantPageInner() {
     const urlCode = params.get("code")
     const urlTab = params.get("tab")
     if (urlTab) setTabState(urlTab)
-    if (urlCode && urlCode !== code) {
-      setCode(urlCode)
-      const t = setTimeout(() => {
-        if (!isMounted.current) return
-        if (urlCode.trim()) {
-          setLoading(true); setError(null)
-          const tab = params.get("tab") || "insight"
-          if (tab === "insight") {
-            apiGet<StockInsight>(`/api/quant/stock-insight/${urlCode.trim()}?days=${days}`)
-              .then((data) => { if (isMounted.current) setInsight(data as StockInsight) })
-              .catch((err) => { if (isMounted.current) setError(err instanceof Error ? err.message : "加载失败") })
-              .finally(() => { if (isMounted.current) setLoading(false) })
-          }
-        }
-      }, 0)
-      return () => clearTimeout(t)
+    // 同步 state.code 与 URL(只在不等时同步,避免无谓渲染)
+    if (urlCode !== code) {
+      setCode(urlCode || "")
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [params.toString()])
+    // 当 URL 携带 code 且该股尚未拉过数据时,触发 insight 加载
+    // 覆盖三种场景:
+    //   1. 首次直接进入 /quant?code=600664
+    //   2. 从条件选股跳转过来,URL 带了新 code
+    //   3. dev Strict Mode 双跑 effect — 老逻辑的 setTimeout(0) 会被 cleanup 砍掉,
+    //      这里改同步触发,不再依赖 macrotask
+    if (
+      urlCode &&
+      urlCode.trim() &&
+      lastFetchedCodeRef.current !== urlCode &&
+      (params.get("tab") || "insight") === "insight"
+    ) {
+      lastFetchedCodeRef.current = urlCode
+      setLoading(true)
+      setError(null)
+      apiGet<StockInsight>(`/api/quant/stock-insight/${urlCode.trim()}?days=${days}`)
+        .then((data) => { if (isMounted.current) setInsight(data as StockInsight) })
+        .catch((err) => { if (isMounted.current) setError(err instanceof Error ? err.message : "加载失败") })
+        .finally(() => { if (isMounted.current) setLoading(false) })
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- isMounted=ref, setters=stable; we list all real deps (url/key/days) honestly
+  }, [params.toString(), code, days])
 
   const fetchInsight = async () => {
     if (!code.trim()) return

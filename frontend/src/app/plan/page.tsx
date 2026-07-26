@@ -69,6 +69,15 @@ export default function PlanPage() {
   const { data: holdings, isLoading: holdingsLoading } = useSWR<{ stock_code: string; stock_name: string }[]>("/api/stocks/holdings", swrFetcher)
 
   // 加载已有计划
+  const resetForm = () => {
+    setMarketState("")
+    setSelectedStrategies([])
+    setTargets([])
+    setMaxPosPct(50)
+    setRiskNotes("")
+    setSummary("")
+  }
+
   const fetchPlan = useCallback(async (date: string) => {
     try {
       const data = await apiGet<PlanData | null>(`/api/discipline/plan?date=${date}`)
@@ -90,15 +99,6 @@ export default function PlanPage() {
   useEffect(() => {
     fetchPlan(planDate)
   }, [planDate, fetchPlan])
-
-  const resetForm = () => {
-    setMarketState("")
-    setSelectedStrategies([])
-    setTargets([])
-    setMaxPosPct(50)
-    setRiskNotes("")
-    setSummary("")
-  }
 
   const addTarget = () => {
     const code = newCode.trim()

@@ -485,6 +485,144 @@ def _parse_judge_response(raw: str) -> dict:
 
 
 # ═══════════════════════════════════════════════════════════════
+#  多 Agent 聚合（投票/共识/风险否决）
+#  纯函数测试覆盖，见 tests/test_multi_agent_service.py
+# ═══════════════════════════════════════════════════════════════
+
+# 共识分档阈值（票数 / 非错误 agent 数）
+_CONSENSUS_RATIOS = (
+    (1.0, "全票通过"),
+    (0.5, "多数通过"),
+    (0.4, "分歧较大"),
+    (0.0, "少数推荐"),
+)
+
+# 风险否决触发条件：risk agent 评分 < 3 且 confidence=low 且带 risk_flag
+_RISK_VETO_MAX_SCORE = 3.0
+
+
+def _sanitize_prompt_text(s: str) -> str:
+    """剥离可能破坏提示模板或被注入的特殊字符"""
+    if not s:
+        return ""
+    for ch in '{}[]"`\'':
+        s = s.replace(ch, "")
+    return s
+
+
+def _build_candidate_text(candidates: list[dict], max_candidates: int = 20) -> str:
+    """把候选股票池格式化成多 Agent 共享的文本提示
+
+    每只股票 1~N 行：主行(代码/名称/行业/评分/价/命中)
+    + 每个 top_factor 缩进一行。
+    """
+    lines = []
+    for c in (candidates or [])[:max_candidates]:
+        code = c.get("code", "")
+        name = _sanitize_prompt_text(c.get("name", ""))
+        industry = _sanitize_prompt_text(c.get("industry", ""))
+        score = c.get("score", 0)
+        price = c.get("price", 0)
+        hit_count = c.get("hit_count", 0)
+        lines.append(
+            f"{code} {name} 行业:{industry} 评分:{score} 价格:{price} 命中:{hit_count}"
+        )
+        for f in c.get("top_factors") or []:
+            factor_name = _sanitize_prompt_text(f.get("factor", ""))
+            contrib = f.get("contribution", 0)
+            lines.append(f"  · {factor_name} 贡献:{contrib}")
+    return "\n".join(lines)
+
+
+def _aggregate_results(agent_results: list[dict], name_lookup: list[dict]) -> dict:
+    """聚合多个 Agent 的 picks:按 code 分组、计算票数 / 均分 / 风险否决 / 共识分档。
+
+    Args:
+        agent_results: [{"agent_key","agent_name","picks":[{code,score,confidence,risk_flag}], "error"?}]
+        name_lookup: [{"code","name"}] — 仅用于补全返回里的"name"字段
+
+    Returns:
+        {"agent_count": int, "aggregated":[{"code","name","votes","agent_score","risk_veto","consensus","agents"}, ...]}
+    """
+    valid_agents = [a for a in (agent_results or []) if not a.get("error")]
+    agent_count = len(valid_agents)
+
+    # 风险否决:任意 risk agent 低分 + 低置信 + 带 risk_flag 的推荐
+    risk_veto_codes: set[str] = set()
+    for a in valid_agents:
+        if a.get("agent_key") != "risk":
+            continue
+        for p in a.get("picks") or []:
+            score = p.get("score")
+            if (
+                isinstance(score, (int, float))
+                and score < _RISK_VETO_MAX_SCORE
+                and p.get("confidence") == "low"
+                and p.get("risk_flag")
+            ):
+                code = p.get("code")
+                if code:
+                    risk_veto_codes.add(code)
+
+    name_map = {n.get("code"): n.get("name", "") for n in (name_lookup or []) if n.get("code")}
+
+    # 按 code 分组
+    grouped: dict[str, dict] = {}
+    for a in valid_agents:
+        ak = a.get("agent_key", "")
+        an = a.get("agent_name", "")
+        for p in a.get("picks") or []:
+            code = p.get("code")
+            if not code:
+                continue
+            g = grouped.setdefault(
+                code,
+                {"code": code, "name": name_map.get(code, ""), "scores": [], "agents": []},
+            )
+            g["scores"].append(p.get("score", 0))
+            g["agents"].append(
+                {
+                    "agent_key": ak,
+                    "agent_name": an,
+                    "score": p.get("score", 0),
+                    "confidence": p.get("confidence", ""),
+                    "reason": p.get("reason", ""),
+                }
+            )
+
+    aggregated = []
+    for code, g in grouped.items():
+        votes = len(g["scores"])
+        agent_score = round(sum(g["scores"]) / votes, 2) if votes else 0
+        risk_veto = code in risk_veto_codes
+
+        if risk_veto:
+            consensus = "⚠️ 风险否决"
+        elif agent_count <= 0:
+            consensus = "少数推荐"
+        else:
+            ratio = votes / agent_count
+            consensus = next(label for th, label in _CONSENSUS_RATIOS if ratio >= th)
+
+        aggregated.append(
+            {
+                "code": code,
+                "name": g["name"],
+                "votes": votes,
+                "agent_score": agent_score,
+                "agents": g["agents"],
+                "risk_veto": risk_veto,
+                "consensus": consensus,
+            }
+        )
+
+    # 票数优先,均分次之
+    aggregated.sort(key=lambda x: (x["votes"], x["agent_score"]), reverse=True)
+
+    return {"agent_count": agent_count, "aggregated": aggregated}
+
+
+# ═══════════════════════════════════════════════════════════════
 #  批量多 Agent 选股（screener 调用）
 # ═══════════════════════════════════════════════════════════════
 

@@ -183,9 +183,12 @@ def test_list_outcomes_filter_by_decision():
     # 用 baseline_code 隔离其他测试的 outcome
     unique_baseline = f"test_baseline_{uuid.uuid4().hex[:6]}"
     # 重新跑一遍用 unique baseline — 简化版, 只验证 filter
-    rows_all = list_outcomes()
-    rows_approved = list_outcomes(decision="approved")
-    rows_rejected = list_outcomes(decision="rejected")
+    # 显式大 limit:确保 filter 子集断言在累计数据下也成立
+    # (list_outcomes 默认 limit=100,会让子集关系失效)
+    _BIG = 100_000
+    rows_all = list_outcomes(limit=_BIG)
+    rows_approved = list_outcomes(decision="approved", limit=_BIG)
+    rows_rejected = list_outcomes(decision="rejected", limit=_BIG)
     # filter 必须能工作 (不一定严格等于 2/1, 因为其他测试有 outcomes)
     assert all(r["decision"] == "approved" for r in rows_approved)
     assert all(r["decision"] == "rejected" for r in rows_rejected)

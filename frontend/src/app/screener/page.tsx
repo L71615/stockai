@@ -92,7 +92,7 @@ export default function ScreenerPage() {
 
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  const pollScan = useCallback(async () => {
+  const pollScan = useCallback(async function pollScanFn() {
     try {
       const s = await apiGet<{ running: boolean; progress: number; total: number; has_result: boolean }>("/api/screener/status")
       setScanning(s.running)
@@ -100,7 +100,7 @@ export default function ScreenerPage() {
       setStatusText(s.running ? `扫描中 ${s.progress}/${s.total}` : "")
       if (s.running) {
         if (timerRef.current) clearTimeout(timerRef.current)
-        timerRef.current = setTimeout(() => { void pollScan() }, 2000)
+        timerRef.current = setTimeout(pollScanFn, 2000)
       } else if (s.has_result) {
         const r = await apiGet<ScreenerResultsResponse>("/api/screener/results?limit=30")
         setResults(r?.candidates || [])
