@@ -32,35 +32,6 @@ StockAI is a **purely local** A-share quant toolbox, focused on **prediction + b
 
 ---
 
-## 🏗️ Architecture
-
-```
-┌────────────────────────────────────────────────────────────────────┐
-│                    StockAI v3.11 System Architecture                 │
-├────────────────────────────────────────────────────────────────────┤
-│                                                                     │
-│   ① Research (R)             ② Decision (D)          ③ Execution (E)│
-│   ┌──────────────┐          ┌──────────────┐        ┌───────────┐ │
-│   │ 55 factors   │          │ Multi-agent  │        │ Shadow    │ │
-│   │ GP/ML mining │  ──────► │ Bull/bear    │ ─────► │ T+1 sim   │ │
-│   │ IC/correlation│  signal  │ Confidence   │ decision│ 100-lot  │ │
-│   │ Scatter plot │          │ Risk veto    │        │ UNIQUE    │ │
-│   └──────────────┘          └──────────────┘        └───────────┘ │
-│         │                          │                     │         │
-│         ▼                          ▼                     ▼         │
-│   ┌──────────────────────────────────────────────────────────┐    │
-│   │              SQLite (WAL mode, 25+ tables)                │    │
-│   │   experiments / snapshots / shadow_portfolio / proposals    │    │
-│   └──────────────────────────────────────────────────────────┘    │
-│                                                                     │
-│   ④ Pipeline: cron 18:00 → GP→ML→decay→health→brief push (T+1)     │
-│   ⑤ Monitor: Electron desktop (process/log/DB, read-only)         │
-│                                                                     │
-└────────────────────────────────────────────────────────────────────┘
-```
-
----
-
 ## ✨ Core Capabilities
 
 | Module | Description |
