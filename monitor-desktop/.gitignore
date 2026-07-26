@@ -1,0 +1,20 @@
+# 依赖
+node_modules/
+dist/
+dist-electron/
+release/
+
+# 运行时
+*.log
+*.log.*
+
+# 编辑器
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# 环境
+.env
+.env.local
+.env.*.local
