@@ -5,7 +5,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 > **当前版本: v3.10** (2026-07-23)
 > **量化方向**: 因子挖掘/分析 + 回测 + 预测（用户 7-19 调整项目重点）
 > **最新改动**: 自动量化 Pipeline (cron + 简报 + 推送) + 端到端 5 步跑通
-> **详细记录**: 看 `CHANGELOG.md`
+> **详细记录**: 看 `stockai-project-docs/CHANGELOG.md`
+> **文档结构**: 根目录 `INDEX.md` 是入口,所有 MD 已分类到 `stockai-project-docs/` 与 `monitor-desktop-docs/`
 
 ## gstack
 
@@ -40,10 +41,10 @@ Key routing rules:
 
 ## Design System
 
-Always read DESIGN.md before making any visual or UI decisions.
+Always read `stockai-project-docs/DESIGN.md` before making any visual or UI decisions.
 All font choices, colors, spacing, and aesthetic direction are defined there.
 Do not deviate without explicit user approval.
-In QA mode, flag any code that doesn't match DESIGN.md.
+In QA mode, flag any code that doesn't match `stockai-project-docs/DESIGN.md`.
 
 ---
 
@@ -140,7 +141,7 @@ npm run dev:safe     # 4GB 堆内存，适用于大型页
 
 ## 设计系统
 
-DESIGN.md 为唯一权威源，强制规范：
+`stockai-project-docs/DESIGN.md` 为唯一权威源,强制规范:
 - 暗色主题（oklch 色彩空间，`.dark`）· `rounded-none`（`--radius: 0`）· Tabler Icons 唯一图标库（**禁止 emoji 作为功能图标**）
 - 数字列必须 `tabular-nums` · 状态组件须处理 Loading/Empty/Error/Success 4 态
 - 字体：PingFang SC / Microsoft YaHei（Sans）· JetBrains Mono / SF Mono（Mono）

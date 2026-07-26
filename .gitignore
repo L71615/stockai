@@ -48,3 +48,10 @@ test_*.json
 
 # 后台启动脚本生成的日志
 backend/backend.log
+
+# --- 后端监视器 (独立 Electron 子项目,代码入仓,构建产物不入) ---
+monitor-desktop/node_modules/
+monitor-desktop/dist/
+monitor-desktop/dist-electron/
+monitor-desktop/release/
+monitor-desktop/*.log
