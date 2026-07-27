@@ -54,6 +54,8 @@ def run_strategy_backtest(
     include_fees: bool = True,
     commission_rate: float = 0.0003,
     slippage_bps: float = 10.0,
+    impact_bps: float = 0.0,
+    adv_window: int = 20,
 ) -> dict:
     """策略回测主函数
 
@@ -70,8 +72,13 @@ def run_strategy_backtest(
         benchmark: 基准指数代码（默认 000300 沪深300）
         include_fees: 是否计入手续费
         commission_rate: 佣金率(默认 0.0003 = 万分之三)
-        slippage_bps: 滑点(basis points,1bp = 0.01%);默认 10bps = 0.1%。
+        slippage_bps: 固定滑点(basis points,1bp = 0.01%);默认 10bps = 0.1%。
                      买入价 × (1 + slippage),卖出价 × (1 - slippage)
+        impact_bps: 冲击成本系数(v4.0 B5)。基于 ADV (Average Daily Volume) 比例
+                    的平方根模型: impact = impact_bps × sqrt(buy_amount / ADV_value)
+                    买入/卖出价各叠加一次(在 slippage 之外)。
+                    默认 0 = 关闭冲击成本。
+        adv_window: ADV 计算窗口(默认 20 日)。
 
     Returns:
         {
@@ -152,6 +159,14 @@ def run_strategy_backtest(
             if _slip_factor > 0:
                 sell_price = sell_price * (1 - _slip_factor)
 
+            # v4.0 B5: 冲击成本 — 基于 ADV 比例的平方根模型
+            if impact_bps > 0:
+                _imp = _calc_impact_cost_bps(
+                    p["code"], p["shares"], sell_price, impact_bps, adv_window,
+                )
+                if _imp > 0:
+                    sell_price = sell_price * (1 - _imp / 10000.0)
+
             proceeds = sell_price * p["shares"]
             cost = p["entry_price"] * p["shares"]
             # 卖出手续费（佣金+印花税）
@@ -201,6 +216,14 @@ def run_strategy_backtest(
             # v4.0 B4: 滑点 — 买入价变差(× (1 + slippage))
             if _slip_factor > 0:
                 buy_price = buy_price * (1 + _slip_factor)
+
+            # v4.0 B5: 冲击成本 — 基于 ADV 比例的平方根模型
+            if impact_bps > 0:
+                _imp = _calc_impact_cost_bps(
+                    c["code"], per_position_cash / buy_price, buy_price, impact_bps, adv_window,
+                )
+                if _imp > 0:
+                    buy_price = buy_price * (1 + _imp / 10000.0)
 
             shares = int(per_position_cash / buy_price)
             if shares < 100:
@@ -275,6 +298,13 @@ def run_strategy_backtest(
         # v4.0 B4: 滑点 — 期末清仓也按 (1 - slippage) 处理
         if _slip_factor > 0:
             close_price = close_price * (1 - _slip_factor)
+        # v4.0 B5: 期末清仓也加冲击成本
+        if impact_bps > 0:
+            _imp = _calc_impact_cost_bps(
+                p["code"], p["shares"], close_price, impact_bps, adv_window,
+            )
+            if _imp > 0:
+                close_price = close_price * (1 - _imp / 10000.0)
         proceeds = close_price * p["shares"]
         cost = p["entry_price"] * p["shares"]
         pnl = round(proceeds - cost, 2)
@@ -350,6 +380,8 @@ def run_strategy_backtest(
             "include_fees": include_fees,
             "commission_rate": commission_rate,
             "slippage_bps": slippage_bps,  # v4.0 B4
+            "impact_bps": impact_bps,      # v4.0 B5
+            "adv_window": adv_window,      # v4.0 B5
         },
         "metrics": metrics,
         "equity_curve": equity_curve,
@@ -653,6 +685,56 @@ def _calc_fee(amount: float, is_buy: bool = True) -> float:
     transfer = amount * _TRANSFER_FEE_RATE
     stamp = 0 if is_buy else amount * _STAMP_TAX_RATE
     return round(commission + stamp + transfer, 2)
+
+
+def _calc_impact_cost_bps(
+    code: str,
+    shares: int,
+    price: float,
+    impact_bps: float,
+    adv_window: int = 20,
+) -> float:
+    """v4.0 B5: 冲击成本计算(平方根模型)
+
+    模型: impact_bps = base × sqrt(buy_amount / ADV_value)
+    base 来自 impact_bps 参数,ADV = 过去 N 日均成交额(price × volume)。
+
+    Args:
+        code: 股票代码(用于查 ADV)
+        shares: 本次交易股数
+        price: 当前价格(估算 buy_amount)
+        impact_bps: 冲击成本系数(bps)
+        adv_window: ADV 计算窗口
+
+    Returns:
+        实际冲击成本(bps),= 0 表示无影响
+    """
+    if impact_bps <= 0 or shares <= 0 or price <= 0:
+        return 0.0
+    try:
+        from database import query_all
+        rows = query_all(
+            """SELECT close, volume FROM historical_kline
+               WHERE stock_code = ? AND trade_date <= date('now','-1 day')
+               ORDER BY trade_date DESC LIMIT ?""",
+            (code, adv_window),
+        )
+        if not rows or len(rows) < 5:
+            return 0.0  # 数据不足,不应用冲击
+        adv_value = sum(
+            float(r["close"]) * float(r["volume"])
+            for r in rows
+            if r.get("close") and r.get("volume")
+        ) / len(rows)
+        if adv_value <= 0:
+            return 0.0
+        buy_amount = shares * price
+        # 平方根模型:impact = base × sqrt(order_size / ADV)
+        ratio = buy_amount / adv_value
+        actual_impact = impact_bps * (ratio ** 0.5)
+        return round(min(actual_impact, impact_bps * 5), 2)  # 上限 5x 基础值
+    except Exception:
+        return 0.0
 
 
 def _evaluate_protection(

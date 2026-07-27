@@ -105,6 +105,11 @@ TOOL_RUN_BACKTEST = {
                     "description": "滑点(bps,1bp = 0.01%),默认 10bps = 0.1%。设为 0 可关闭滑点。",
                     "default": 10.0,
                 },
+                "impact_bps": {
+                    "type": "number",
+                    "description": "冲击成本系数(bps,v4.0 B5)。平方根模型:impact = impact_bps × sqrt(order_size / ADV)。默认 0 = 关闭。",
+                    "default": 0.0,
+                },
             },
             "required": ["code"],
         },
@@ -278,11 +283,12 @@ def _get_factor_tool(code: str, factor_name: str) -> dict:
         return {"error": str(e), "code": code, "factor": factor_name}
 
 
-def _run_backtest_tool(code: str, strategy_id: str = "turtle_s1", days: int = 120, slippage_bps: float = 10.0) -> dict:
+def _run_backtest_tool(code: str, strategy_id: str = "turtle_s1", days: int = 120, slippage_bps: float = 10.0, impact_bps: float = 0.0) -> dict:
     """单股策略回测 — 调 strategy_backtest_service.run_strategy_backtest
 
     Args:
         slippage_bps: 滑点(bps),默认 10bps = 0.1%。v4.0 B4 引入。
+        impact_bps: 冲击成本系数(v4.0 B5),默认 0 = 关闭。
     """
     try:
         from services.strategy_backtest_service import run_strategy_backtest
@@ -301,6 +307,7 @@ def _run_backtest_tool(code: str, strategy_id: str = "turtle_s1", days: int = 12
             max_positions=1,
             position_size_pct=1.0,
             slippage_bps=slippage_bps,
+            impact_bps=impact_bps,
         )
         if not isinstance(result, dict):
             return {"error": "回测结果非 dict", "code": code, "strategy": strategy_id}
@@ -313,6 +320,7 @@ def _run_backtest_tool(code: str, strategy_id: str = "turtle_s1", days: int = 12
             "code": code,
             "strategy": strategy_id,
             "slippage_bps": slippage_bps,
+            "impact_bps": impact_bps,
             "total_return": metrics.get("total_return"),
             "sharpe": metrics.get("sharpe"),
             "max_drawdown": metrics.get("max_drawdown"),

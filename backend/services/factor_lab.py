@@ -95,6 +95,31 @@ def _factor_price_pos(closes: np.ndarray, n: int = 20) -> np.ndarray:
     return (closes - lower) / np.where(upper - lower == 0, 1e-9, upper - lower)
 
 
+def _factor_autocorr_beta(closes: np.ndarray, n: int = 20) -> np.ndarray:
+    """v4.0 B1: N 日自回归 beta(收益持续性 1-day lag)
+
+    对每个时点 t,计算 rets[t-N+1:t+1] 与 lag1 rets 的协方差 / 方差。
+    趋近 1 = 强趋势;趋近 0 = 均值回归。
+    """
+    n_total = len(closes)
+    out = np.zeros(n_total)
+    if n_total < n + 2:
+        return out
+    rets = np.diff(closes) / np.where(closes[:-1] == 0, 1e-9, closes[:-1])
+    for t in range(n, n_total - 1):
+        window_now = rets[t - n + 1:t + 1]    # 长度 n
+        window_lag = rets[t - n:t]            # 长度 n,lag1
+        if len(window_now) < 5 or len(window_lag) < 5:
+            continue
+        m_now = window_now.mean()
+        m_lag = window_lag.mean()
+        cov = ((window_now - m_now) * (window_lag - m_lag)).mean()
+        var_lag = ((window_lag - m_lag) ** 2).mean()
+        if var_lag > 1e-12:
+            out[t + 1] = cov / var_lag
+    return out
+
+
 # 因子注册表: name -> (function, requires_volume)
 FACTOR_REGISTRY = {
     "ret_5d":       (lambda c, v: _factor_ret_n(c, 5),    False),
@@ -112,6 +137,25 @@ FACTOR_REGISTRY = {
     "ma_disposition": (lambda c, v: _factor_ma_disp(c),   False),
     "vol_ratio":    (lambda c, v: _factor_vol_ratio(v),   True),
     "price_pos":    (lambda c, v: _factor_price_pos(c),   False),
+
+    # ── v4.0 B1 Alpha158 Batch 1 (11 个 — K线形态 4 个需 OHLC,本注册表不接) ──
+    # 变化率(基于 ret_n)
+    "roc5":         (lambda c, v: _factor_ret_n(c, 5),    False),
+    "roc10":        (lambda c, v: _factor_ret_n(c, 10),   False),
+    "roc20":        (lambda c, v: _factor_ret_n(c, 20),   False),
+    "roc60":        (lambda c, v: _factor_ret_n(c, 60),   False),
+    # 偏离度(基于 MA)
+    "deviation10":  (lambda c, v: (c - _factor_ma(c, 10)) / np.where(_factor_ma(c, 10) == 0, 1e-9, _factor_ma(c, 10)), False),
+    "deviation20":  (lambda c, v: (c - _factor_ma(c, 20)) / np.where(_factor_ma(c, 20) == 0, 1e-9, _factor_ma(c, 20)), False),
+    # 价格变异系数(std/mean)
+    "std5":         (lambda c, v: pd.Series(c).rolling(5).std().div(pd.Series(c).rolling(5).mean()).fillna(0).values if len(c) >= 5 else np.zeros_like(c), False),
+    "std20":        (lambda c, v: pd.Series(c).rolling(20).std().div(pd.Series(c).rolling(20).mean()).fillna(0).values if len(c) >= 20 else np.zeros_like(c), False),
+    # 自回归 beta
+    "beta20":       (lambda c, v: _factor_autocorr_beta(c, 20), False),
+    # 量能变化率
+    "vroc10":       (lambda c, v: pd.Series(v).pct_change(10).fillna(0).values if v is not None and len(v) > 10 else np.zeros_like(c), True),
+    # 价量相关性
+    "corr20":       (lambda c, v: pd.Series(c).rolling(20).corr(pd.Series(v)).fillna(0).values if v is not None and len(c) >= 20 else np.zeros_like(c), True),
 }
 
 # ═══════════════════════════════════════════════════════════
@@ -612,3 +656,90 @@ def list_available_factors() -> list[dict]:
 def get_supported_pools() -> dict:
     """返回支持的股票池预设"""
     return STOCK_POOLS
+
+
+# ═══════════════════════════════════════════════════════════
+#  v4.0 Phase 2 — 因子 IC 重新校准
+#  一次性跑全量注册表因子的 IC 分析,按 |IC| 排序输出
+# ═══════════════════════════════════════════════════════════
+
+# v4.0 B1 新增的 11 个因子(K线形态 4 个需 OHLC,本表不接)
+B1_FACTORS_FOR_IC = [
+    "roc5", "roc10", "roc20", "roc60",
+    "deviation10", "deviation20",
+    "std5", "std20",
+    "beta20",
+    "vroc10", "corr20",
+]
+
+
+def recalibrate_all_factors_ic(
+    stock_pool: str = "all",
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    top_n: int = 15,
+) -> dict:
+    """v4.0 Phase 2: 重新校准所有因子的 IC,输出 |IC| 排序的 Top-N 排名
+
+    覆盖范围:
+      - 经典 15 个 (FACTOR_REGISTRY 中的 ret_*/ma*/rsi/macd 等)
+      - v4.0 B1 新增 11 个 (roc*/deviation*/std*/beta20/vroc10/corr20)
+
+    跳过: KLEN/KUP/KLOW/KSFT(需 OHLC 数据,本表不接)
+
+    Args:
+        stock_pool: 股票池
+        start_date/end_date: 时间范围,默认最近 1 年
+        top_n: 返回 Top-N 排名(按 |ic_mean| 降序)
+
+    Returns:
+        {
+            'period': {'start', 'end'},
+            'pool': stock_pool,
+            'factor_count': int,
+            'top_factors': [{name, ic_mean, ic_std, ir, win_rate, abs_ic}, ...],
+            'b1_factors': [{name, ic_mean, ir, ...}, ...]  # 仅 B1
+        }
+    """
+    # 1. 收集所有要计算的因子
+    all_factor_names = list(FACTOR_REGISTRY.keys())
+    b1_names = [n for n in B1_FACTORS_FOR_IC if n in FACTOR_REGISTRY]
+
+    # 2. 复用现有 compute_factor_metrics(已实现 IC / IR / win_rate / decay)
+    metrics_result = compute_factor_metrics(
+        all_factor_names,
+        stock_pool=stock_pool,
+        start_date=start_date,
+        end_date=end_date,
+    )
+
+    # 3. 构建排名
+    factor_metrics = metrics_result.get("factors", {})
+    ranked = []
+    for name, m in factor_metrics.items():
+        if "error" in m or m.get("valid_days", 0) < 30:
+            continue  # 数据不足的因子跳过
+        ic_mean = m.get("ic_mean", 0)
+        ranked.append({
+            "name": name,
+            "ic_mean": round(ic_mean, 4),
+            "ic_std": round(m.get("ic_std", 0), 4),
+            "ir": round(m.get("ir", 0), 4),
+            "win_rate": round(m.get("win_rate", 0), 4),
+            "abs_ic": round(abs(ic_mean), 4),
+            "valid_days": m.get("valid_days", 0),
+            "is_b1": name in b1_names,
+        })
+
+    # 按 |ic_mean| 降序
+    ranked.sort(key=lambda x: x["abs_ic"], reverse=True)
+
+    # 4. 分别输出全榜 Top-N + 仅 B1 的结果
+    b1_ranked = [r for r in ranked if r["is_b1"]]
+    return {
+        "period": metrics_result.get("period", {}),
+        "pool": stock_pool,
+        "factor_count": len(ranked),
+        "top_factors": ranked[:top_n],
+        "b1_factors": b1_ranked,
+    }

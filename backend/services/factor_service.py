@@ -747,6 +747,191 @@ def factor_net_profit_growth(net_profit: Optional[float], prev_net_profit: Optio
 
 
 # ═══════════════════════════════════════════════════════════
+#  v4.0 B1 — Alpha158 Batch 1 (15 价量类因子)
+#  来源: qlib Alpha158 价量/技术/波动子集
+#  设计: 全部 NaN-safe,空值/异常统一返回 None
+# ═══════════════════════════════════════════════════════════
+
+def factor_klen(opens: list[float], highs: list[float], lows: list[float], closes: list[float]) -> Optional[float]:
+    """K线实体长度:(close - open) / open
+    正值=阳线,负值=阴线;绝对值越大实体越长
+    """
+    if not (opens and highs and lows and closes):
+        return None
+    try:
+        o, h, l, c = opens[-1], highs[-1], lows[-1], closes[-1]
+        if not o or o == 0:
+            return None
+        return round((c - o) / o, 4)
+    except Exception:
+        return None
+
+
+def factor_kup(opens: list[float], highs: list[float], closes: list[float]) -> Optional[float]:
+    """上影线:(high - max(open, close)) / close
+    越大表示上方抛压越重
+    """
+    if not (opens and highs and closes):
+        return None
+    try:
+        o, h, c = opens[-1], highs[-1], closes[-1]
+        if not c or c == 0:
+            return None
+        return round((h - max(o, c)) / c, 4)
+    except Exception:
+        return None
+
+
+def factor_klow(opens: list[float], lows: list[float], closes: list[float]) -> Optional[float]:
+    """下影线:(min(open, close) - low) / close
+    越大表示下方承接越强
+    """
+    if not (opens and lows and closes):
+        return None
+    try:
+        o, l, c = opens[-1], lows[-1], closes[-1]
+        if not c or c == 0:
+            return None
+        return round((min(o, c) - l) / c, 4)
+    except Exception:
+        return None
+
+
+def factor_ksft(opens: list[float], highs: list[float], lows: list[float], closes: list[float]) -> Optional[float]:
+    """K线柔度:|close - open| / (high - low)
+    越大表示 K 线越"实"(趋向单边);越小越"虚"(带长上下影的十字星)
+    """
+    if not (opens and highs and lows and closes):
+        return None
+    try:
+        o, h, l, c = opens[-1], highs[-1], lows[-1], closes[-1]
+        rng = h - l
+        if rng <= 0:
+            return None
+        return round(abs(c - o) / rng, 4)
+    except Exception:
+        return None
+
+
+def factor_roc(closes: list[float], period: int) -> Optional[float]:
+    """Rate of Change:(close - close[t-N]) / close[t-N]
+    5/10/20/60 日变化率
+    """
+    if len(closes) <= period:
+        return None
+    try:
+        c_now, c_ref = closes[-1], closes[-1 - period]
+        if not c_ref or c_ref == 0:
+            return None
+        return round((c_now - c_ref) / c_ref, 4)
+    except Exception:
+        return None
+
+
+def factor_deviation(closes: list[float], period: int) -> Optional[float]:
+    """价格偏离度:(close - MA[N]) / MA[N]
+    10/20 日版本 — 衡量当前价格相对均线的偏离
+    """
+    if len(closes) < period:
+        return None
+    try:
+        c = closes[-1]
+        ma = sum(closes[-period:]) / period
+        if ma == 0:
+            return None
+        return round((c - ma) / ma, 4)
+    except Exception:
+        return None
+
+
+def factor_price_std(closes: list[float], period: int) -> Optional[float]:
+    """价格滚动变异系数(std/mean)
+    5/20 日版本 — 与 hist_vol 不同(此处用价格而非收益率)
+    """
+    if len(closes) < period:
+        return None
+    try:
+        recent = closes[-period:]
+        mean = sum(recent) / period
+        if mean == 0:
+            return None
+        var = sum((x - mean) ** 2 for x in recent) / period
+        return round((var ** 0.5) / mean, 4)
+    except Exception:
+        return None
+
+
+def factor_beta20(closes: list[float]) -> Optional[float]:
+    """20日自回归 beta — 衡量收益持续性(1-day lag)
+    趋近 1 = 强趋势 / 持续性,趋近 0 = 均值回归
+    注: 因无法获取市场指数,使用 stock 自回归作为代理
+    """
+    if len(closes) < 22:
+        return None
+    try:
+        # rets[t] = (closes[t] - closes[t-1]) / closes[t-1]
+        # 取最近 20 天的 rets 与 lag1 rets,计算协方差 / 方差
+        rets = []
+        for i in range(20, 0, -1):
+            c_now = closes[-i]
+            c_prev = closes[-i - 1]
+            if c_prev == 0:
+                continue
+            rets.append((c_now - c_prev) / c_prev)
+        if len(rets) < 10:
+            return None
+        n = len(rets)
+        lag_rets = rets[1:]  # 滞后 1 天的 rets
+        n -= 1  # 对齐长度
+        m_now = sum(rets[:n]) / n
+        m_lag = sum(lag_rets) / n
+        cov = sum((rets[i] - m_now) * (lag_rets[i] - m_lag) for i in range(n)) / n
+        var_lag = sum((x - m_lag) ** 2 for x in lag_rets) / n
+        if var_lag == 0:
+            return None
+        return round(cov / var_lag, 4)
+    except Exception:
+        return None
+
+
+def factor_vroc(volumes: list[float], period: int = 10) -> Optional[float]:
+    """成交量变化率:(vol[t] - vol[t-N]) / vol[t-N]
+    10 日版本 — 衡量近期成交量放大 / 萎缩
+    """
+    if len(volumes) <= period:
+        return None
+    try:
+        v_now, v_ref = volumes[-1], volumes[-1 - period]
+        if not v_ref or v_ref == 0:
+            return None
+        return round((v_now - v_ref) / v_ref, 4)
+    except Exception:
+        return None
+
+
+def factor_corr20(closes: list[float], volumes: list[float]) -> Optional[float]:
+    """20日价量相关系数
+    正相关 = 量价齐升,负相关 = 量价背离
+    """
+    if len(closes) < 20 or len(volumes) < 20:
+        return None
+    try:
+        c = closes[-20:]
+        v = volumes[-20:]
+        mc = sum(c) / 20
+        mv = sum(v) / 20
+        cov = sum((c[i] - mc) * (v[i] - mv) for i in range(20)) / 20
+        var_c = sum((x - mc) ** 2 for x in c) / 20
+        var_v = sum((x - mv) ** 2 for x in v) / 20
+        if var_c <= 0 or var_v <= 0:
+            return None
+        corr = cov / (var_c ** 0.5 * var_v ** 0.5)
+        return round(corr, 4)
+    except Exception:
+        return None
+
+
+# ═══════════════════════════════════════════════════════════
 # 情绪因子 (Sentiment)
 # ═══════════════════════════════════════════════════════════
 
@@ -852,6 +1037,7 @@ def compute_all_factors(
     closes: list[float],
     highs: list[float] = None,
     lows: list[float] = None,
+    opens: list[float] = None,
     volumes: list[float] = None,
     fundamentals: dict = None,
     prev_eps: float = None,
@@ -859,13 +1045,14 @@ def compute_all_factors(
     north_flow_data: dict = None,
     inst_data: dict = None,
 ) -> dict:
-    """计算单只股票的全部 29 个因子
+    """计算单只股票的全部 44 个因子(v4.0 B1: 29 → 44)
 
     Args:
         code: 股票代码
         closes: 收盘价序列（至少 120 条）
         highs: 最高价序列
         lows: 最低价序列
+        opens: 开盘价序列(v4.0 B1 新增,用于 K 线形态因子)
         volumes: 成交量序列
         fundamentals: 基本面数据 (来自 baostock_adapter.get_stock_factors)
         prev_eps: 去年同期 EPS
@@ -878,6 +1065,7 @@ def compute_all_factors(
     """
     highs = highs or []
     lows = lows or []
+    opens = opens or []
     volumes = volumes or []
     fundamentals = fundamentals or {}
 
@@ -991,6 +1179,33 @@ def compute_all_factors(
     # ── 资金类（北向资金 + 机构持仓） ──
     factors["north_flow"] = factor_north_flow(north_flow_data)
     factors["inst_change"] = factor_inst_change(inst_data)
+
+    # ── v4.0 B1 Alpha158 Batch 1 (15 价量类因子) ──
+    # K线形态 (需 opens)
+    if opens and highs and lows:
+        factors["klen"] = factor_klen(opens, highs, lows, closes)
+        factors["kup"] = factor_kup(opens, highs, closes)
+        factors["klow"] = factor_klow(opens, lows, closes)
+        factors["ksft"] = factor_ksft(opens, highs, lows, closes)
+    else:
+        factors["klen"] = factors["kup"] = factors["klow"] = factors["ksft"] = None
+    # 变化率
+    factors["roc5"] = factor_roc(closes, 5)
+    factors["roc10"] = factor_roc(closes, 10)
+    factors["roc20"] = factor_roc(closes, 20)
+    factors["roc60"] = factor_roc(closes, 60)
+    # 偏离度
+    factors["deviation10"] = factor_deviation(closes, 10)
+    factors["deviation20"] = factor_deviation(closes, 20)
+    # 价格变异系数
+    factors["std5"] = factor_price_std(closes, 5)
+    factors["std20"] = factor_price_std(closes, 20)
+    # 自回归 beta
+    factors["beta20"] = factor_beta20(closes)
+    # 量能变化率
+    factors["vroc10"] = factor_vroc(volumes, 10) if volumes else None
+    # 价量相关性
+    factors["corr20"] = factor_corr20(closes, volumes) if volumes else None
 
     # 统计有效因子数
     hit_count = sum(1 for v in factors.values() if v is not None)
@@ -1139,6 +1354,30 @@ FACTOR_REGISTRY: dict[str, dict] = {
     # ── 资金因子 (2) ──
     "NORTH_FLOW":    {"status": "done", "fn": "factor_north_flow",      "category": "资金因子", "direction": "正向"},
     "INST_CHANGE":   {"status": "done", "fn": "factor_inst_change",     "category": "资金因子", "direction": "正向"},
+
+    # ── v4.0 B1 Alpha158 Batch 1 (15 价量类因子) ──
+    # K线形态
+    "KLEN":      {"status": "done", "fn": "factor_klen",      "category": "K线形态",   "direction": "正向"},
+    "KUP":       {"status": "done", "fn": "factor_kup",       "category": "K线形态",   "direction": "负向"},
+    "KLOW":      {"status": "done", "fn": "factor_klow",      "category": "K线形态",   "direction": "正向"},
+    "KSFT":      {"status": "done", "fn": "factor_ksft",      "category": "K线形态",   "direction": "正向"},
+    # 变化率
+    "ROC5":      {"status": "done", "fn": "factor_roc",       "category": "动量因子",   "direction": "正向"},
+    "ROC10":     {"status": "done", "fn": "factor_roc",       "category": "动量因子",   "direction": "正向"},
+    "ROC20":     {"status": "done", "fn": "factor_roc",       "category": "动量因子",   "direction": "正向"},
+    "ROC60":     {"status": "done", "fn": "factor_roc",       "category": "动量因子",   "direction": "正向"},
+    # 偏离度
+    "DEVIATION10":{"status": "done", "fn": "factor_deviation","category": "价格因子",   "direction": "正向"},
+    "DEVIATION20":{"status": "done", "fn": "factor_deviation","category": "价格因子",   "direction": "正向"},
+    # 价格变异系数
+    "STD5":      {"status": "done", "fn": "factor_price_std", "category": "波动率因子", "direction": "中性"},
+    "STD20":     {"status": "done", "fn": "factor_price_std", "category": "波动率因子", "direction": "中性"},
+    # 自回归 beta
+    "BETA20":    {"status": "done", "fn": "factor_beta20",    "category": "动量因子",   "direction": "正向"},
+    # 量能变化率
+    "VROC10":    {"status": "done", "fn": "factor_vroc",      "category": "成交量因子", "direction": "正向"},
+    # 价量相关性
+    "CORR20":    {"status": "done", "fn": "factor_corr20",    "category": "量价因子",   "direction": "正向"},
 
 }
 

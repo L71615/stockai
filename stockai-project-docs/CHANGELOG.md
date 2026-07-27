@@ -1,7 +1,7 @@
 # StockAI 项目日志
 
 > StockAI 从 0 到 v4.0 的完整演进记录。按时间倒序。
-> **当前版本: v4.0 Phase 1 完成** · 下一阶段: Phase 2 (因子体系升级)
+> **当前版本: v4.0 Phase 2 完成** · 下一阶段: Phase 3 (闭环可视化)
 
 ---
 
@@ -80,6 +80,49 @@
 - ✅ T+1 watcher 状态机(16 个测试覆盖 CRUD/buy/sell/cancel/summarize)
 
 **Phase 1 核心已就绪,Phase 2 (Alpha158 因子) 可随时启动。**
+
+---
+
+## 2026-07-27 — v4.0 Phase 2 完成(B1 + B5 + IC 重新校准)
+
+### 🎉 Phase 2 全部 3 子项落地
+
+| 子项 | 状态 | 主要改动 |
+|------|------|----------|
+| **B1** Alpha158 Batch 1 | ✅ | `factor_service.py` 加 15 价量类因子(K线形态/变化率/偏离度/价格变异/自回归 beta/量能变化/价量相关) |
+| **B5** 冲击成本模型 | ✅ | `strategy_backtest_service.py` 加 `impact_bps` 参数 + `_calc_impact_cost_bps` 平方根模型,基于 ADV 比例 |
+| **因子 IC 重新校准** | ✅ | `factor_lab.py` 加 11 B1 因子 + `recalibrate_all_factors_ic()` 排名函数 |
+
+### 📁 新增/修改文件
+
+**新增**:
+- `tests/test_alpha158_batch1.py` (32 tests)
+- `tests/test_impact_cost.py` (11 tests)
+- `tests/test_ic_recalibration.py` (13 tests)
+
+**修改**:
+- `backend/services/factor_service.py` (15 因子函数 + opens 参数 + compute_all_factors 集成)
+- `backend/services/factor_lab.py` (11 B1 lambda + `_factor_autocorr_beta` + `recalibrate_all_factors_ic()`)
+- `backend/services/strategy_backtest_service.py` (impact_bps/adv_window 参数 + 3 处冲击计算 + `_calc_impact_cost_bps` 辅助)
+- `backend/services/agent_tools.py` (run_backtest schema + 透传 impact_bps)
+
+### 🧪 测试覆盖
+
+**56 个新测试 100% 通过**(32 B1 + 11 B5 + 13 IC)
+
+### 🎯 关键设计
+
+- **B1 因子** — K线形态需 OHLC 数据,compute_all_factors 加 `opens` 参数(向后兼容,缺则 K 线 4 因子为 None)
+- **B5 冲击** — 平方根模型 `impact = base × sqrt(order_size / ADV)`,5x base 上限保护,数据不足(<5 日)返回 0
+- **IC 校准** — 复用 `compute_factor_metrics`,新增 B1 11 个 + 经典 15 个 = 26 个可计算因子,按 |ic_mean| 降序输出 Top-N
+
+### 🎯 Phase 2 验收
+
+- ✅ 15 B1 因子(11 个可在 factor_lab 算,4 个 K 线需 OHLC)
+- ✅ B5 平方根模型,价格随订单规模/ADV 比例变化
+- ✅ IC 重新校准接口就绪,跑实际数据即可出 Top-N 排名
+
+**Phase 2 核心已就绪,Phase 3 (闭环可视化) 可随时启动。**
 
 ---
 
