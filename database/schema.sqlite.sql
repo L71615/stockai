@@ -87,6 +87,47 @@ CREATE TABLE installed_skills (
     UNIQUE(user_id, skill_id)
 );
 
+-- v4.0 (T+1/T+2) — 模拟成交订单表
+-- 状态机: pending_buy → bought → pending_sell → sold
+--   pending_buy:  22:00 pipeline 生成,等待次日 09:30 模拟买入
+--   bought:       已模拟买入(写 holdings + transactions),等待持仓期满
+--   pending_sell: 持仓期满,等待次日 09:30 模拟卖出
+--   sold:         已模拟卖出(写 transactions),记录收益统计
+--   cancelled:    手动取消或异常退出
+CREATE TABLE t1_pending_orders (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id             INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    stock_code          TEXT    NOT NULL,
+    stock_name          TEXT    NOT NULL DEFAULT '',
+    brief_id            INTEGER REFERENCES quant_briefs(id) ON DELETE SET NULL,  -- 关联的简报
+    shares              INTEGER NOT NULL DEFAULT 100,         -- 模拟买入股数
+    planned_entry_price REAL,                                  -- 计划买入价(前晚收盘价)
+    planned_exit_price  REAL,                                  -- 计划卖出价(预期)
+    executed_entry_price REAL,                                 -- 实际模拟成交价(开盘 × 滑点)
+    executed_exit_price  REAL,                                 -- 实际模拟成交价(开盘 × 滑点)
+    hold_days           INTEGER NOT NULL DEFAULT 1,            -- 持仓天数 T+1=1
+    status              TEXT    NOT NULL DEFAULT 'pending_buy',
+    slippage_bps        REAL    NOT NULL DEFAULT 10.0,         -- 滑点
+    entry_date          TEXT,                                  -- 计划买入日(次日)
+    exit_date           TEXT,                                  -- 计划卖出日(持仓期满次日)
+    actual_entry_at     TEXT,                                  -- 实际买入时间戳
+    actual_exit_at      TEXT,                                  -- 实际卖出时间戳
+    entry_fee           REAL,                                  -- 买入手续费
+    exit_fee            REAL,                                  -- 卖出手续费
+    holding_risk_premium REAL,                                 -- 持仓风险溢价
+    gross_pnl           REAL,                                  -- 税前盈亏
+    net_pnl             REAL,                                  -- 净盈亏(扣费 + 溢价)
+    net_return_pct      REAL,                                  -- 净收益率 %
+    reason              TEXT    NOT NULL DEFAULT '',           -- 推荐理由 / 取消原因
+    created_at          TEXT    NOT NULL DEFAULT (datetime('now','localtime')),
+    updated_at          TEXT    NOT NULL DEFAULT (datetime('now','localtime'))
+);
+CREATE INDEX idx_t1_orders_user      ON t1_pending_orders(user_id);
+CREATE INDEX idx_t1_orders_status    ON t1_pending_orders(status);
+CREATE INDEX idx_t1_orders_brief     ON t1_pending_orders(brief_id);
+CREATE INDEX idx_t1_orders_entry_dt  ON t1_pending_orders(entry_date);
+CREATE INDEX idx_t1_orders_exit_dt   ON t1_pending_orders(exit_date);
+
 -- 价格提醒表
 CREATE TABLE price_alerts (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,

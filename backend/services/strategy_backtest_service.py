@@ -53,6 +53,7 @@ def run_strategy_backtest(
     param_overrides: dict[str, dict[str, any]] | None = None,
     include_fees: bool = True,
     commission_rate: float = 0.0003,
+    slippage_bps: float = 10.0,
 ) -> dict:
     """策略回测主函数
 
@@ -67,6 +68,10 @@ def run_strategy_backtest(
         max_positions: 最大同时持仓数
         position_size_pct: 单票仓位（初始资金的百分比）
         benchmark: 基准指数代码（默认 000300 沪深300）
+        include_fees: 是否计入手续费
+        commission_rate: 佣金率(默认 0.0003 = 万分之三)
+        slippage_bps: 滑点(basis points,1bp = 0.01%);默认 10bps = 0.1%。
+                     买入价 × (1 + slippage),卖出价 × (1 - slippage)
 
     Returns:
         {
@@ -83,6 +88,9 @@ def run_strategy_backtest(
         strategy_ids = ["turtle_s1"]
     if stock_codes is None or len(stock_codes) == 0:
         stock_codes = list(_DEFAULT_POOL)
+
+    # 滑点系数(卖出减、买入加)
+    _slip_factor = slippage_bps / 10000.0
 
     # 加载策略条件树（支持参数覆盖）
     condition_tree = _load_strategy_conditions(strategy_ids, param_overrides)
@@ -140,6 +148,10 @@ def run_strategy_backtest(
             if sell_price is None:
                 continue  # 停牌等，跳过
 
+            # v4.0 B4: 滑点 — 卖出价变差(× (1 - slippage))
+            if _slip_factor > 0:
+                sell_price = sell_price * (1 - _slip_factor)
+
             proceeds = sell_price * p["shares"]
             cost = p["entry_price"] * p["shares"]
             # 卖出手续费（佣金+印花税）
@@ -185,6 +197,10 @@ def run_strategy_backtest(
                 continue
             if buy_price <= 0:
                 continue
+
+            # v4.0 B4: 滑点 — 买入价变差(× (1 + slippage))
+            if _slip_factor > 0:
+                buy_price = buy_price * (1 + _slip_factor)
 
             shares = int(per_position_cash / buy_price)
             if shares < 100:
@@ -256,6 +272,9 @@ def run_strategy_backtest(
         close_price = _get_price_on_date(p["code"], final_date, "close")
         if close_price is None:
             close_price = p["entry_price"]
+        # v4.0 B4: 滑点 — 期末清仓也按 (1 - slippage) 处理
+        if _slip_factor > 0:
+            close_price = close_price * (1 - _slip_factor)
         proceeds = close_price * p["shares"]
         cost = p["entry_price"] * p["shares"]
         pnl = round(proceeds - cost, 2)
@@ -328,6 +347,9 @@ def run_strategy_backtest(
             "position_size_pct": position_size_pct,
             "benchmark": benchmark,
             "param_overrides": param_overrides,
+            "include_fees": include_fees,
+            "commission_rate": commission_rate,
+            "slippage_bps": slippage_bps,  # v4.0 B4
         },
         "metrics": metrics,
         "equity_curve": equity_curve,

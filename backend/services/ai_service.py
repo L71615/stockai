@@ -375,3 +375,325 @@ def save_stored_ai_config(config: dict) -> None:
         "INSERT OR REPLACE INTO settings (key, value) VALUES ('ai_config', ?)",
         (_json.dumps(encrypted, ensure_ascii=False),),
     )
+
+
+# ═══════════════════════════════════════════════════════════════
+#  v4.0 A2 — Agent 工具调用 (OpenAI / Anthropic tool_use 协议)
+#  工具通过 backend/services/agent_tools.py 注册,本模块只负责
+#  (1) 把 OpenAI 工具 schema 投递给 LLM
+#  (2) 解析 LLM 返回的 tool_calls
+#  (3) 拼接消息历史执行调用循环(最多 5 轮)
+#
+#  设计原则:
+#  - 不破坏现有 ai_chat / chat_with_claude 的纯文本 API
+#  - 工具调用循环统一由 ai_chat_with_tools() 编排
+#  - schema 以 OpenAI 格式为标准,Anthropic 通过 to_anthropic_tools() 转换
+# ═══════════════════════════════════════════════════════════════
+
+import json as _json_tool
+
+
+async def _chat_openai_compatible_with_tools(
+    messages: list[dict],
+    tools: list[dict],
+    *,
+    api_key: str, base_url: str, model: str,
+    system_prompt: str = "",
+) -> dict:
+    """OpenAI 兼容协议 + tools 参数
+
+    Returns:
+        {
+            "text": str,            # 文本回复(可能为空)
+            "tool_calls": [         # 工具调用列表(可能为空)
+                {"id": "...", "name": "...", "arguments": {...}}
+            ],
+            "raw_message": dict,    # 完整 assistant message,用于拼接历史
+        }
+    """
+    client = _get_openai_client(api_key, base_url)
+    full_messages = []
+    if system_prompt:
+        full_messages.append({"role": "system", "content": system_prompt})
+    full_messages.extend(messages)
+
+    response = await client.chat.completions.create(
+        model=model,
+        messages=full_messages,
+        tools=tools,
+    )
+    msg = response.choices[0].message
+    text = msg.content or ""
+    tool_calls: list[dict] = []
+    raw_calls = msg.tool_calls or []
+    for tc in raw_calls:
+        try:
+            args = _json_tool.loads(tc.function.arguments) if tc.function.arguments else {}
+        except _json_tool.JSONDecodeError:
+            args = {"_raw": tc.function.arguments}
+        tool_calls.append({
+            "id": tc.id,
+            "name": tc.function.name,
+            "arguments": args,
+        })
+
+    # 构造完整 assistant raw_message(用于下次请求拼接)
+    raw_message: dict = {"role": "assistant", "content": text}
+    if raw_calls:
+        raw_message["tool_calls"] = [
+            {
+                "id": tc.id,
+                "type": "function",
+                "function": {
+                    "name": tc.function.name,
+                    "arguments": tc.function.arguments or "{}",
+                },
+            }
+            for tc in raw_calls
+        ]
+
+    return {"text": text, "tool_calls": tool_calls, "raw_message": raw_message}
+
+
+async def _chat_openai_provider_with_tools(
+    messages: list[dict],
+    tools: list[dict],
+    provider_key: str,
+    *,
+    api_key: str = "", model: str = "", system_prompt: str = "",
+) -> dict:
+    """通用 OpenAI 兼容供应商 + tools"""
+    env_key, default_model, base_url, name = PROVIDER_DEFAULTS[provider_key]
+    key = api_key or env_key
+    if not key:
+        raise AIKeyError(f"未配置 {name} API Key,请在设置页配置", provider_name=name)
+    m = model or default_model
+    try:
+        return await _chat_openai_compatible_with_tools(
+            messages, tools,
+            api_key=key, base_url=base_url, model=m, system_prompt=system_prompt,
+        )
+    except AIServiceError:
+        raise
+    except Exception as e:
+        raise AIProviderError(f"{name} API 调用失败: {e}", provider_name=name, original_exception=e) from e
+
+
+async def chat_with_claude_with_tools(
+    messages: list[dict],
+    tools: list[dict],
+    *,
+    system_prompt: str = "", api_key: str = "", model: str = "",
+    anthropic_tools: list[dict] | None = None,
+) -> dict:
+    """Claude + Anthropic tool_use 协议
+
+    Args:
+        anthropic_tools: 已转换为 Anthropic 格式的工具 schema(可选);
+                       若为空,自动从 OpenAI 格式转换(需先 import agent_tools)
+    """
+    if anthropic_tools is None:
+        try:
+            from services.agent_tools import to_anthropic_tools
+            anthropic_tools = to_anthropic_tools(tools)
+        except ImportError:
+            anthropic_tools = []
+
+    key = api_key or CLAUDE_API_KEY
+    if not key:
+        raise AIKeyError("未配置 Claude API Key,请在设置页配置", provider_name="Claude")
+    m = model or CLAUDE_MODEL
+
+    try:
+        client = _get_anthropic_client(key)
+        kwargs = {
+            "model": m,
+            "max_tokens": 4096,
+            "system": system_prompt,
+            "messages": messages,
+        }
+        if anthropic_tools:
+            kwargs["tools"] = anthropic_tools
+        response = await client.messages.create(**kwargs)
+
+        text = ""
+        tool_calls: list[dict] = []
+        content_blocks: list[dict] = []
+        for block in response.content or []:
+            btype = getattr(block, "type", None)
+            if btype == "text":
+                text += block.text
+                content_blocks.append({"type": "text", "text": block.text})
+            elif btype == "tool_use":
+                tool_calls.append({
+                    "id": block.id,
+                    "name": block.name,
+                    "arguments": block.input or {},
+                })
+                content_blocks.append({
+                    "type": "tool_use",
+                    "id": block.id,
+                    "name": block.name,
+                    "input": block.input or {},
+                })
+
+        raw_message = {"role": "assistant", "content": content_blocks}
+        return {"text": text, "tool_calls": tool_calls, "raw_message": raw_message}
+    except AIServiceError:
+        raise
+    except ImportError:
+        raise AIConfigError("请先安装 anthropic SDK: pip install anthropic", provider_name="Claude")
+    except Exception as e:
+        raise AIProviderError(f"Claude API 调用失败: {e}", provider_name="Claude", original_exception=e) from e
+
+
+async def ai_chat_with_tools(
+    message: str,
+    tools: list[dict],
+    *,
+    provider: str = "",
+    function: str = "",
+    api_key: str = "",
+    model: str = "",
+    base_url: str = "",
+    system_prompt: str = "",
+    max_iterations: int = 5,
+) -> dict:
+    """统一 AI 工具调用入口(多供应商 + 工具调用循环)
+
+    Args:
+        message: 用户消息
+        tools: OpenAI 格式工具 schema 列表
+        max_iterations: 最大工具调用轮数(防止死循环),默认 5
+
+    Returns:
+        {
+            "text": 最终文本回复,
+            "tool_calls": [{"name", "arguments", "result"}],  # 实际执行的工具
+            "iterations": 实际迭代次数,
+            "finished": bool,  # True=正常结束, False=达到 max_iterations
+        }
+    """
+    if not tools:
+        # 没有工具时直接退化为普通对话
+        text = await ai_chat(
+            message,
+            provider=provider, function=function,
+            api_key=api_key, model=model, base_url=base_url,
+            system_prompt=system_prompt,
+        )
+        return {"text": text, "tool_calls": [], "iterations": 1, "finished": True}
+
+    # 解析供应商
+    if not provider and function:
+        provider = get_provider_for_function(function)
+    p = provider or get_default_provider()
+    if not api_key or not model:
+        stored = _load_stored_ai_config(p)
+        api_key = api_key or stored.get("api_key", "")
+        model = model or stored.get("model", "")
+        base_url = base_url or stored.get("base_url", "")
+
+    # 导入工具执行器
+    from services.agent_tools import execute_tool_call
+
+    messages: list[dict] = [{"role": "user", "content": message}]
+    executed_tool_calls: list[dict] = []
+    iterations = 0
+    finished = False
+
+    for i in range(max_iterations):
+        iterations = i + 1
+
+        # ── 调用 LLM ──
+        if p in PROVIDER_DEFAULTS:
+            response = await _chat_openai_provider_with_tools(
+                messages, tools, p,
+                api_key=api_key, model=model, system_prompt=system_prompt,
+            )
+        elif p == "claude":
+            response = await chat_with_claude_with_tools(
+                messages, tools,
+                system_prompt=system_prompt,
+                api_key=api_key, model=model,
+            )
+        elif p == "custom":
+            if not base_url:
+                raise AIConfigError("使用自定义供应商请填写 Base URL", provider_name="custom")
+            m = model or "gpt-4o"
+            try:
+                response = await _chat_openai_compatible_with_tools(
+                    messages, tools,
+                    api_key=api_key, base_url=base_url, model=m, system_prompt=system_prompt,
+                )
+            except AIServiceError:
+                raise
+            except Exception as e:
+                raise AIProviderError(f"自定义 API 调用失败: {e}", provider_name="custom", original_exception=e) from e
+        else:
+            raise AIConfigError(f"不支持的 AI 供应商: {p}", provider_name=p)
+
+        # ── 拼接助手消息 ──
+        messages.append(response["raw_message"])
+
+        # ── 无工具调用,正常结束 ──
+        if not response["tool_calls"]:
+            return {
+                "text": response["text"],
+                "tool_calls": executed_tool_calls,
+                "iterations": iterations,
+                "finished": True,
+            }
+
+        # ── 执行每个工具调用 ──
+        if p == "claude":
+            # Anthropic: tool_results 合并在一个 user 消息里
+            tool_results_blocks: list[dict] = []
+            for tc in response["tool_calls"]:
+                result = execute_tool_call(tc["name"], tc["arguments"])
+                executed_tool_calls.append({
+                    "name": tc["name"],
+                    "arguments": tc["arguments"],
+                    "result": result,
+                })
+                tool_results_blocks.append({
+                    "type": "tool_result",
+                    "tool_use_id": tc["id"],
+                    "content": _json_tool.dumps(result, ensure_ascii=False),
+                })
+            messages.append({"role": "user", "content": tool_results_blocks})
+        else:
+            # OpenAI: 每个 tool_call 独立一条 tool 消息
+            for tc in response["tool_calls"]:
+                result = execute_tool_call(tc["name"], tc["arguments"])
+                executed_tool_calls.append({
+                    "name": tc["name"],
+                    "arguments": tc["arguments"],
+                    "result": result,
+                })
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tc["id"],
+                    "content": _json_tool.dumps(result, ensure_ascii=False),
+                })
+
+    # 达到 max_iterations 仍未完成 → 返回最后一次文本 + 已执行的工具
+    finished = False
+    last_text = ""
+    for msg in reversed(messages):
+        if msg.get("role") == "assistant":
+            content = msg.get("content")
+            if isinstance(content, str):
+                last_text = content
+            elif isinstance(content, list):
+                for blk in content:
+                    if isinstance(blk, dict) and blk.get("type") == "text":
+                        last_text += blk.get("text", "")
+            break
+
+    return {
+        "text": last_text,
+        "tool_calls": executed_tool_calls,
+        "iterations": iterations,
+        "finished": finished,
+    }

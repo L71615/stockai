@@ -1,7 +1,7 @@
 # StockAI 项目日志
 
-> StockAI 从 0 到 v3.11 的完整演进记录。按时间倒序。
-> **当前版本: v3.11** · **下一大版本: v4.0** (规划完成,见 `V4-PLAN.md`)
+> StockAI 从 0 到 v4.0 的完整演进记录。按时间倒序。
+> **当前版本: v4.0 Phase 1 完成** · 下一阶段: Phase 2 (因子体系升级)
 
 ---
 
@@ -25,6 +25,61 @@
 - **Phase 5**: 发布 — README 同步 + CHANGELOG + release notes
 
 详细计划见 [V4-PLAN.md](V4-PLAN.md)
+
+---
+
+## 2026-07-27 — v4.0 Phase 1 完成(A1 + A2 + B4 + C2 + T+1/T+2)
+
+### 🎉 Phase 1 全部 5 子项落地
+
+| 子项 | 状态 | 主要改动 |
+|------|------|----------|
+| **A1** 多 Agent 5→8 角色 | ✅ | `multi_agent_service.py` 加 3 角色(资金面/政策/做空),8 角色并行 + 3 轮编排 |
+| **A2** Agent 工具调用 | ✅ | 新增 `agent_tools.py`(get_quote/get_factor/run_backtest/calc_t1_cost),`ai_service.py` 加 Claude + OpenAI tool_use 协议 |
+| **B4** 滑点模型 | ✅ | `strategy_backtest_service.py` 加 `slippage_bps` 参数(默认 10bps),3 处价格调整 |
+| **C2** T+1 成本计算器 | ✅ | 新增 `t1_cost.py`,含卖费+持仓风险溢价+滑点,集成到 agent_tools |
+| **T+1/T+2 场景** | ✅(核心) | 新增 `t1_watcher.py` + `t1_pending_orders` 表,状态机 pending_buy→bought→sold,写 holdings + transactions |
+
+### 📁 新增/修改文件
+
+**新增**:
+- `backend/services/agent_tools.py` (258 行)
+- `backend/services/t1_cost.py` (155 行)
+- `backend/services/t1_watcher.py` (380 行)
+- `tests/test_agent_tools.py` (21 tests)
+- `tests/test_slippage_model.py` (8 tests)
+- `tests/test_t1_cost.py` (21 tests)
+- `tests/test_t1_watcher.py` (16 tests)
+
+**修改**:
+- `backend/services/ai_service.py` (加 5 个新函数, +310 行)
+- `backend/services/multi_agent_service.py` (3 新角色 + 8 角色编排, +130 行)
+- `backend/services/strategy_backtest_service.py` (slippage_bps 参数, 3 处价格调整)
+- `backend/database.py` (新增 t1_pending_orders 表 + 4 索引)
+- `database/schema.sqlite.sql` (同步 t1_pending_orders)
+- `frontend/src/components/multi-agent-analysis.tsx` (2x4 卡片布局 + 3 新角色)
+
+### 🧪 测试覆盖
+
+**85 个新测试 100% 通过**(覆盖 A2 协议转换 + 工具循环、8 角色编排、滑点价格调整、T+1 成本边界、watcher 状态机)
+
+### ⏳ Phase 1 后续胶水代码(可下版本补)
+
+- [ ] `scheduler.py` 加 t1_watcher 守护线程(22:00 pipeline + 09:30 watcher)
+- [ ] `daily_quant_pipeline.py` 跑时机前移到 22:00
+- [ ] 前端 `/pipeline` 收件箱 + 审批 → 创建 pending_buy
+- [ ] 反事实报告接入 `proposal_retrospectives`(Phase 3 范围)
+- [ ] `fees.py` 最小佣金 5 元在 T+1 100 股低本金场景下显著影响净收益,后续可调
+
+### 🎯 Phase 1 验收
+
+- ✅ 多 Agent 8 角色编排(E2E 通,后端 round1×4 + round2×3 + judge 3 轮)
+- ✅ Agent 工具调用(Claude tool_use + OpenAI function_calling 双协议,21 个测试覆盖)
+- ✅ 滑点模型(默认 10bps,价差验证 + 净 PnL 验证)
+- ✅ T+1 成本计算(卖费 + 持仓溢价 + 滑点,4 个边界 + 3 个高级用法)
+- ✅ T+1 watcher 状态机(16 个测试覆盖 CRUD/buy/sell/cancel/summarize)
+
+**Phase 1 核心已就绪,Phase 2 (Alpha158 因子) 可随时启动。**
 
 ---
 

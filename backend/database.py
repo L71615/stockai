@@ -231,6 +231,41 @@ def init_db():
             created_at   TEXT NOT NULL
         )""")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_quant_briefs_created ON quant_briefs(created_at)")
+
+        # v4.0 (T+1/T+2) — 模拟成交订单表
+        # 状态机: pending_buy → bought → pending_sell → sold (或 cancelled)
+        conn.execute("""CREATE TABLE IF NOT EXISTS t1_pending_orders (
+            id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id             INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            stock_code          TEXT    NOT NULL,
+            stock_name          TEXT    NOT NULL DEFAULT '',
+            brief_id            TEXT,
+            shares              INTEGER NOT NULL DEFAULT 100,
+            planned_entry_price REAL,
+            planned_exit_price  REAL,
+            executed_entry_price REAL,
+            executed_exit_price  REAL,
+            hold_days           INTEGER NOT NULL DEFAULT 1,
+            status              TEXT    NOT NULL DEFAULT 'pending_buy',
+            slippage_bps        REAL    NOT NULL DEFAULT 10.0,
+            entry_date          TEXT,
+            exit_date           TEXT,
+            actual_entry_at     TEXT,
+            actual_exit_at      TEXT,
+            entry_fee           REAL,
+            exit_fee            REAL,
+            holding_risk_premium REAL,
+            gross_pnl           REAL,
+            net_pnl             REAL,
+            net_return_pct      REAL,
+            reason              TEXT    NOT NULL DEFAULT '',
+            created_at          TEXT    NOT NULL DEFAULT (datetime('now','localtime')),
+            updated_at          TEXT    NOT NULL DEFAULT (datetime('now','localtime'))
+        )""")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_t1_orders_user      ON t1_pending_orders(user_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_t1_orders_status    ON t1_pending_orders(status)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_t1_orders_entry_dt  ON t1_pending_orders(entry_date)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_t1_orders_exit_dt   ON t1_pending_orders(exit_date)")
         # 向后兼容：为已有数据库添加缺失字段
         for col, col_def in [
             ("asset_type", "TEXT DEFAULT ''"),

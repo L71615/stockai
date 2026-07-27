@@ -2,10 +2,10 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-> **当前版本: v3.10** (2026-07-23)
-> **量化方向**: 因子挖掘/分析 + 回测 + 预测（用户 7-19 调整项目重点）
-> **最新改动**: 自动量化 Pipeline (cron + 简报 + 推送) + 端到端 5 步跑通
-> **详细记录**: 看 `stockai-project-docs/CHANGELOG.md`
+> **当前版本: v4.0 Phase 1** (2026-07-27)
+> **量化方向**: T+1/T+2 短线预测主线 + AI 选股智能化(8 角色)
+> **最新改动**: A1(8 角色) + A2(工具调用) + B4(滑点) + C2(T+1 成本) + T+1 watcher 状态机
+> **详细记录**: 看 `stockai-project-docs/CHANGELOG.md` 和 `stockai-project-docs/V4-PLAN.md`
 > **文档结构**: 根目录 `INDEX.md` 是入口,所有 MD 已分类到 `stockai-project-docs/` 与 `monitor-desktop-docs/`
 
 ## gstack
@@ -101,9 +101,12 @@ npm run dev:safe     # 4GB 堆内存，适用于大型页
   - `factor_ml.py` — **🆕** LightGBM ML 因子 + **GP+ML 联合训练** (`train_ml_with_gp_factors()`)
   - `factor_lifecycle.py` — **🆕** 因子生命周期管理（active / warning / retired 三态 + 自动退役）
   - `ai_service.py` + `vendor_router.py` + `ai_exceptions.py` — 多供应商（5 家）× 7 功能独立路由，异常体系 5 级
+  - **`agent_tools.py`** — **🆕 v4.0 A2** Agent 工具注册表(get_quote / get_factor / run_backtest / calc_t1_cost),支持 OpenAI function_calling + Anthropic tool_use 双协议
+  - **`t1_cost.py`** — **🆕 v4.0 C2** T+1/T+2 持仓成本计算器(卖费+持仓风险溢价+滑点)
+  - **`t1_watcher.py`** — **🆕 v4.0** T+1 模拟成交 watcher,状态机 pending_buy→bought→sold,写 holdings + transactions
   - `condition_engine.py` + `strategies/*.yaml` — 13 个 YAML 策略模板，AND/OR 组合 + 可调参数
   - `futu_client.py` / `futu_ingest_service.py` / `futu_sync_service.py` — Futu OpenD 行情接入与 `intraday`/`nightly` 批量同步
-  - `backtest_service.py` / `strategy_backtest_service.py` / `multi_agent_service.py` — 回测引擎（含 **🆕 F10 买卖点标注** + **🆕 `_evaluate_protection()` 6 维风险评估**）+ 5 角色多空辩论
+  - `backtest_service.py` / `strategy_backtest_service.py` / `multi_agent_service.py` — 回测引擎（含 **🆕 v4.0 B4 滑点模型** + F10 买卖点标注 + `_evaluate_protection()` 6 维风险评估）+ **🆕 v4.0 A1 8 角色多空辩论**(资金面/政策/做空)
   - `trading_memory.py` — 决策→验证→反思→注入 闭环
   - `cache.py` — 三层缓存（factor_snapshot / daily_north_flow / daily_inst_holding + 24h TTL lazy-write）。**⚠️ 注意：所有 `row[]` 访问必须用列名（query_all 已 dict 化）**
   - `akshare_adapter.py` — A 股数据（东方财富/腾讯/新浪 fallback）。**⚠️ 腾讯免费 API 有 QPS 限制，连续 3000+ 调用必触发限频**
@@ -115,6 +118,7 @@ npm run dev:safe     # 4GB 堆内存，适用于大型页
 - 入口：`database.query_all / query_one / execute / execute_many`（自动归还连接到池）。**⚠️ query_all 返回 `list[dict]`（已 dict 化），所有 `row[]` 整数索引会抛 KeyError**
 - 关键表：`users` · `holdings` · `transactions` · `dca_plans` · `futu_raw_quote` · `futu_raw_kline` · `historical_kline` · `futu_sync_runs` · `futu_sync_run_items` · `ai_*` · `trading_memory_*`
 - **🆕 v3.9 因子实验室表**：`factor_snapshot`（55 因子 × 全市场 · 24h TTL）· `factor_candidates`（GP/ML 挖掘候选因子）· `factor_lifecycle_status`（active/warning/retired）
+- **🆕 v4.0 T+1/T+2 表**：`t1_pending_orders`(状态机 pending_buy→bought→sold,模拟成交 + 收益统计)
 - Schema：`database/schema.sql`（应用初始化时由 `database.init_db()` 执行）
 
 ### 前端（Next.js 16 · `frontend/`）

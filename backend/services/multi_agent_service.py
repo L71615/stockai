@@ -1,9 +1,9 @@
 """多 Agent 深度分析 — TradingAgents 风格的多空辩论
 
-5 个 Agent，3 轮调用:
-  第1轮 (并行): 技术面分析师 + 基本面分析师
-  第2轮 (并行): 多头研究员 + 空头研究员 (基于第1轮报告辩论)
-  第3轮: 裁判 (审阅辩论，给出最终判断)
+v4.0 (A1): 5 → 8 角色,3 轮调用:
+  第1轮 (并行): 技术面分析师 + 基本面分析师 + 资金面分析师 + 政策解读员
+  第2轮 (并行): 多头研究员 + 空头研究员 + 做空研究员 (基于第1轮报告辩论)
+  第3轮: 裁判 (审阅全部 7 份报告,给出最终判断)
 
 用法:
   from services.multi_agent_service import analyze_stock
@@ -12,13 +12,16 @@
 输出:
   {
     "code": "600519",
-    "technical_report": "技术面报告...",
-    "fundamentals_report": "基本面报告...",
-    "bull_case": "多头论点...",
-    "bear_case": "空头论点...",
+    "technical_report": ...,
+    "fundamentals_report": ...,
+    "capital_flow_report": ...,    # v4.0 新增
+    "policy_report": ...,          # v4.0 新增
+    "bull_case": ...,
+    "bear_case": ...,
+    "short_researcher_case": ...,  # v4.0 新增
     "verdict": "买入/持有/卖出",
     "confidence": 0.75,
-    "reasoning": "最终判断理由...",
+    ...
   }
 """
 
@@ -115,6 +118,69 @@ JUDGE_SYSTEM = """你是资深 A 股投资经理。请审阅以下多空辩论�
 
 
 # ═══════════════════════════════════════════════════════════════
+#  v4.0 A1 — 新增 3 角色(资金面分析师 / 政策解读员 / 做空研究员)
+# ═══════════════════════════════════════════════════════════════
+
+CAPITAL_FLOW_SYSTEM = """你是 A 股资金面分析师，专注资金流向与流动性分析。
+分析框架:
+1. 北向资金净流入/出(过去 5/20 日)
+2. 主力资金净流入(大单口径)
+3. 融资融券余额变化(杠杆资金方向)
+4. 板块资金轮动(看是否在主线/非主线)
+5. 换手率与成交额变化(看是否有增量资金)
+
+输出要求:
+- 给出明确的资金面判断(吸引/中性/失血)
+- 列出 3-5 个关键资金信号,每个附具体方向
+- 提示 1-2 个流动性风险
+- 控制在 400 字以内
+- 用中文"""
+
+POLICY_INTERPRETER_SYSTEM = """你是 A 股政策解读员，专注宏观/行业/监管政策对个股的影响。
+分析框架:
+1. 所属行业近期政策动向(扶持/打压/中性)
+2. 监管层态度(IPO / 减持 / 再融资 / 退市)
+3. 财政/货币政策方向(利率 / 流动性 / 财政刺激)
+4. 产业政策(碳中和 / 半导体 / 新能源 / 数字经济等)
+5. 国际形势影响(中美关系 / 出口管制 / 汇率)
+
+输出要求:
+- 给出明确政策判断(利好/中性/利空)
+- 列出 2-3 个关键政策事件,每个附影响方向
+- 提示 1 个潜在政策风险
+- 控制在 400 字以内
+- 用中文"""
+
+SHORT_RESEARCHER_SYSTEM = """你是 A 股做空研究员,专注系统性风险与下行冲击。
+分析框架:
+1. 系统性风险评估(大盘 beta / 行业 beta / 外部冲击)
+2. 估值高估程度(相对历史/同行的分位数)
+3. 流动性风险(解禁/减持/质押比例)
+4. 黑天鹅事件(财报雷 / 商誉雷 / 治理问题)
+5. 融券可行性(是否有券源 / 标的券池)
+
+输出要求:
+- 给出明确做空判断(强做空 / 弱做空 / 中性)
+- 列出 3 个核心做空理由,每个附下行空间估算
+- 标注做空触发条件(什么情况下应该止损反手)
+- 控制在 400 字以内
+- 用中文"""
+
+
+# v4.0 角色注册表 — 8 角色完整定义
+ROLE_SYSTEMS: dict[str, str] = {
+    "technical": TECHNICAL_SYSTEM,
+    "fundamentals": FUNDAMENTALS_SYSTEM,
+    "capital_flow": CAPITAL_FLOW_SYSTEM,
+    "policy": POLICY_INTERPRETER_SYSTEM,
+    "bull": BULL_SYSTEM,
+    "bear": BEAR_SYSTEM,
+    "short_researcher": SHORT_RESEARCHER_SYSTEM,
+    "judge": JUDGE_SYSTEM,
+}
+
+
+# ═══════════════════════════════════════════════════════════════
 #  核心编排
 # ═══════════════════════════════════════════════════════════════
 
@@ -124,83 +190,105 @@ async def analyze_stock(
     api_key: str = "",
     model: str = "",
     strategy_id: str = "",
+    enabled_roles: list[str] | None = None,
 ) -> dict:
-    """对单只股票运行多 Agent 深度分析
+    """对单只股票运行多 Agent 深度分析(v4.0: 5 → 8 角色, 3 轮调用)
 
     Args:
         code: 股票代码
         provider/api_key/model: AI 供应商配置
-        strategy_id: 可选，触发分析的策略 ID，用于注入历史交易记忆
+        strategy_id: 可选,触发分析的策略 ID,用于注入历史交易记忆
+        enabled_roles: 可选,限制启用的角色列表;None = 全部 8 角色全启用。
+                       backward compat: ["technical","fundamentals","bull","bear","judge"]
+                       退化为 5 角色风格。
 
     Returns:
-        {code, technical_report, fundamentals_report, bull_case,
-         bear_case, verdict, confidence, reasoning, key_reasons,
-         risk_warning, suggested_hold_days, stop_loss_pct}
+        {code, name, price,
+         technical_report, fundamentals_report,
+         capital_flow_report, policy_report,           # v4.0 新增
+         bull_case, bear_case, short_researcher_case,    # v4.0 新增
+         verdict, confidence, key_reasons, risk_warning,
+         suggested_hold_days, stop_loss_pct,
+         agent_count, enabled_roles}
     """
+    # ── 决定启用哪些角色(默认 8 角色) ──
+    if enabled_roles is None:
+        enabled_roles = list(ROLE_SYSTEMS.keys())
+    enabled_set = set(enabled_roles)
+    # judge 必须存在;若未启用,自动加入
+    if "judge" not in enabled_set:
+        enabled_set.add("judge")
+    enabled_roles = sorted(enabled_set)
+
     # ── 获取数据 ──
     stock_info = _gather_stock_data(code)
     if "error" in stock_info:
         return {"code": code, "error": stock_info["error"]}
 
-    # ── 第 1 轮：技术面 + 基本面 并行 ──
-    tech_prompt = _build_technical_prompt(code, stock_info)
-    fund_prompt = _build_fundamentals_prompt(code, stock_info)
+    # ── 第 1 轮:4 个分析面 并行(技术 + 基本面 + 资金面 + 政策) ──
+    round1_specs: list[tuple[str, str, str]] = []
+    if "technical" in enabled_set:
+        round1_specs.append(("technical_report", _build_technical_prompt(code, stock_info), TECHNICAL_SYSTEM))
+    if "fundamentals" in enabled_set:
+        round1_specs.append(("fundamentals_report", _build_fundamentals_prompt(code, stock_info), FUNDAMENTALS_SYSTEM))
+    if "capital_flow" in enabled_set:
+        round1_specs.append(("capital_flow_report", _build_capital_flow_prompt(code, stock_info), CAPITAL_FLOW_SYSTEM))
+    if "policy" in enabled_set:
+        round1_specs.append(("policy_report", _build_policy_prompt(code, stock_info), POLICY_INTERPRETER_SYSTEM))
 
-    tech_task = ai_chat(
-        tech_prompt,
-        system_prompt=TECHNICAL_SYSTEM,
-        provider=provider, api_key=api_key, model=model,
-        function="explain",
-    )
-    fund_task = ai_chat(
-        fund_prompt,
-        system_prompt=FUNDAMENTALS_SYSTEM,
-        provider=provider, api_key=api_key, model=model,
-        function="explain",
-    )
+    round1_results: dict[str, str] = {}
+    if round1_specs:
+        round1_tasks = [
+            ai_chat(
+                prompt,
+                system_prompt=system,
+                provider=provider, api_key=api_key, model=model,
+                function="explain",
+            )
+            for _, prompt, system in round1_specs
+        ]
+        try:
+            responses = await asyncio.gather(*round1_tasks)
+        except Exception as e:
+            return {"code": code, "error": f"第 1 轮 AI 调用异常: {e}"}
+        for (field, _, _), text in zip(round1_specs, responses):
+            round1_results[field] = (text or "").strip()
 
-    try:
-        tech_report, fund_report = await asyncio.gather(tech_task, fund_task)
-    except Exception as e:
-        return {"code": code, "error": f"AI 调用异常: {e}"}
+    # 错误格式检查(ai_chat 返回 "（错误描述）" 而非抛异常)
+    for field, text in round1_results.items():
+        if text.startswith("（") and text.endswith("）"):
+            return {"code": code, "error": f"{field} 失败: {text[1:-1]}"}
+    if not all(round1_results.values()):
+        return {"code": code, "error": "AI 分析返回为空,请检查 API Key 配置"}
 
-    tech_report = (tech_report or "").strip()
-    fund_report = (fund_report or "").strip()
+    # ── 第 2 轮:3 个辩论角色 并行(多 + 空 + 做空) ──
+    round1_text = "\n\n".join(f"## {_REPORT_LABELS.get(k, k)}\n{v}" for k, v in round1_results.items())
 
-    # 检查错误格式（ai_chat 返回 "（错误描述）" 而非抛异常）
-    if tech_report.startswith("（") and tech_report.endswith("）"):
-        return {"code": code, "error": f"技术面分析失败: {tech_report[1:-1]}"}
-    if fund_report.startswith("（") and fund_report.endswith("）"):
-        return {"code": code, "error": f"基本面分析失败: {fund_report[1:-1]}"}
-    if not tech_report or not fund_report:
-        return {"code": code, "error": "AI 分析返回为空，请检查 API Key 配置"}
+    round2_specs: list[tuple[str, str, str]] = []
+    if "bull" in enabled_set:
+        round2_specs.append(("bull_case", "请基于以上报告,构建看涨论点。", BULL_SYSTEM))
+    if "bear" in enabled_set:
+        round2_specs.append(("bear_case", "请基于以上报告,构建看跌论点。", BEAR_SYSTEM))
+    if "short_researcher" in enabled_set:
+        round2_specs.append(("short_researcher_case", "请基于以上报告,构建做空论点(系统性风险 + 下行空间)。", SHORT_RESEARCHER_SYSTEM))
 
-    # ── 第 2 轮：多头 + 空头 并行 ──
-    debate_context = f"""## 技术面分析报告
-{tech_report}
-
-## 基本面分析报告
-{fund_report}"""
-
-    bull_task = ai_chat(
-        debate_context + "\n\n请基于以上两份报告，构建看涨论点。",
-        system_prompt=BULL_SYSTEM,
-        provider=provider, api_key=api_key, model=model,
-        function="explain",
-    )
-    bear_task = ai_chat(
-        debate_context + "\n\n请基于以上两份报告，构建看跌论点。",
-        system_prompt=BEAR_SYSTEM,
-        provider=provider, api_key=api_key, model=model,
-        function="explain",
-    )
-
-    try:
-        bull_case, bear_case = await asyncio.gather(bull_task, bear_task)
-    except Exception as e:
-        return {"code": code, "error": f"辩论阶段 AI 调用异常: {e}"}
-    bull_case = (bull_case or "").strip()
-    bear_case = (bear_case or "").strip()
+    round2_results: dict[str, str] = {}
+    if round2_specs:
+        round2_tasks = [
+            ai_chat(
+                round1_text + f"\n\n{prompt_suffix}",
+                system_prompt=system,
+                provider=provider, api_key=api_key, model=model,
+                function="explain",
+            )
+            for _, prompt_suffix, system in round2_specs
+        ]
+        try:
+            responses = await asyncio.gather(*round2_tasks)
+        except Exception as e:
+            return {"code": code, "error": f"第 2 轮辩论异常: {e}"}
+        for (field, _, _), text in zip(round2_specs, responses):
+            round2_results[field] = (text or "").strip()
 
     # ── 第 3 轮：裁判 ──
     # 注入交易记忆上下文
@@ -220,48 +308,68 @@ async def analyze_stock(
     except Exception:
         pass  # 记忆注入失败不影响主流程
 
+    # 拼接所有 round1 + round2 报告(给裁判用)
+    all_reports = {**round1_results, **round2_results}
+    all_reports_text = "\n\n".join(
+        f"## {_REPORT_LABELS.get(k, k)}\n{v}" for k, v in all_reports.items()
+    )
+
     judge_prompt = f"""## 股票: {code} {stock_info.get('name', '')}
 
-## 技术面报告
-{tech_report}
-
-## 基本面报告
-{fund_report}
-
-## 多头论点
-{bull_case}
-
-## 空头论点
-{bear_case}
+{all_reports_text}
 {memory_context}
 
 请给出最终判断。"""
 
-    judge_raw = await ai_chat(
-        judge_prompt,
-        system_prompt=JUDGE_SYSTEM,
-        provider=provider, api_key=api_key, model=model,
-        function="explain",
-    )
+    try:
+        judge_raw = await ai_chat(
+            judge_prompt,
+            system_prompt=JUDGE_SYSTEM,
+            provider=provider, api_key=api_key, model=model,
+            function="explain",
+        )
+    except Exception as e:
+        return {"code": code, "error": f"裁判阶段 AI 调用异常: {e}"}
 
     verdict_data = _parse_judge_response(judge_raw) if judge_raw else {}
 
-    # ── 组装结果 ──
+    # ── 组装结果(向后兼容:5 角色字段保留,新增 3 字段) ──
     return {
         "code": code,
         "name": stock_info.get("name", ""),
         "price": stock_info.get("price"),
-        "technical_report": tech_report,
-        "fundamentals_report": fund_report,
-        "bull_case": bull_case,
-        "bear_case": bear_case,
+        # 第 1 轮(向后兼容 + 新增)
+        "technical_report": round1_results.get("technical_report", ""),
+        "fundamentals_report": round1_results.get("fundamentals_report", ""),
+        "capital_flow_report": round1_results.get("capital_flow_report", ""),
+        "policy_report": round1_results.get("policy_report", ""),
+        # 第 2 轮(向后兼容 + 新增)
+        "bull_case": round2_results.get("bull_case", ""),
+        "bear_case": round2_results.get("bear_case", ""),
+        "short_researcher_case": round2_results.get("short_researcher_case", ""),
+        # 第 3 轮
         "verdict": verdict_data.get("verdict", "持有"),
         "confidence": verdict_data.get("confidence", 0.5),
         "key_reasons": verdict_data.get("key_reasons", []),
         "risk_warning": verdict_data.get("risk_warning", ""),
         "suggested_hold_days": verdict_data.get("suggested_hold_days"),
         "stop_loss_pct": verdict_data.get("stop_loss_pct"),
+        # 元数据(v4.0 新增)
+        "agent_count": len(round1_specs) + len(round2_specs) + 1,  # +1 for judge
+        "enabled_roles": enabled_roles,
     }
+
+
+# v4.0: 报告字段 → 标签(用于裁判 prompt 拼接)
+_REPORT_LABELS: dict[str, str] = {
+    "technical_report": "技术面报告",
+    "fundamentals_report": "基本面报告",
+    "capital_flow_report": "资金面报告",
+    "policy_report": "政策解读",
+    "bull_case": "多头论点",
+    "bear_case": "空头论点",
+    "short_researcher_case": "做空论点",
+}
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -413,6 +521,50 @@ def _build_fundamentals_prompt(code: str, d: dict) -> str:
 - 资产负债率={d.get('debt_ratio','无数据')}%
 - 毛利率={d.get('gross_margin','无数据')}%
 - 营收增速={d.get('revenue_growth','无数据')}%"""
+
+
+def _build_capital_flow_prompt(code: str, d: dict) -> str:
+    """v4.0: 资金面分析师 prompt — 当前数据有限,以框架性分析为主"""
+    name = d.get('name', '')
+    return f"""请分析 {code} {name} 的资金面情况。
+
+已知信息:
+- 最新价: {d.get('price', '?')} 元
+- 涨跌幅: {d.get('change_pct', '?')}%
+- 5日动量: {d.get('ret_5d', '?')}%, 20日动量: {d.get('ret_20d', '?')}%
+- 量比: {d.get('vol_ratio', '?')}
+- 行业: {d.get('industry', '未知')}
+- 市值: {d.get('market_cap_billion', '?')} 亿元
+
+请基于以上信息分析:
+1. 北向资金方向(基于行业资金流和市值风格推断)
+2. 主力资金倾向(基于量价配合 + 短期动量)
+3. 杠杆资金方向(基于波动率 + 趋势性)
+4. 板块资金轮动位置
+5. 流动性风险评估
+
+注:本版本尚未接入逐股北向/主力资金明细,以行业逻辑推断为主。"""
+
+
+def _build_policy_prompt(code: str, d: dict) -> str:
+    """v4.0: 政策解读员 prompt"""
+    industry = d.get('industry', '未知')
+    return f"""请分析 {code} {d.get('name','')} 的政策面影响。
+
+已知信息:
+- 行业: {industry}
+- 市值: {d.get('market_cap_billion', '?')} 亿元
+- 营收增速: {d.get('revenue_growth', '无数据')}%
+- 毛利率: {d.get('gross_margin', '无数据')}%
+
+请基于行业 + 公司质地分析:
+1. 所属行业近期政策动向(扶持/打压/中性)
+2. 监管层对该行业的态度(IPO/减持/再融资)
+3. 当前宏观政策方向对行业的影响
+4. 国际形势对行业的影响(出口/供应链/汇率)
+5. 潜在政策风险与机遇
+
+注:本版本未接入实时新闻,以行业框架性分析为主。"""
 
 
 # ═══════════════════════════════════════════════════════════════

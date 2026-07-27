@@ -13,35 +13,48 @@ import {
   IconBrain,
   IconChartBar,
   IconReportMoney,
+  IconCoin,
+  IconBuildingMonument,
   IconArrowUp,
   IconArrowDown,
+  IconArrowBigDownLines,
   IconGavel,
   IconShield,
   IconTarget,
   IconPlayerPlay,
 } from "@tabler/icons-react"
 
+/** v4.0 (A1): 8 角色结果。5 角色字段保留,新增 3 角色字段。 */
 interface AnalysisResult {
   error?: string
   code: string
   name: string
   price: number
+  // Round 1 — 4 分析面
   technical_report: string
   fundamentals_report: string
+  capital_flow_report: string    // v4.0 新增
+  policy_report: string          // v4.0 新增
+  // Round 2 — 3 辩论
   bull_case: string
   bear_case: string
+  short_researcher_case: string  // v4.0 新增
+  // Round 3 — 裁判
   verdict: string
   confidence: number
   key_reasons: string[]
   risk_warning: string
   suggested_hold_days: number | null
   stop_loss_pct: number | null
+  // 元数据
+  agent_count?: number
+  enabled_roles?: string[]
 }
 
 const PHASES = [
-  { key: "tech", label: "技术面 + 基本面分析", icon: IconChartBar },
-  { key: "debate", label: "多空辩论", icon: IconGavel },
-  { key: "judge", label: "生成最终判断", icon: IconBrain },
+  { key: "r1", label: "8 角色并行分析(技术+基本面+资金面+政策)", icon: IconChartBar },
+  { key: "r2", label: "3 角色辩论(多+空+做空)", icon: IconGavel },
+  { key: "r3", label: "生成最终判断", icon: IconBrain },
 ]
 
 export function MultiAgentAnalysis() {
@@ -147,8 +160,45 @@ export function MultiAgentAnalysis() {
             </CardContent>
           </Card>
 
-          {/* Bull vs Bear */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-2">
+          {/* v4.0 (A1): 8 角色报告 — 2x4 网格布局 */}
+          {/* Round 1 — 4 分析面:技术 + 基本面 + 资金面 + 政策 */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-2">
+            <ReportCard
+              title="技术面"
+              icon={<IconChartBar className="size-3" />}
+              content={result.technical_report}
+              field="tech"
+              expanded={expanded.tech}
+              onToggle={toggle}
+            />
+            <ReportCard
+              title="基本面"
+              icon={<IconReportMoney className="size-3" />}
+              content={result.fundamentals_report}
+              field="fund"
+              expanded={expanded.fund}
+              onToggle={toggle}
+            />
+            <ReportCard
+              title="资金面"
+              icon={<IconCoin className="size-3" />}
+              content={result.capital_flow_report}
+              field="capital"
+              expanded={expanded.capital}
+              onToggle={toggle}
+            />
+            <ReportCard
+              title="政策解读"
+              icon={<IconBuildingMonument className="size-3" />}
+              content={result.policy_report}
+              field="policy"
+              expanded={expanded.policy}
+              onToggle={toggle}
+            />
+          </div>
+
+          {/* Round 2 — 3 辩论角色:多 + 空 + 做空 */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
             <Card className="border-l-[3px] border-l-red-400">
               <CardHeader className="pb-1">
                 <CardTitle className="text-xs flex items-center gap-1">
@@ -156,14 +206,12 @@ export function MultiAgentAnalysis() {
                 </CardTitle>
               </CardHeader>
               <CardContent>
-                <p className="text-xs text-muted-foreground whitespace-pre-line">
-                  {expanded.bull ? result.bull_case : result.bull_case.slice(0, 200)}
-                  {result.bull_case.length > 200 && (
-                    <button className="text-purple-400 ml-1" onClick={() => toggle("bull")}>
-                      {expanded.bull ? "收起" : "展开"}
-                    </button>
-                  )}
-                </p>
+                <ReportBody
+                  content={result.bull_case}
+                  field="bull"
+                  expanded={expanded.bull}
+                  onToggle={toggle}
+                />
               </CardContent>
             </Card>
             <Card className="border-l-[3px] border-l-emerald-400">
@@ -173,57 +221,106 @@ export function MultiAgentAnalysis() {
                 </CardTitle>
               </CardHeader>
               <CardContent>
-                <p className="text-xs text-muted-foreground whitespace-pre-line">
-                  {expanded.bear ? result.bear_case : result.bear_case.slice(0, 200)}
-                  {result.bear_case.length > 200 && (
-                    <button className="text-purple-400 ml-1" onClick={() => toggle("bear")}>
-                      {expanded.bear ? "收起" : "展开"}
-                    </button>
-                  )}
-                </p>
+                <ReportBody
+                  content={result.bear_case}
+                  field="bear"
+                  expanded={expanded.bear}
+                  onToggle={toggle}
+                />
+              </CardContent>
+            </Card>
+            <Card className="border-l-[3px] border-l-amber-400">
+              <CardHeader className="pb-1">
+                <CardTitle className="text-xs flex items-center gap-1">
+                  <IconArrowBigDownLines className="size-3 text-amber-400" />做空论点
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <ReportBody
+                  content={result.short_researcher_case}
+                  field="short"
+                  expanded={expanded.short}
+                  onToggle={toggle}
+                />
               </CardContent>
             </Card>
           </div>
 
-          {/* Reports */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-2">
-            <Card>
-              <CardHeader className="pb-1">
-                <CardTitle className="text-xs flex items-center gap-1">
-                  <IconChartBar className="size-3" />技术面报告
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <p className="text-xs text-muted-foreground whitespace-pre-line">
-                  {expanded.tech ? result.technical_report : result.technical_report.slice(0, 200)}
-                  {result.technical_report.length > 200 && (
-                    <button className="text-purple-400 ml-1" onClick={() => toggle("tech")}>
-                      {expanded.tech ? "收起" : "展开"}
-                    </button>
-                  )}
-                </p>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardHeader className="pb-1">
-                <CardTitle className="text-xs flex items-center gap-1">
-                  <IconReportMoney className="size-3" />基本面报告
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <p className="text-xs text-muted-foreground whitespace-pre-line">
-                  {expanded.fund ? result.fundamentals_report : result.fundamentals_report.slice(0, 200)}
-                  {result.fundamentals_report.length > 200 && (
-                    <button className="text-purple-400 ml-1" onClick={() => toggle("fund")}>
-                      {expanded.fund ? "收起" : "展开"}
-                    </button>
-                  )}
-                </p>
-              </CardContent>
-            </Card>
-          </div>
+          {/* Agent 元数据 */}
+          {result.agent_count && (
+            <p className="text-[10px] text-muted-foreground text-center">
+              本次分析调用 {result.agent_count} 个 Agent 角色
+            </p>
+          )}
         </>
       )}
     </div>
+  )
+}
+
+/** 报告卡(标题 + 折叠正文) */
+function ReportCard({
+  title,
+  icon,
+  content,
+  field,
+  expanded,
+  onToggle,
+}: {
+  title: string
+  icon: React.ReactNode
+  content: string
+  field: string
+  expanded: boolean
+  onToggle: (key: string) => void
+}) {
+  return (
+    <Card>
+      <CardHeader className="pb-1">
+        <CardTitle className="text-xs flex items-center gap-1">
+          {icon}{title}
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <ReportBody
+          content={content}
+          field={field}
+          expanded={expanded}
+          onToggle={onToggle}
+        />
+      </CardContent>
+    </Card>
+  )
+}
+
+/** 报告正文(超过 200 字折叠) */
+function ReportBody({
+  content,
+  field,
+  expanded,
+  onToggle,
+}: {
+  content: string
+  field: string
+  expanded: boolean
+  onToggle: (key: string) => void
+}) {
+  if (!content) {
+    return <p className="text-[10px] text-muted-foreground italic">未启用该角色</p>
+  }
+  const sliced = content.slice(0, 200)
+  const truncated = content.length > 200
+  return (
+    <p className="text-xs text-muted-foreground whitespace-pre-line">
+      {expanded ? content : sliced}
+      {truncated && (
+        <button
+          className="text-purple-400 ml-1"
+          onClick={() => onToggle(field)}
+        >
+          {expanded ? "收起" : "展开"}
+        </button>
+      )}
+    </p>
   )
 }
