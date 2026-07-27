@@ -1,7 +1,7 @@
 # StockAI 项目日志
 
 > StockAI 从 0 到 v4.0 的完整演进记录。按时间倒序。
-> **当前版本: v4.0 Phase 3 完成** · 下一阶段: Phase 4 (Alpha158 完整 + 个性化,可选)
+> **当前版本: v4.0 Phase 4 完成** · 下一阶段: Phase 5 (发布)
 
 ---
 
@@ -167,6 +167,46 @@
 - ✅ 多策略组合回测(3 模式 + attribution)
 
 **Phase 3 核心已就绪,Phase 4 (B2/B3 剩余 Alpha158 + A4 个性化, 可选) 1-2 周可启动。**
+
+---
+
+## 2026-07-27 — v4.0 Phase 4 完成(B2 + B3 + A4)
+
+### 🎉 Phase 4 全部 3 子项落地
+
+| 子项 | 状态 | 主要改动 |
+|------|------|----------|
+| **B2** Alpha158 Batch 2 | ✅ | 15 动量/波动类因子(DEVIATION5/60 / STD10/60 / BETA5/10 / CORR5/10/60 / CORD5/10/20/60 / KMID / VWAP / VOL_CHANGE5) |
+| **B3** Alpha158 Batch 3 | ✅ | 5 技术/资金流类因子(VOL_RATIO_5_20 / OBV_TREND_5 / KMID2 / AMPLITUDE_MA20 / VPA_SIGNAL) |
+| **A4** 个性化 prompt | ✅ | `user_style.py` 新增(分析交易历史 → 胜率/持仓/风险偏好),`analyze_stock` 加 `personalize` + `user_id` 参数 |
+
+### 📁 新增/修改文件
+
+**新增**:
+- `backend/services/user_style.py` (110 行)
+- `tests/test_alpha158_batch2_3.py` (28 tests)
+- `tests/test_user_style.py` (8 tests)
+
+**修改**:
+- `backend/services/factor_service.py` (20 新因子函数 + opens/highs/lows/volume 集成 + factor_beta20 参数化)
+- `backend/services/multi_agent_service.py` (personalize/user_id 参数 + user_style 注入到 8 个 system prompt)
+
+### 🧪 测试覆盖
+
+**36 个新测试 100% 通过**(28 B2/B3 + 8 A4)
+
+### 🎯 关键设计
+
+- **B2**: factor_beta20 改为接受 period 参数(短周期 5/10 不再要求 10 个 rets)
+- **B3**: 量价配合信号 VPA = 5 日收益 × 量能加速度
+- **A4**: 从 transactions 表聚合胜率/持仓天数/风险偏好,自动注入 8 个角色的 system prompt
+
+### 🎯 Phase 4 验收
+
+- ✅ Alpha158 扩展到 64 个已完成因子(B1 15 + B2 15 + B3 5 + 经典 29)
+- ✅ A4 个性化 prompt 完整链路(user_style → system prompt 注入)
+
+**Phase 4 核心已就绪,Phase 5 (发布: tag + README + GitHub release) 可随时启动。**
 
 ---
 

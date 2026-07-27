@@ -861,28 +861,29 @@ def factor_price_std(closes: list[float], period: int) -> Optional[float]:
         return None
 
 
-def factor_beta20(closes: list[float]) -> Optional[float]:
-    """20日自回归 beta — 衡量收益持续性(1-day lag)
+def factor_beta20(closes: list[float], period: int = 20) -> Optional[float]:
+    """N 日自回归 beta — 衡量收益持续性(1-day lag)
     趋近 1 = 强趋势 / 持续性,趋近 0 = 均值回归
     注: 因无法获取市场指数,使用 stock 自回归作为代理
     """
-    if len(closes) < 22:
+    if len(closes) < period + 2:
         return None
     try:
-        # rets[t] = (closes[t] - closes[t-1]) / closes[t-1]
-        # 取最近 20 天的 rets 与 lag1 rets,计算协方差 / 方差
         rets = []
-        for i in range(20, 0, -1):
+        for i in range(period, 0, -1):
             c_now = closes[-i]
             c_prev = closes[-i - 1]
             if c_prev == 0:
                 continue
             rets.append((c_now - c_prev) / c_prev)
-        if len(rets) < 10:
+        # 至少需要 5 个 rets 来计算稳定相关性(短周期 period 也能跑)
+        if len(rets) < 5:
             return None
         n = len(rets)
-        lag_rets = rets[1:]  # 滞后 1 天的 rets
-        n -= 1  # 对齐长度
+        lag_rets = rets[1:]
+        n -= 1
+        if n < 3:  # 至少 3 个 pair 才能算相关
+            return None
         m_now = sum(rets[:n]) / n
         m_lag = sum(lag_rets) / n
         cov = sum((rets[i] - m_now) * (lag_rets[i] - m_lag) for i in range(n)) / n
@@ -892,6 +893,11 @@ def factor_beta20(closes: list[float]) -> Optional[float]:
         return round(cov / var_lag, 4)
     except Exception:
         return None
+
+
+def _compute_beta(closes: list[float], period: int) -> Optional[float]:
+    """B2: 短周期自回归 beta (5/10 日) — 复用 factor_beta20"""
+    return factor_beta20(closes, period=period)
 
 
 def factor_vroc(volumes: list[float], period: int = 10) -> Optional[float]:
@@ -934,6 +940,204 @@ def factor_corr20(closes: list[float], volumes: list[float]) -> Optional[float]:
 # ═══════════════════════════════════════════════════════════
 # 情绪因子 (Sentiment)
 # ═══════════════════════════════════════════════════════════
+
+# ═══════════════════════════════════════════════════════════
+#  v4.0 B2 + B3 — Alpha158 Batch 2/3 (15 动量/波动 + 5 技术/资金流)
+#  全部 NaN-safe,空值/异常统一返回 None
+# ═══════════════════════════════════════════════════════════
+
+def factor_kmid(opens: list[float], highs: list[float], lows: list[float], closes: list[float]) -> Optional[float]:
+    """K线中位:(close - open) / (high - low) / 2
+    表示 K 线在区间中的位置(±0.5),反映买卖力量对比
+    """
+    if not (opens and highs and lows and closes):
+        return None
+    try:
+        o, h, l, c = opens[-1], highs[-1], lows[-1], closes[-1]
+        rng = h - l
+        if rng <= 0 or o == 0:
+            return None
+        return round((c - o) / rng / 2, 4)
+    except Exception:
+        return None
+
+
+def factor_vwap(closes: list[float], volumes: list[float], period: int = 20) -> Optional[float]:
+    """成交量加权均价(VWAP)偏离度:(close - VWAP) / VWAP
+    衡量当前价相对 VWAP 的偏离,正=高于均价,负=低于均价
+    """
+    if len(closes) < period or len(volumes) < period:
+        return None
+    try:
+        c = closes[-1]
+        recent_closes = closes[-period:]
+        recent_vols = volumes[-period:]
+        total_pv = sum(recent_closes[i] * recent_vols[i] for i in range(period))
+        total_v = sum(recent_vols)
+        if total_v == 0 or c == 0:
+            return None
+        vwap = total_pv / total_v
+        if vwap == 0:
+            return None
+        return round((c - vwap) / vwap, 4)
+    except Exception:
+        return None
+
+
+def factor_corr(closes: list[float], volumes: list[float], period: int) -> Optional[float]:
+    """N 日价量相关系数(多周期版本)
+    用于 B2:5/10/60 日窗口
+    """
+    if len(closes) < period or len(volumes) < period:
+        return None
+    try:
+        c = closes[-period:]
+        v = volumes[-period:]
+        mc = sum(c) / period
+        mv = sum(v) / period
+        cov = sum((c[i] - mc) * (v[i] - mv) for i in range(period)) / period
+        var_c = sum((x - mc) ** 2 for x in c) / period
+        var_v = sum((x - mv) ** 2 for x in v) / period
+        if var_c <= 0 or var_v <= 0:
+            return None
+        return round(cov / (var_c ** 0.5 * var_v ** 0.5), 4)
+    except Exception:
+        return None
+
+
+def factor_cord(closes: list[float], period: int) -> Optional[float]:
+    """N 日收益率自相关(change rate correlation)
+    CORD = corr(returns[t-N+1:t+1], returns[t-N:t]) — 当前窗口 vs 滞后窗口
+    正=趋势持续(动量),负=均值回归
+    """
+    if len(closes) < period + 2:
+        return None
+    try:
+        rets_now = []
+        rets_lag = []
+        for i in range(period, 0, -1):
+            c_now = closes[-i]
+            c_prev = closes[-i - 1]
+            if c_prev == 0:
+                continue
+            rets_now.append((c_now - c_prev) / c_prev)
+        for i in range(period + 1, 1, -1):
+            c_now = closes[-i]
+            c_prev = closes[-i - 1]
+            if c_prev == 0:
+                continue
+            rets_lag.append((c_now - c_prev) / c_prev)
+        n = min(len(rets_now), len(rets_lag))
+        if n < 5:
+            return None
+        rets_now = rets_now[:n]
+        rets_lag = rets_lag[:n]
+        m_now = sum(rets_now) / n
+        m_lag = sum(rets_lag) / n
+        cov = sum((rets_now[i] - m_now) * (rets_lag[i] - m_lag) for i in range(n)) / n
+        var_now = sum((x - m_now) ** 2 for x in rets_now) / n
+        var_lag = sum((x - m_lag) ** 2 for x in rets_lag) / n
+        if var_now <= 0 or var_lag <= 0:
+            return None
+        return round(cov / (var_now ** 0.5 * var_lag ** 0.5), 4)
+    except Exception:
+        return None
+
+
+def factor_vol_change(volumes: list[float], period: int) -> Optional[float]:
+    """N 日成交量变化率(类似 VROC 的参数化版本)
+    用于 B2:5/10/60 日窗口
+    """
+    if len(volumes) <= period:
+        return None
+    try:
+        v_now, v_ref = volumes[-1], volumes[-1 - period]
+        if not v_ref or v_ref == 0:
+            return None
+        return round((v_now - v_ref) / v_ref, 4)
+    except Exception:
+        return None
+
+
+def _compute_vol_ratio_5_20(closes: list[float], volumes: list[float]) -> Optional[float]:
+    """B3: 5日/20日均量比"""
+    if not volumes or len(volumes) < 20:
+        return None
+    try:
+        avg_5 = sum(volumes[-5:]) / 5
+        avg_20 = sum(volumes[-20:]) / 20
+        if avg_20 == 0:
+            return None
+        return round(avg_5 / avg_20, 4)
+    except Exception:
+        return None
+
+
+def _compute_obv_trend_5(closes: list[float], volumes: list[float]) -> Optional[float]:
+    """B3: OBV 5 日变化率(简化版)"""
+    if len(closes) < 20 or len(volumes) < 20:
+        return None
+    try:
+        obv_series = [0.0]
+        for i in range(-19, 0):
+            if closes[i] > closes[i - 1]:
+                obv_series.append(obv_series[-1] + volumes[i])
+            elif closes[i] < closes[i - 1]:
+                obv_series.append(obv_series[-1] - volumes[i])
+            else:
+                obv_series.append(obv_series[-1])
+        obv_change = (obv_series[-1] - obv_series[-6]) / (abs(obv_series[-6]) + 1)
+        return round(obv_change, 4)
+    except Exception:
+        return None
+
+
+def _compute_kmid2(opens: list[float], highs: list[float], lows: list[float], closes: list[float]) -> Optional[float]:
+    """B3: (high+low)/2 与 (open+close)/2 偏离度"""
+    if not (opens and highs and lows and closes):
+        return None
+    try:
+        o, h, l, c = opens[-1], highs[-1], lows[-1], closes[-1]
+        if not (o and h and l and c):
+            return None
+        mid_price = (h + l) / 2
+        mid_oc = (o + c) / 2
+        if mid_price == 0:
+            return None
+        return round((mid_oc - mid_price) / mid_price, 4)
+    except Exception:
+        return None
+
+
+def _compute_amplitude_ma20(closes: list[float], highs: list[float], lows: list[float]) -> Optional[float]:
+    """B3: 20 日平均日内振幅"""
+    if len(closes) < 20 or len(highs) < 20 or len(lows) < 20:
+        return None
+    try:
+        amps = [(highs[i] - lows[i]) / closes[i] if closes[i] else 0
+                for i in range(-20, 0)]
+        if not amps:
+            return None
+        return round(sum(amps) / len(amps), 4)
+    except Exception:
+        return None
+
+
+def _compute_vpa_signal(closes: list[float], volumes: list[float]) -> Optional[float]:
+    """B3: 量价配合信号(5日收益 × 量能加速度)"""
+    if len(closes) < 10 or len(volumes) < 10:
+        return None
+    try:
+        v_recent = sum(volumes[-5:]) / 5
+        v_old = sum(volumes[-10:-5]) / 5
+        if v_old == 0 or not closes[-6]:
+            return None
+        v_acc = v_recent / v_old
+        ret_5d = (closes[-1] - closes[-6]) / closes[-6]
+        return round(ret_5d * v_acc, 4)
+    except Exception:
+        return None
+
 
 def factor_strength(closes: list[float], period: int = 20) -> Optional[float]:
     """相对强度：20日涨幅 / 20日波动率（类似信息比率）"""
@@ -1207,6 +1411,103 @@ def compute_all_factors(
     # 价量相关性
     factors["corr20"] = factor_corr20(closes, volumes) if volumes else None
 
+    # ── v4.0 B2 Alpha158 Batch 2 (15 动量/波动类因子) ──
+    # 偏离度(扩展)
+    factors["deviation5"] = factor_deviation(closes, 5)
+    factors["deviation60"] = factor_deviation(closes, 60)
+    # 波动率(扩展)
+    factors["std10"] = factor_price_std(closes, 10)
+    factors["std60"] = factor_price_std(closes, 60)
+    # 自回归 beta(短周期,复用 factor_beta20 接受 period 参数)
+    factors["beta5"] = _compute_beta(closes, 5)
+    factors["beta10"] = _compute_beta(closes, 10)
+    # 价量相关(扩展多周期)
+    if volumes:
+        factors["corr5"] = factor_corr(closes, volumes, 5)
+        factors["corr10"] = factor_corr(closes, volumes, 10)
+        factors["corr60"] = factor_corr(closes, volumes, 60)
+    else:
+        factors["corr5"] = factors["corr10"] = factors["corr60"] = None
+    # 收益率自相关
+    factors["cord5"] = factor_cord(closes, 5)
+    factors["cord10"] = factor_cord(closes, 10)
+    factors["cord20"] = factor_cord(closes, 20)
+    factors["cord60"] = factor_cord(closes, 60)
+    # K线中位(需 opens/highs/lows)
+    if opens and highs and lows:
+        factors["kmid"] = factor_kmid(opens, highs, lows, closes)
+    else:
+        factors["kmid"] = None
+    # VWAP
+    factors["vwap"] = factor_vwap(closes, volumes, 20) if volumes else None
+    # 量能变化率
+    factors["vol_change5"] = factor_vol_change(volumes, 5) if volumes else None
+
+    # ── v4.0 B3 Alpha158 Batch 3 (5 技术/资金流类因子) ──
+    # 资金流类 — 量能相关
+    if volumes and len(volumes) >= 20:
+        recent_v = volumes[-20:]
+        avg_v = sum(recent_v) / 20
+        if avg_v > 0:
+            factors["vol_ratio_5_20"] = round(sum(volumes[-5:]) / 5 / avg_v, 4)
+        else:
+            factors["vol_ratio_5_20"] = None
+    else:
+        factors["vol_ratio_5_20"] = None
+    # OBV 趋势(20 日)
+    if volumes and len(volumes) >= 20:
+        obv = 0.0
+        obv_series = []
+        for i in range(-20, 0):
+            if i == -20:
+                continue
+            if closes[i] > closes[i - 1]:
+                obv += volumes[i]
+            elif closes[i] < closes[i - 1]:
+                obv -= volumes[i]
+            obv_series.append(obv)
+        if len(obv_series) >= 5:
+            # OBV 5 日变化率
+            obv_change = (obv_series[-1] - obv_series[-5]) / (abs(obv_series[-5]) + 1)
+            factors["obv_trend_5"] = round(obv_change, 4)
+        else:
+            factors["obv_trend_5"] = None
+    else:
+        factors["obv_trend_5"] = None
+    # K线中位2(类似 KMID 但分母不同) — (high + low) / 2 vs (open + close) / 2
+    if opens and highs and lows and len(opens) >= 1:
+        o, h, l, c = opens[-1], highs[-1], lows[-1], closes[-1]
+        if o and c and h and l:
+            mid_price = (h + l) / 2
+            mid_open_close = (o + c) / 2
+            if mid_price > 0:
+                factors["kmid2"] = round((mid_open_close - mid_price) / mid_price, 4)
+            else:
+                factors["kmid2"] = None
+        else:
+            factors["kmid2"] = None
+    else:
+        factors["kmid2"] = None
+    # 振幅均值(20 日)— 衡量典型日内振幅
+    if highs and lows and len(highs) >= 20:
+        amplitudes = [(highs[i] - lows[i]) / closes[i] if closes[i] else 0
+                      for i in range(-20, 0)]
+        factors["amplitude_ma20"] = round(sum(amplitudes) / len(amplitudes), 4) if amplitudes else None
+    else:
+        factors["amplitude_ma20"] = None
+    # 量能 × 价格加速度(VPA 信号)— 量增 + 价涨动量
+    if volumes and len(volumes) >= 10:
+        v_recent = sum(volumes[-5:]) / 5
+        v_old = sum(volumes[-10:-5]) / 5
+        if v_old > 0 and len(closes) >= 10:
+            ret_5d = (closes[-1] - closes[-6]) / closes[-6] if closes[-6] else 0
+            v_acc = v_recent / v_old
+            factors["vpa_signal"] = round(ret_5d * v_acc, 4)
+        else:
+            factors["vpa_signal"] = None
+    else:
+        factors["vpa_signal"] = None
+
     # 统计有效因子数
     hit_count = sum(1 for v in factors.values() if v is not None)
 
@@ -1378,6 +1679,38 @@ FACTOR_REGISTRY: dict[str, dict] = {
     "VROC10":    {"status": "done", "fn": "factor_vroc",      "category": "成交量因子", "direction": "正向"},
     # 价量相关性
     "CORR20":    {"status": "done", "fn": "factor_corr20",    "category": "量价因子",   "direction": "正向"},
+
+    # ── v4.0 B2 Alpha158 Batch 2 (15 动量/波动类因子) ──
+    # 偏离度(扩展)
+    "DEVIATION5": {"status": "done", "fn": "factor_deviation",  "category": "价格因子",  "direction": "正向"},
+    "DEVIATION60":{"status": "done", "fn": "factor_deviation",  "category": "价格因子",  "direction": "正向"},
+    # 波动率(扩展)
+    "STD10":      {"status": "done", "fn": "factor_price_std",  "category": "波动率因子", "direction": "中性"},
+    "STD60":      {"status": "done", "fn": "factor_price_std",  "category": "波动率因子", "direction": "中性"},
+    # 自回归 beta(短周期)
+    "BETA5":      {"status": "done", "fn": "factor_beta20",     "category": "动量因子",   "direction": "正向"},
+    "BETA10":     {"status": "done", "fn": "factor_beta20",     "category": "动量因子",   "direction": "正向"},
+    # 价量相关(扩展多周期)
+    "CORR5":      {"status": "done", "fn": "factor_corr",       "category": "量价因子",   "direction": "正向"},
+    "CORR10":     {"status": "done", "fn": "factor_corr",       "category": "量价因子",   "direction": "正向"},
+    "CORR60":     {"status": "done", "fn": "factor_corr",       "category": "量价因子",   "direction": "正向"},
+    # 收益率自相关(趋势 vs 均值回归)
+    "CORD5":      {"status": "done", "fn": "factor_cord",       "category": "动量因子",   "direction": "正向"},
+    "CORD10":     {"status": "done", "fn": "factor_cord",       "category": "动量因子",   "direction": "正向"},
+    "CORD20":     {"status": "done", "fn": "factor_cord",       "category": "动量因子",   "direction": "正向"},
+    "CORD60":     {"status": "done", "fn": "factor_cord",       "category": "动量因子",   "direction": "正向"},
+    # K线中位 + VWAP
+    "KMID":       {"status": "done", "fn": "factor_kmid",       "category": "K线形态",   "direction": "中性"},
+    "VWAP":       {"status": "done", "fn": "factor_vwap",       "category": "量价因子",   "direction": "正向"},
+    # 量能变化率(扩展)
+    "VOL_CHANGE5": {"status": "done", "fn": "factor_vol_change", "category": "成交量因子", "direction": "正向"},
+
+    # ── v4.0 B3 Alpha158 Batch 3 (5 技术/资金流类因子) ──
+    "VOL_RATIO_5_20":  {"status": "done", "fn": "_compute_vol_ratio_5_20", "category": "成交量因子", "direction": "正向"},
+    "OBV_TREND_5":     {"status": "done", "fn": "_compute_obv_trend_5",     "category": "资金因子",   "direction": "正向"},
+    "KMID2":           {"status": "done", "fn": "_compute_kmid2",           "category": "K线形态",   "direction": "中性"},
+    "AMPLITUDE_MA20":  {"status": "done", "fn": "_compute_amplitude_ma20",  "category": "波动率因子", "direction": "中性"},
+    "VPA_SIGNAL":      {"status": "done", "fn": "_compute_vpa_signal",      "category": "量价因子",   "direction": "正向"},
 
 }
 

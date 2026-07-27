@@ -231,29 +231,30 @@ async def analyze_stock(
     strategy_id: str = "",
     enabled_roles: list[str] | None = None,
     enable_cot: bool = True,
+    personalize: bool = False,
+    user_id: int | None = None,
 ) -> dict:
-    """对单只股票运行多 Agent 深度分析(v4.0: 5 → 8 角色, 3 轮调用 + A3 CoT)
+    """对单只股票运行多 Agent 深度分析(v4.0: 5 → 8 角色 + A3 CoT + A4 个性化)
 
     Args:
         code: 股票代码
         provider/api_key/model: AI 供应商配置
         strategy_id: 可选,触发分析的策略 ID,用于注入历史交易记忆
         enabled_roles: 可选,限制启用的角色列表;None = 全部 8 角色全启用。
-                       backward compat: ["technical","fundamentals","bull","bear","judge"]
-                       退化为 5 角色风格。
         enable_cot: v4.0 A3 — 是否启用 Chain-of-Thought 推理增强。
-                    启用时裁判使用 JUDGE_SYSTEM_COT,输出 reasoning_chain 5 步推理。
-                    关闭时退回 JUDGE_SYSTEM(更快但推理不可见)。
+        personalize: v4.0 A4 — 是否注入用户交易风格到所有 system prompt。
+        user_id: A4 — 用户 ID(用于查询交易历史)。personalize=True 时必填。
 
     Returns:
         {code, name, price,
          technical_report, fundamentals_report,
-         capital_flow_report, policy_report,           # v4.0 新增
-         bull_case, bear_case, short_researcher_case,    # v4.0 新增
+         capital_flow_report, policy_report,
+         bull_case, bear_case, short_researcher_case,
          verdict, confidence, key_reasons, risk_warning,
          suggested_hold_days, stop_loss_pct,
-         reasoning_chain (A3),                         # v4.0 新增
-         agent_count, enabled_roles, enable_cot}
+         reasoning_chain (A3),
+         user_style (A4, 注入的 context 文本),
+         agent_count, enabled_roles, enable_cot, personalize}
     """
     # ── 决定启用哪些角色(默认 8 角色) ──
     if enabled_roles is None:
@@ -264,6 +265,16 @@ async def analyze_stock(
         enabled_set.add("judge")
     enabled_roles = sorted(enabled_set)
 
+    # ── v4.0 A4 个性化:加载用户交易风格 ──
+    user_style_ctx = ""
+    if personalize and user_id is not None:
+        try:
+            from services.user_style import build_user_style_context
+            user_style_ctx = build_user_style_context(user_id) or ""
+        except Exception as e:
+            logger.warning("analyze_stock: load user_style failed: %s", e)
+            user_style_ctx = ""
+
     # ── 获取数据 ──
     stock_info = _gather_stock_data(code)
     if "error" in stock_info:
@@ -272,13 +283,13 @@ async def analyze_stock(
     # ── 第 1 轮:4 个分析面 并行(技术 + 基本面 + 资金面 + 政策) ──
     round1_specs: list[tuple[str, str, str]] = []
     if "technical" in enabled_set:
-        round1_specs.append(("technical_report", _build_technical_prompt(code, stock_info), TECHNICAL_SYSTEM))
+        round1_specs.append(("technical_report", _build_technical_prompt(code, stock_info), TECHNICAL_SYSTEM + user_style_ctx))
     if "fundamentals" in enabled_set:
-        round1_specs.append(("fundamentals_report", _build_fundamentals_prompt(code, stock_info), FUNDAMENTALS_SYSTEM))
+        round1_specs.append(("fundamentals_report", _build_fundamentals_prompt(code, stock_info), FUNDAMENTALS_SYSTEM + user_style_ctx))
     if "capital_flow" in enabled_set:
-        round1_specs.append(("capital_flow_report", _build_capital_flow_prompt(code, stock_info), CAPITAL_FLOW_SYSTEM))
+        round1_specs.append(("capital_flow_report", _build_capital_flow_prompt(code, stock_info), CAPITAL_FLOW_SYSTEM + user_style_ctx))
     if "policy" in enabled_set:
-        round1_specs.append(("policy_report", _build_policy_prompt(code, stock_info), POLICY_INTERPRETER_SYSTEM))
+        round1_specs.append(("policy_report", _build_policy_prompt(code, stock_info), POLICY_INTERPRETER_SYSTEM + user_style_ctx))
 
     round1_results: dict[str, str] = {}
     if round1_specs:
@@ -310,11 +321,11 @@ async def analyze_stock(
 
     round2_specs: list[tuple[str, str, str]] = []
     if "bull" in enabled_set:
-        round2_specs.append(("bull_case", "请基于以上报告,构建看涨论点。", BULL_SYSTEM))
+        round2_specs.append(("bull_case", "请基于以上报告,构建看涨论点。", BULL_SYSTEM + user_style_ctx))
     if "bear" in enabled_set:
-        round2_specs.append(("bear_case", "请基于以上报告,构建看跌论点。", BEAR_SYSTEM))
+        round2_specs.append(("bear_case", "请基于以上报告,构建看跌论点。", BEAR_SYSTEM + user_style_ctx))
     if "short_researcher" in enabled_set:
-        round2_specs.append(("short_researcher_case", "请基于以上报告,构建做空论点(系统性风险 + 下行空间)。", SHORT_RESEARCHER_SYSTEM))
+        round2_specs.append(("short_researcher_case", "请基于以上报告,构建做空论点(系统性风险 + 下行空间)。", SHORT_RESEARCHER_SYSTEM + user_style_ctx))
 
     round2_results: dict[str, str] = {}
     if round2_specs:
@@ -368,7 +379,7 @@ async def analyze_stock(
     try:
         judge_raw = await ai_chat(
             judge_prompt,
-            system_prompt=JUDGE_SYSTEM_COT if enable_cot else JUDGE_SYSTEM,
+            system_prompt=(JUDGE_SYSTEM_COT if enable_cot else JUDGE_SYSTEM) + user_style_ctx,
             provider=provider, api_key=api_key, model=model,
             function="explain",
         )
@@ -400,10 +411,13 @@ async def analyze_stock(
         "stop_loss_pct": verdict_data.get("stop_loss_pct"),
         # v4.0 A3 — CoT 推理链
         "reasoning_chain": verdict_data.get("reasoning_chain", {}),
+        # v4.0 A4 — 个性化用户风格 context
+        "user_style": user_style_ctx,
         # 元数据(v4.0 新增)
         "agent_count": len(round1_specs) + len(round2_specs) + 1,  # +1 for judge
         "enabled_roles": enabled_roles,
         "enable_cot": enable_cot,
+        "personalize": personalize,
     }
 
 
