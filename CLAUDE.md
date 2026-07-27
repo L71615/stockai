@@ -2,9 +2,9 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-> **当前版本: v4.0 Phase 1** (2026-07-27)
-> **量化方向**: T+1/T+2 短线预测主线 + AI 选股智能化(8 角色)
-> **最新改动**: A1(8 角色) + A2(工具调用) + B4(滑点) + C2(T+1 成本) + T+1 watcher 状态机
+> **当前版本: v4.0**(2026-07-28 发布)
+> **量化方向**: T+1/T+2 短线预测主线 + AI 选股智能化(8 角色 + 工具调用)
+> **最新改动**: v4.0 完整 4 阶段交付(A1-A4 + B1-B6 + C1 + T+1 模拟成交)
 > **详细记录**: 看 `stockai-project-docs/CHANGELOG.md` 和 `stockai-project-docs/V4-PLAN.md`
 > **文档结构**: 根目录 `INDEX.md` 是入口,所有 MD 已分类到 `stockai-project-docs/` 与 `monitor-desktop-docs/`
 

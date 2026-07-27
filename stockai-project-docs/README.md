@@ -2,17 +2,17 @@
 
 # StockAI
 
-### A 股 AI 量化选股 · 研究→决策证据闭环
+### A 股 AI 量化选股 · T+1 短线预测 + 研究→决策证据闭环
 
-**55 因子 · 13 策略 · 5 角色多 Agent · 自动量化 Pipeline · 后端监视器**
+**64 因子 · 13 策略 · 8 角色多 Agent + Agent 工具调用 · 自动量化 Pipeline · T+1 模拟成交 · 反事实报告 · 多策略组合**
 
-![Version](https://img.shields.io/badge/version-v3.11-success?style=flat-square)
+![Version](https://img.shields.io/badge/version-v4.0-success?style=flat-square)
 ![Python](https://img.shields.io/badge/python-3.11+-blue?style=flat-square&logo=python&logoColor=white)
 ![Next.js](https://img.shields.io/badge/Next.js-16-black?style=flat-square&logo=next.js&logoColor=white)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.6-3178C6?style=flat-square&logo=typescript&logoColor=white)
 ![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)
 
-[English](stockai-project-docs/README.en.md) · [中文](#) · [文档导航](INDEX.md)
+[English](stockai-project-docs/README.en.md) · [中文](#) · [文档导航](INDEX.md) · [v4.0 计划](V4-PLAN.md)
 
 </div>
 
@@ -20,12 +20,14 @@
 
 ## 🎯 TL;DR
 
-StockAI 是一个**纯本地化**的 A 股量化工具箱,定位**预测 + 回测**,不接实时交易。
+StockAI v4.0 是一个**纯本地化**的 A 股量化工具箱,主线场景升级为 **T+1/T+2 短线预测**(前晚 22:00 跑 Pipeline → 次日开盘模拟成交 → 第三日卖出),辅以完整的因子回测 / 决策闭环 / 证据可视化。
 
-- **多因子选股**: 55 因子(9 大类) + IC 加权打分 + AI 二次精选 + 5 角色多空辩论
-- **策略回测**: 13 YAML 策略模板 + 参数优化 + 滑点/成本模型 + 过拟合警告
-- **证据闭环**: v3.11 新增 — 三轴状态机 + OOS 快照 + 影子组合 + 审批收件箱 + 灰度 flag,**所有决策可追溯**
-- **自动 Pipeline**: 每日收盘后 cron 跑 GP→ML→衰减→数据健康→简报推送
+- **8 角色多 Agent + CoT 推理** + Agent 工具调用(Claude tool_use / OpenAI function_calling)
+- **64 因子**(29 经典 + 35 Alpha158 扩展) + IC 重新校准 + 多策略组合回测
+- **T+1 模拟成交 watcher**(状态机 pending_buy → bought → sold,写 holdings + transactions)
+- **滑点 + 冲击成本**模型(B4 默认 10bps + B5 基于 ADV 平方根)
+- **反事实报告** (基于 `proposal_retrospectives`,无新表) + 个性化 prompt(A4)
+- **证据闭环**: 三轴状态机 + OOS 快照 + 影子组合 + 审批收件箱 + 灰度 flag
 - **后端监视器**: Electron 桌面 app,实时观察 stockai 后端进程 / 日志 / 数据库
 
 > 📖 完整文档: [stockai-project-docs/](stockai-project-docs/) · 📋 监视器: [monitor-desktop/](monitor-desktop/)

@@ -2,17 +2,17 @@
 
 # StockAI
 
-### A-Share AI Quant Screener · Research → Decision Evidence Loop
+### A-Share AI Quant Screener · T+1 Short-term Forecast + Research → Decision Evidence Loop
 
-**55 factors · 13 strategies · 5-role multi-agent · Auto Quant Pipeline · Backend Monitor**
+**64 factors · 13 strategies · 8-role multi-agent + agent tool calls · Auto Quant Pipeline · T+1 simulated fills · Counterfactual reports · Multi-strategy portfolio**
 
-![Version](https://img.shields.io/badge/version-v3.11-success?style=flat-square)
+![Version](https://img.shields.io/badge/version-v4.0-success?style=flat-square)
 ![Python](https://img.shields.io/badge/python-3.11+-blue?style=flat-square&logo=python&logoColor=white)
 ![Next.js](https://img.shields.io/badge/Next.js-16-black?style=flat-square&logo=next.js&logoColor=white)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.6-3178C6?style=flat-square&logo=typescript&logoColor=white)
 ![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)
 
-[中文](README.md) · [English](#) · [Docs](../INDEX.md)
+[中文](README.md) · [English](#) · [Docs](../INDEX.md) · [v4.0 Plan](V4-PLAN.md)
 
 </div>
 
@@ -20,9 +20,17 @@
 
 ## 🎯 TL;DR
 
-StockAI is a **purely local** A-share quant toolbox, focused on **prediction + backtest**, not real-time trading.
+StockAI v4.0 is a **purely local** A-share quant toolbox with the main scenario upgraded to **T+1/T+2 short-term forecast** (run pipeline at 22:00 → simulate fill at next open → sell on day 3), complemented by full factor backtest / decision loop / evidence visualization.
 
-- **Multi-factor screening**: 55 factors (9 categories) + IC-weighted scoring + AI secondary selection + 5-role bull/bear debate
+- **8-role multi-agent + CoT reasoning** + agent tool calls (Claude tool_use / OpenAI function_calling)
+- **64 factors** (29 classic + 35 Alpha158 extended) + IC recalibration + multi-strategy portfolio backtest
+- **T+1 simulated fill watcher** (state machine pending_buy → bought → sold, writes holdings + transactions)
+- **Slippage + market impact** models (B4 default 10bps + B5 ADV square-root)
+- **Counterfactual reports** (based on `proposal_retrospectives`, no new tables) + personalized prompts (A4)
+- **Evidence loop**: tri-axis state machine + OOS snapshots + shadow portfolios + approval inbox + feature flags
+- **Backend monitor**: Electron desktop app for real-time backend / log / database observation
+
+> 📖 Full docs: [stockai-project-docs/](stockai-project-docs/) · 📋 Monitor: [monitor-desktop/](monitor-desktop/)
 - **Strategy backtest**: 13 YAML strategy templates + parameter optimization + slippage/cost model + overfit warnings
 - **Evidence loop** (v3.11): Three-axis state machine + OOS snapshot + shadow portfolio + approval inbox + feature flags — **every decision is traceable**
 - **Auto Pipeline**: Post-close cron runs GP→ML→decay→data-health→brief push
