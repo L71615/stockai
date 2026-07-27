@@ -32,7 +32,7 @@ StockAI v4.0 is a **purely local** A-share quant toolbox with the main scenario 
 
 > 📖 Full docs: [stockai-project-docs/](stockai-project-docs/) · 📋 Monitor: [monitor-desktop/](monitor-desktop/)
 - **Strategy backtest**: 13 YAML strategy templates + parameter optimization + slippage/cost model + overfit warnings
-- **Evidence loop** (v3.11): Three-axis state machine + OOS snapshot + shadow portfolio + approval inbox + feature flags — **every decision is traceable**
+- **Evidence loop** (v3.11 + v4.0 enhanced): Three-axis state machine + OOS snapshot + shadow portfolio → T+1 simulated fill watcher + approval inbox + feature flags + counterfactual visualization — **every decision is traceable end-to-end**
 - **Auto Pipeline**: Post-close cron runs GP→ML→decay→data-health→brief push
 - **Backend monitor**: Electron desktop app, real-time view of processes / logs / database
 
@@ -59,19 +59,19 @@ StockAI v4.0 is a **purely local** A-share quant toolbox with the main scenario 
 
 ---
 
-## 🆕 v3.11 — Research → Decision Evidence Loop
+## 🔁 Research → Decision Evidence Loop (v3.11 Foundation + v4.0 Enhancements)
 
-5 core modules collaborate to deliver **traceable decisions + counterfactual comparison**:
+**v3.11 laid the 5-module foundation; v4.0 fully refactored and extended it** to deliver **traceable decisions + counterfactual comparison + T+1 simulated fills**:
 
-| Module | Role | Key Capabilities |
-|--------|------|------------------|
-| **T1 Experiment Ledger** | Factor candidate lifecycle management | Three-axis state machine (lifecycle/portfolio_role/proposal) + version CAS + append-only audit |
-| **T2 OOS Snapshot** | Freeze hypotheses, prevent look-ahead bias | snapshot_hash + point-in-time replay + leakage detection |
-| **T3 Shadow Portfolio** | Post-close simulated live trading | T+1 execution + 100-lot round + blocked-on-missing-price + UNIQUE dedup |
-| **T4 Approval Inbox** | Human final decision | TTL lease + three-layer CAS + counterfactual review |
-| **T5 Feature Flags** | Safe gradual rollout | 5 feature flags (default OFF) + one-click revert + notification_log audit |
+| Module | v3.11 Foundation | v4.0 Enhancements |
+|--------|-------------------|---------------------|
+| **T1 Experiment Ledger** | Three-axis state machine + version CAS + append-only audit | Maintained; backbone for factor/strategy experiments |
+| **T2 OOS Snapshot** | snapshot_hash + point-in-time replay + leakage detection | IC recalibration API (one-call factor ranking) |
+| **T3 Shadow Portfolio** | T+1 execution + 100-lot round + blocked-on-missing-price + UNIQUE dedup | **Fully refactored into T+1 Simulated Fill Watcher** (`t1_pending_orders` state machine pending_buy→bought→sold, with slippage + market impact + T+1 cost) |
+| **T4 Approval Inbox** | TTL lease + three-layer CAS + counterfactual review | **C1 Counterfactual Report Visualization** (new Tab in `/pipeline`, approved vs rejected actual performance comparison) |
+| **T5 Feature Flags** | 5 feature flags (default OFF) + one-click revert + notification_log audit | Maintained; v4.0 new capabilities follow the same OFF-by-default policy |
 
-> Once run, every shadow portfolio decision can be traced: factor expression → historical backtest → OOS validation → multi-agent vote → human approval → actual performance → reflection injection. See [CHANGELOG.md](CHANGELOG.md) 2026-07-25 entry.
+> Once run, every T+1 simulated fill decision can be traced: **factor expression → IC recalibration → multi-agent vote (8 roles + CoT + tool calls + personalization) → counterfactual report (approved vs rejected actual performance) → T+1 slippage + market impact + holding cost → position → sell → PnL**. See [CHANGELOG.md](CHANGELOG.md) v4.0 series + [RELEASE-NOTES-v4.0.md](RELEASE-NOTES-v4.0.md).
 
 ---
 
@@ -157,7 +157,7 @@ Independent Electron desktop app, read-only view of backend processes / access l
 | `/screener` | AI screener — multi-factor scan + AI selection + 5-agent validation + warnings |
 | `/screener/condition` | Conditional screener — four-layer filter + 13 YAML strategies |
 | `/factor-lab` | Factor lab — IC/correlation/scatter/GP/ML + decay scoring |
-| **`/pipeline`** | **v3.11 Inbox** — pending/approved/rejected/expired + lease countdown |
+| **`/pipeline`** | **v4.0 Inbox + Counterfactual** — pending/approved/rejected/expired + lease countdown + approved vs rejected actual performance comparison Tab |
 | `/watchlist` | Watchlist — realtime quote + batch quotes |
 | `/market` | Market indices — 15 global indices |
 | `/transactions` | Transaction CRUD |
@@ -217,6 +217,7 @@ stocks/
 
 | Version | Date | Theme |
 |---------|------|-------|
+| **v4.0** | 2026-07-28 | T+1 short-term forecast mainline · 8-role multi-agent + CoT + tool calls + personalization · 64 factors · slippage + market impact · multi-strategy portfolio · counterfactual (193 new tests) |
 | **v3.11** | 2026-07-25 | Research→Decision Evidence Loop (9 steps delivered, 187 tests) |
 | v3.10.4 | 2026-07-24 | /quotes perf 50× + K-line tests |
 | v3.10 | 2026-07-23 | 🆕 Auto Quant Pipeline (cron + brief + push) |

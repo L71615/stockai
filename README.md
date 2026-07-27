@@ -27,7 +27,7 @@ StockAI v4.0 是一个**纯本地化**的 A 股量化工具箱,主线场景升�
 - **T+1 模拟成交 watcher**(状态机 pending_buy → bought → sold,写 holdings + transactions)
 - **滑点 + 冲击成本**模型(B4 默认 10bps + B5 基于 ADV 平方根)
 - **反事实报告** (基于 `proposal_retrospectives`,无新表) + 个性化 prompt(A4)
-- **证据闭环**: 三轴状态机 + OOS 快照 + 影子组合 + 审批收件箱 + 灰度 flag
+- **证据闭环**(v3.11 基础 + v4.0 增强): 三轴状态机 + OOS 快照 + **T+1 模拟成交 watcher** + 审批收件箱 + **反事实报告可视化** + 灰度 flag
 - **后端监视器**: Electron 桌面 app,实时观察 stockai 后端进程 / 日志 / 数据库
 
 > 📖 完整文档: [stockai-project-docs/](stockai-project-docs/) · 📋 监视器: [monitor-desktop/](monitor-desktop/)
@@ -61,19 +61,19 @@ StockAI v4.0 是一个**纯本地化**的 A 股量化工具箱,主线场景升�
 
 ---
 
-## 🆕 v3.11 — 研究→决策证据闭环
+## 🔁 研究→决策证据闭环(v3.11 基础 + v4.0 增强)
 
-5 个核心模块协同,实现**决策可追溯 + 反事实可对比**:
+**v3.11 奠定的 5 个核心模块**,v4.0 在其上完整重构 + 增强,实现**决策可追溯 + 反事实可对比 + T+1 真实模拟成交**:
 
-| 模块 | 作用 | 关键能力 |
-|------|------|---------|
-| **T1 实验账本** | 因子候选的全生命周期管理 | 三轴状态机 (lifecycle/portfolio_role/proposal) + 版本 CAS + append-only 审计 |
-| **T2 OOS 快照** | 冻结假设,防数据穿越 | snapshot_hash + point-in-time replay + leakage 检测 |
-| **T3 影子组合** | 收盘后模拟实盘 | T+1 执行 + 整手(100 股) + 缺价 blocked + UNIQUE 防重复 |
-| **T4 审批收件箱** | 人工最终决策 | TTL lease + 三层 CAS + counterfactual 复盘 |
-| **T5 灰度开关** | 安全渐进上线 | 5 个 feature flag (默认 OFF) + 一键回 OFF + notification_log 独立审计 |
+| 模块 | v3.11 基础 | v4.0 增强 |
+|------|------------|----------|
+| **T1 实验账本** | 三轴状态机 (lifecycle/portfolio_role/proposal) + 版本 CAS + append-only 审计 | 持续维护,作为因子/策略实验的账本 |
+| **T2 OOS 快照** | snapshot_hash + point-in-time replay + leakage 检测 | IC 重新校准接口(因子排名一键出) |
+| **T3 影子组合** | T+1 执行 + 整手(100 股) + 缺价 blocked + UNIQUE 防重复 | **完整重构为 T+1 模拟成交 watcher**(`t1_pending_orders` 状态机 pending_buy→bought→sold,滑点+冲击+T+1 成本全计入) |
+| **T4 审批收件箱** | TTL lease + 三层 CAS + counterfactual 复盘 | **加 C1 反事实报告可视化**(`/pipeline` 新 Tab,approved vs rejected 实际表现对比) |
+| **T5 灰度开关** | 5 个 feature flag (默认 OFF) + 一键回 OFF + notification_log 独立审计 | 持续维护,v4.0 新能力默认 OFF 走此机制 |
 
-> 跑通后,任何一笔影子组合决策都能追溯到:因子表达式 → 历史回测 → OOS 验证 → 多 Agent 投票 → 人工审批 → 实际表现 → 反思注入。详见 [CHANGELOG.md](stockai-project-docs/CHANGELOG.md) 2026-07-25 段。
+> 跑通后,任何一笔 T+1 模拟成交决策都能追溯到:**因子表达式 → IC 校准 → 多 Agent 投票(8 角色 + CoT + 工具调用 + 个性化)→ 反事实报告(approved vs rejected 实际表现)→ T+1 滑点+冲击+T+1 成本全计入 → 持仓→卖出→收益统计**。详见 [CHANGELOG.md](stockai-project-docs/CHANGELOG.md) v4.0 系列 + [RELEASE-NOTES-v4.0.md](stockai-project-docs/RELEASE-NOTES-v4.0.md)。
 
 ---
 
@@ -159,7 +159,7 @@ run.bat
 | `/screener` | AI 选股 — 多因子扫描 + AI 精选 + 5 Agent 验证 + 候选警告 |
 | `/screener/condition` | 条件选股 — 四层过滤 + 13 YAML 策略 |
 | `/factor-lab` | 因子实验室 — IC/相关性/散点/GP/ML + 衰减评分 |
-| **`/pipeline`** | **v3.11 收件箱** — 待审批/已通过/已拒绝/已过期 + lease 倒计时 |
+| **`/pipeline`** | **v4.0 收件箱 + 反事实** — 待审批/已通过/已拒绝/已过期 + lease 倒计时 + approved vs rejected 实际表现对比 Tab |
 | `/watchlist` | 自选股 — 实时行情 + 批量报价 |
 | `/market` | 大盘指数 — 全球 15 指数 |
 | `/transactions` | 交易记录 CRUD |
@@ -219,6 +219,7 @@ stocks/
 
 | 版本 | 日期 | 主题 |
 |------|------|------|
+| **v4.0** | 2026-07-28 | T+1 短线预测主线 · 8 角色多 Agent + CoT + 工具调用 + 个性化 · 64 因子 · 滑点+冲击 · 多策略组合 · 反事实(193 新测试) |
 | **v3.11** | 2026-07-25 | 研究→决策证据闭环(9 step 交付, 187 测试) |
 | v3.10.4 | 2026-07-24 | /quotes 性能 50× + K 线测试 |
 | v3.10 | 2026-07-23 | 🆕 自动量化 Pipeline(cron + 简报 + 推送) |
