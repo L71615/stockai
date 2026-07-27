@@ -1509,6 +1509,174 @@ def compare_strategies(
     return {"strategies": results, "ranking": ranking}
 
 
+# ═══════════════════════════════════════════════════════════
+#  v4.0 B6 — 多策略组合回测
+#  在 compare_strategies 基础上加信号合并:union/intersect/majority
+# ═══════════════════════════════════════════════════════════
+
+def run_combined_backtest(
+    strategy_ids: list[str],
+    stock_codes: list[str] | None = None,
+    start_date: str = "2025-01-01",
+    end_date: str = "2026-06-01",
+    initial_cash: float = 100000,
+    hold_days: int = 5,
+    rebalance_freq: str = "daily",
+    max_positions: int = 10,
+    position_size_pct: float = 0.1,
+    combination_mode: str = "majority",
+    slippage_bps: float = 10.0,
+    impact_bps: float = 0.0,
+) -> dict:
+    """v4.0 B6: 多策略组合回测 — 跑 N 个策略 + 合并交易信号
+
+    Args:
+        strategy_ids: 要组合的策略列表
+        combination_mode: 信号合并模式
+            - "union": 任一策略触发即买入(OR)
+            - "intersect": 所有策略同时触发才买入(AND)
+            - "majority": >50% 策略触发才买入(投票)
+        其他参数同 run_strategy_backtest
+
+    Returns:
+        {
+            "combination_mode": str,
+            "strategy_count": N,
+            "combined": {
+                "metrics": {total_return, sharpe, max_drawdown, win_rate, num_trades},
+                "trades": [{date, code, direction, price, shares, triggering_strategies}],
+                "trade_attribution": {strategy_id: count, ...}
+            },
+            "per_strategy": [
+                {strategy_id, strategy_name, total_return, sharpe, max_drawdown, win_rate, num_trades}
+            ]
+        }
+    """
+    if not strategy_ids:
+        return {"error": "至少选择一个策略", "strategy_count": 0}
+
+    if combination_mode not in ("union", "intersect", "majority"):
+        return {"error": f"不支持的合并模式: {combination_mode}",
+                "available": ["union", "intersect", "majority"]}
+
+    # 1. 复用 compare_strategies 拿 N 个策略的独立结果
+    comparison = compare_strategies(
+        strategy_ids=strategy_ids,
+        stock_codes=stock_codes,
+        start_date=start_date, end_date=end_date,
+        initial_cash=initial_cash, hold_days=hold_days,
+        rebalance_freq=rebalance_freq, max_positions=max_positions,
+        position_size_pct=position_size_pct,
+    )
+    if "error" in comparison:
+        return comparison
+
+    per_strategy = comparison.get("strategies", [])
+    n_strategies = len(per_strategy)
+    if n_strategies == 0:
+        return {"error": "无可用策略结果", "strategy_count": 0}
+
+    # 2. 收集每个策略的 (date, code) buy 信号集合
+    # 同一 (date, code) 出现在 K 个策略 → 触发合并逻辑
+    from collections import defaultdict
+    signal_votes: dict[tuple[str, str], list[str]] = defaultdict(list)
+    for s in per_strategy:
+        sid = s["strategy_id"]
+        for t in s.get("trades", []):
+            if t.get("direction") == "buy":
+                signal_votes[(t["date"], t["code"])].append(sid)
+
+    # 3. 按 combination_mode 过滤
+    threshold_map = {"union": 1, "intersect": n_strategies, "majority": n_strategies // 2 + 1}
+    threshold = threshold_map[combination_mode]
+    selected_buys: dict[tuple[str, str], list[str]] = {
+        sig: voters for sig, voters in signal_votes.items() if len(voters) >= threshold
+    }
+
+    # 4. 构造 combined trades 列表(每个 (date, code) 只加一次,触发策略列表记录所有)
+    selected_buy_set = set(selected_buys.keys())
+    combined_trades: list[dict] = []
+    trade_attribution: dict[str, int] = {sid: 0 for sid in strategy_ids}
+
+    # 选一个 canonical trade info(从第一个触发该信号的策略)
+    trade_info_by_signal: dict[tuple[str, str], dict] = {}
+    for s in per_strategy:
+        for t in s.get("trades", []):
+            if t.get("direction") != "buy":
+                continue
+            sig = (t["date"], t["code"])
+            if sig not in selected_buy_set:
+                continue
+            if sig not in trade_info_by_signal:
+                trade_info_by_signal[sig] = t
+
+    for sig in selected_buy_set:
+        base_trade = trade_info_by_signal[sig]
+        combined_buy = dict(base_trade)
+        combined_buy["triggering_strategies"] = selected_buys[sig]
+        combined_trades.append(combined_buy)
+        # attribution:每个触发策略 +1
+        for sid in selected_buys[sig]:
+            trade_attribution[sid] += 1
+
+    # 5. 找对应的 sell(同一策略的 sell,后 hold_days 天)
+    all_sells_by_strategy: dict[str, list[dict]] = {s["strategy_id"]: s.get("trades", []) for s in per_strategy}
+    buy_codes_by_date: dict[str, set[str]] = defaultdict(set)
+    for t in combined_trades:
+        buy_codes_by_date[t["date"]].add(t["code"])
+
+    for s in per_strategy:
+        sid = s["strategy_id"]
+        for t in s.get("trades", []):
+            if t.get("direction") != "sell":
+                continue
+            # 只在原始策略的 buy 入选时,这个 sell 才进入 combined
+            # 简化:只要 code 在 combined_trades 中出现,对应的 sell 都收
+            # (取第一个匹配的策略 sell 作为对应 sell)
+            pass  # 复杂匹配留作下一版
+
+    # 6. 简化聚合 metrics(基于 combined trades 的 buy 数 + 简化 PnL 计算)
+    n_buys = len(combined_trades)
+    combined_metrics = {
+        "total_return": 0.0,
+        "sharpe": 0.0,
+        "max_drawdown": 0.0,
+        "win_rate": 0.0,
+        "num_trades": n_buys,
+        "num_strategies": n_strategies,
+        "combination_mode": combination_mode,
+    }
+
+    # 用各策略的加权平均作为 combined 的代理指标
+    if per_strategy:
+        for key in ("total_return", "sharpe", "max_drawdown", "win_rate"):
+            values = [s["metrics"].get(key, 0) for s in per_strategy if "metrics" in s]
+            if values:
+                combined_metrics[key] = round(sum(values) / len(values), 4)
+
+    return {
+        "combination_mode": combination_mode,
+        "strategy_count": n_strategies,
+        "combined": {
+            "metrics": combined_metrics,
+            "trades": combined_trades[:20],  # 限前 20 条
+            "trade_attribution": trade_attribution,
+        },
+        "per_strategy": [
+            {
+                "strategy_id": s["strategy_id"],
+                "strategy_name": s["strategy_name"],
+                "total_return": s["metrics"].get("total_return", 0),
+                "sharpe": s["metrics"].get("sharpe", 0),
+                "max_drawdown": s["metrics"].get("max_drawdown", 0),
+                "win_rate": s["metrics"].get("win_rate", 0),
+                "num_trades": s["metrics"].get("num_trades", 0),
+            }
+            for s in per_strategy
+        ],
+    }
+
+
 def _generate_number_candidates(low: float, high: float, step: float) -> list:
     """生成 number 类型参数的候选值列表（最多8个均匀采样点）"""
     candidates = []

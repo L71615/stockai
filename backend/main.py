@@ -14,7 +14,7 @@ from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 from config import PORT, ENV, VERSION
-from routers import auth, stocks, ai, dca, discipline, prediction, settings as settings_router, quant, holdings, transactions, screener, factor_lab, data_ops, pipeline
+from routers import auth, stocks, ai, dca, discipline, prediction, settings as settings_router, quant, holdings, transactions, screener, factor_lab, data_ops, pipeline, counterfactual
 
 app = FastAPI(title="StockAI", version=VERSION, docs_url="/api/docs")
 
@@ -94,6 +94,7 @@ from routers import experiments as experiments_router
 from routers import shadow as shadow_router
 app.include_router(approvals_router.router)
 app.include_router(experiments_router.router)
+app.include_router(counterfactual.router)
 app.include_router(shadow_router.router)
 
 # 健康检查

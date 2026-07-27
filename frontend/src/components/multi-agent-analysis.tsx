@@ -46,9 +46,18 @@ interface AnalysisResult {
   risk_warning: string
   suggested_hold_days: number | null
   stop_loss_pct: number | null
+  // v4.0 A3 — CoT 推理链
+  reasoning_chain?: {
+    step1_signals?: string[]
+    step2_evaluation?: string
+    step3_risks?: string
+    step4_decision?: string
+    step5_confidence?: string
+  }
   // 元数据
   agent_count?: number
   enabled_roles?: string[]
+  enable_cot?: boolean
 }
 
 const PHASES = [
@@ -157,6 +166,39 @@ export function MultiAgentAnalysis() {
                   <span className="flex items-center gap-1"><IconShield className="size-3" />{result.risk_warning}</span>
                 )}
               </div>
+
+              {/* v4.0 A3 — CoT 推理链(可折叠) */}
+              {result.reasoning_chain && Object.keys(result.reasoning_chain).length > 0 && (
+                <details className="mt-2 text-[10px]">
+                  <summary className="cursor-pointer text-purple-400 hover:underline">
+                    推理链 (CoT 5 步) {result.enable_cot === false ? "(已关闭)" : ""}
+                  </summary>
+                  <div className="mt-2 space-y-1.5 pl-3 border-l-2 border-purple-500/30">
+                    {result.reasoning_chain.step1_signals && result.reasoning_chain.step1_signals.length > 0 && (
+                      <div>
+                        <span className="text-muted-foreground">Step 1 — 关键信号:</span>
+                        <ul className="list-disc list-inside pl-2">
+                          {result.reasoning_chain.step1_signals.map((s, i) => (
+                            <li key={i}>{s}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                    {result.reasoning_chain.step2_evaluation && (
+                      <div><span className="text-muted-foreground">Step 2 — 多空评估:</span> {result.reasoning_chain.step2_evaluation}</div>
+                    )}
+                    {result.reasoning_chain.step3_risks && (
+                      <div><span className="text-muted-foreground">Step 3 — 风险:</span> {result.reasoning_chain.step3_risks}</div>
+                    )}
+                    {result.reasoning_chain.step4_decision && (
+                      <div><span className="text-muted-foreground">Step 4 — 决策:</span> {result.reasoning_chain.step4_decision}</div>
+                    )}
+                    {result.reasoning_chain.step5_confidence && (
+                      <div><span className="text-muted-foreground">Step 5 — 信心:</span> {result.reasoning_chain.step5_confidence}</div>
+                    )}
+                  </div>
+                </details>
+              )}
             </CardContent>
           </Card>
 

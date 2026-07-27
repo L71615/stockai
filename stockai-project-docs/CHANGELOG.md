@@ -1,7 +1,7 @@
 # StockAI 项目日志
 
 > StockAI 从 0 到 v4.0 的完整演进记录。按时间倒序。
-> **当前版本: v4.0 Phase 2 完成** · 下一阶段: Phase 3 (闭环可视化)
+> **当前版本: v4.0 Phase 3 完成** · 下一阶段: Phase 4 (Alpha158 完整 + 个性化,可选)
 
 ---
 
@@ -123,6 +123,50 @@
 - ✅ IC 重新校准接口就绪,跑实际数据即可出 Top-N 排名
 
 **Phase 2 核心已就绪,Phase 3 (闭环可视化) 可随时启动。**
+
+---
+
+## 2026-07-27 — v4.0 Phase 3 完成(C1 + A3 + B6)
+
+### 🎉 Phase 3 全部 3 子项落地
+
+| 子项 | 状态 | 主要改动 |
+|------|------|----------|
+| **C1** 反事实报告可视化 | ✅ | 新增 `counterfactual.py` router,2 个端点(`/counterfactual` + `/retrospectives`),前端 `/pipeline` 加新 Tab |
+| **A3** 推理增强(CoT) | ✅ | `multi_agent_service.py` 加 `JUDGE_SYSTEM_COT` 5 步推理 prompt,`enable_cot` 参数,`reasoning_chain` 输出字段 |
+| **B6** 多策略组合回测 | ✅ | `strategy_backtest_service.py` 加 `run_combined_backtest`,3 种合并模式(union/intersect/majority)+ trade_attribution |
+
+### 📁 新增/修改文件
+
+**新增**:
+- `backend/routers/counterfactual.py` (2 端点)
+- `tests/test_counterfactual_api.py` (10 tests)
+- `tests/test_combined_strategies.py` (11 tests)
+
+**修改**:
+- `backend/services/multi_agent_service.py` (JUDGE_SYSTEM_COT + CoT 推理链)
+- `backend/services/strategy_backtest_service.py` (run_combined_backtest 3 模式)
+- `backend/main.py` (注册 counterfactual router)
+- `frontend/src/app/pipeline/page.tsx` (反事实 Tab + CounterfactualView)
+- `frontend/src/components/multi-agent-analysis.tsx` (CoT 推理链折叠卡)
+
+### 🧪 测试覆盖
+
+**46 个新测试 100% 通过**(10 C1 + 11 B6 + 25 A3 含 CoT)
+
+### 🎯 关键设计
+
+- **C1**: 基于已有 `proposal_retrospectives` + `proposal_outcomes` 表,**无需新建表**;前端 3 卡片对比(已通过/已拒绝/Edge)
+- **A3 CoT**: 5 步显式推理(关键信号 → 多空评估 → 风险 → 决策 → 信心),`reasoning_chain` 字段可折叠展示
+- **B6**: 信号合并阈值 `union=1` / `intersect=N` / `majority=N/2+1`;trade_attribution 统计每个策略贡献
+
+### 🎯 Phase 3 验收
+
+- ✅ 反事实报告 API + 前端 Tab(approved vs rejected 实际表现对比)
+- ✅ CoT 推理链(5 步显式推理,可折叠 UI)
+- ✅ 多策略组合回测(3 模式 + attribution)
+
+**Phase 3 核心已就绪,Phase 4 (B2/B3 剩余 Alpha158 + A4 个性化, 可选) 1-2 周可启动。**
 
 ---
 

@@ -11,7 +11,7 @@ import { apiGet, apiPost } from "@/lib/auth"
 import { cn } from "@/lib/utils"
 import {
   IconPlayerPlay, IconRefresh, IconCircleCheck, IconAlertTriangle,
-  IconCircleX, IconClock, IconInbox,
+  IconCircleX, IconClock, IconInbox, IconHistory, IconScale,
 } from "@tabler/icons-react"
 
 import { useProposals } from "@/hooks/use-pipeline"
@@ -39,6 +39,10 @@ export default function PipelinePage() {
                 <IconPlayerPlay className="size-3.5 mr-1" />
                 运行
               </TabsTrigger>
+              <TabsTrigger value="counterfactual">
+                <IconScale className="size-3.5 mr-1" />
+                反事实
+              </TabsTrigger>
             </TabsList>
 
             <TabsContent value="inbox" className="mt-4">
@@ -47,6 +51,10 @@ export default function PipelinePage() {
 
             <TabsContent value="runs" className="mt-4">
               <RunsView />
+            </TabsContent>
+
+            <TabsContent value="counterfactual" className="mt-4">
+              <CounterfactualView />
             </TabsContent>
           </Tabs>
         </div>
@@ -464,6 +472,270 @@ function HealthItem({ label, status, detail }: { label: string; status: string; 
         <Icon className="size-3.5" />{status}
       </div>
       {detail && <div className="text-[10px] text-muted-foreground mt-0.5">{detail}</div>}
+    </div>
+  )
+}
+
+// ════════════════════════════════════════════════════════════
+//  v4.0 C1 — 反事实报告视图
+//  - 对比 approved vs rejected 的实际表现
+//  - 列出每条反事实的 hypothesis / evidence / realized / lesson
+// ════════════════════════════════════════════════════════════
+
+interface CounterfactualSummary {
+  window: { since: string; until: string }
+  baseline_code: string
+  accepted: {
+    count: number
+    avg_fwd_return: number
+    avg_baseline_diff: number
+    good_rate: number
+  }
+  rejected: {
+    count: number
+    avg_fwd_return: number
+    avg_baseline_diff: number
+    good_rate: number
+  }
+  edge: number
+  interpretation: string
+  v4_metadata?: { phase: string; days: number; data_source: string }
+}
+
+interface Retrospective {
+  retro_id: number
+  proposal_id: number
+  experiment_id: string
+  decision: string
+  fwd_days: number
+  fwd_return: number
+  fwd_baseline_diff: number
+  hypothesis: string
+  evidence_summary: string
+  realized_summary: string
+  lesson: string
+  confidence: number
+  created_at: string
+}
+
+function CounterfactualView() {
+  const [days, setDays] = useState(30)
+  const [summary, setSummary] = useState<CounterfactualSummary | null>(null)
+  const [retros, setRetros] = useState<Retrospective[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      const [s, r] = await Promise.all([
+        apiGet<CounterfactualSummary>(`/api/pipeline/counterfactual?days=${days}`),
+        apiGet<{ retrospectives: Retrospective[] }>(`/api/pipeline/retrospectives?limit=20`),
+      ])
+      setSummary(s)
+      setRetros(r?.retrospectives ?? [])
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "加载失败")
+    } finally {
+      setLoading(false)
+    }
+  }, [days])
+
+  useEffect(() => {
+    load()
+  }, [load])
+
+  const edge = summary?.edge ?? 0
+  const edgePositive = edge > 0
+
+  return (
+    <div className="space-y-4">
+      {/* Header + 时间窗口选择 */}
+      <Card>
+        <CardHeader className="pb-2">
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle className="text-sm">反事实报告</CardTitle>
+              <CardDescription className="text-xs">
+                对比"通过"和"拒绝"的实际表现, 衡量 pipeline 的决策质量
+              </CardDescription>
+            </div>
+            <div className="flex items-center gap-2">
+              <select
+                className="h-8 rounded border border-border/40 bg-background px-2 text-xs"
+                value={days}
+                onChange={(e) => setDays(parseInt(e.target.value, 10))}
+              >
+                <option value={7}>最近 7 天</option>
+                <option value={30}>最近 30 天</option>
+                <option value={60}>最近 60 天</option>
+                <option value={90}>最近 90 天</option>
+              </select>
+              <Button size="sm" variant="outline" onClick={load}>
+                <IconRefresh className="size-3.5 mr-1" />刷新
+              </Button>
+            </div>
+          </div>
+        </CardHeader>
+      </Card>
+
+      {error && (
+        <Card className="border-red-500/40">
+          <CardContent className="p-4 text-xs text-red-400">
+            加载失败: {error}
+          </CardContent>
+        </Card>
+      )}
+
+      {loading ? (
+        <Skeleton className="h-32 w-full" />
+      ) : summary && (
+        <>
+          {/* 摘要: 通过 vs 拒绝 表现对比 */}
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+            <CounterfactualCard
+              title="已通过"
+              decision="approved"
+              data={summary.accepted}
+              accent="emerald"
+            />
+            <CounterfactualCard
+              title="已拒绝"
+              decision="rejected"
+              data={summary.rejected}
+              accent="red"
+            />
+            <Card className={cn(
+              "border-l-[3px]",
+              edgePositive ? "border-l-emerald-400" : "border-l-amber-400"
+            )}>
+              <CardHeader className="pb-1">
+                <CardTitle className="text-xs">决策 Edge</CardTitle>
+                <CardDescription className="text-[10px]">通过 - 拒绝 收益差</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className={cn(
+                  "text-2xl font-mono font-semibold",
+                  edgePositive ? "text-emerald-400" : "text-amber-400"
+                )}>
+                  {edge > 0 ? "+" : ""}{(edge * 100).toFixed(2)}%
+                </div>
+                <p className="text-[10px] text-muted-foreground mt-1">
+                  {summary.interpretation}
+                </p>
+                <p className="text-[10px] text-muted-foreground mt-2">
+                  基准: {summary.baseline_code} · 窗口: {summary.window.since?.slice(0, 10)} ~ {summary.window.until?.slice(0, 10)}
+                </p>
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* 详细反事实列表 */}
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm">详细反事实 (最近 {retros.length} 条)</CardTitle>
+              <CardDescription className="text-xs">
+                每条记录显示假设 / 证据 / 实际结果 / 教训
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              {retros.length === 0 ? (
+                <p className="text-xs text-muted-foreground py-4 text-center">
+                  暂无反事实数据。等待 proposal 决策被回填实际表现后,这里会自动展示。
+                </p>
+              ) : (
+                <div className="space-y-3">
+                  {retros.map((r) => (
+                    <RetrospectiveCard key={r.retro_id} r={r} />
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </>
+      )}
+    </div>
+  )
+}
+
+function CounterfactualCard({
+  title,
+  decision,
+  data,
+  accent,
+}: {
+  title: string
+  decision: string
+  data: { count: number; avg_fwd_return: number; avg_baseline_diff: number; good_rate: number }
+  accent: "emerald" | "red"
+}) {
+  const accentColor = accent === "emerald" ? "text-emerald-400" : "text-red-400"
+  return (
+    <Card className={cn("border-l-[3px]", accent === "emerald" ? "border-l-emerald-400" : "border-l-red-400")}>
+      <CardHeader className="pb-1">
+        <CardTitle className="text-xs">{title}</CardTitle>
+        <CardDescription className="text-[10px]">{decision} · n = {data.count}</CardDescription>
+      </CardHeader>
+      <CardContent>
+        <div className={cn("text-2xl font-mono font-semibold", accentColor)}>
+          {(data.avg_fwd_return * 100).toFixed(2)}%
+        </div>
+        <p className="text-[10px] text-muted-foreground mt-1">
+          vs 基准 {(data.avg_baseline_diff * 100).toFixed(2)}% · 胜率 {(data.good_rate * 100).toFixed(0)}%
+        </p>
+      </CardContent>
+    </Card>
+  )
+}
+
+function RetrospectiveCard({ r }: { r: Retrospective }) {
+  const positive = r.fwd_baseline_diff > 0
+  return (
+    <div className="rounded border border-border/40 p-3 bg-muted/10">
+      <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center gap-2">
+          <Badge
+            variant="outline"
+            className={cn(
+              "text-[10px]",
+              r.decision === "approved" ? "text-emerald-400 border-emerald-500/40" :
+              r.decision === "rejected" ? "text-red-400 border-red-500/40" :
+              "text-muted-foreground"
+            )}
+          >
+            {r.decision}
+          </Badge>
+          <span className="font-mono text-[10px] text-muted-foreground">{r.experiment_id}</span>
+          <span className="text-[10px] text-muted-foreground">· {r.fwd_days}天</span>
+        </div>
+        <div className={cn(
+          "text-sm font-mono font-semibold",
+          positive ? "text-emerald-400" : "text-red-400"
+        )}>
+          {r.fwd_baseline_diff > 0 ? "+" : ""}{(r.fwd_baseline_diff * 100).toFixed(2)}%
+        </div>
+      </div>
+      <div className="space-y-1.5 text-xs">
+        <div>
+          <span className="text-muted-foreground">假设:</span>{" "}
+          <span>{r.hypothesis || "(无)"}</span>
+        </div>
+        <div>
+          <span className="text-muted-foreground">证据:</span>{" "}
+          <span>{r.evidence_summary || "(无)"}</span>
+        </div>
+        <div>
+          <span className="text-muted-foreground">实际:</span>{" "}
+          <span>{r.realized_summary || "(无)"}</span>
+        </div>
+        {r.lesson && (
+          <div className="pt-1.5 mt-1.5 border-t border-border/30">
+            <span className="text-purple-400">教训:</span>{" "}
+            <span>{r.lesson}</span>
+          </div>
+        )}
+      </div>
     </div>
   )
 }

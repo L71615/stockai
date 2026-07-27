@@ -303,7 +303,7 @@ class TestAnalyzeStockEightRoles:
                 call_order.append("round2_bear")
             elif sys_prompt == mas.SHORT_RESEARCHER_SYSTEM:
                 call_order.append("round2_short")
-            elif sys_prompt == mas.JUDGE_SYSTEM:
+            elif sys_prompt in (mas.JUDGE_SYSTEM, mas.JUDGE_SYSTEM_COT):
                 call_order.append("round3_judge")
             return "ok"
 
@@ -330,3 +330,143 @@ class TestAnalyzeStockEightRoles:
             last_r2_idx = max(i for i, c in enumerate(call_order) if c.startswith("round2_"))
             judge_idx = next(i for i, c in enumerate(call_order) if c.startswith("round3_"))
             assert judge_idx > last_r2_idx
+
+
+# ═══════════════════════════════════════════════════════════════
+#  v4.0 A3 — CoT 推理增强
+# ═══════════════════════════════════════════════════════════════
+
+
+class TestCotReasoning:
+    def test_judge_system_cot_exists(self):
+        from services.multi_agent_service import JUDGE_SYSTEM_COT
+        assert isinstance(JUDGE_SYSTEM_COT, str)
+        assert len(JUDGE_SYSTEM_COT) > 200  # 比基础版长得多
+        # 必须包含 5 步结构
+        for step in ["Step 1", "Step 2", "Step 3", "Step 4", "Step 5"]:
+            assert step in JUDGE_SYSTEM_COT
+        # 必须包含 reasoning_chain 字段
+        assert "reasoning_chain" in JUDGE_SYSTEM_COT
+
+    @pytest.mark.asyncio
+    async def test_default_enable_cot_uses_cot_prompt(self, monkeypatch):
+        """默认 enable_cot=True → 裁判用 JUDGE_SYSTEM_COT"""
+        from services import multi_agent_service as mas
+        from services.trading_memory import TradingMemoryLog
+
+        used_prompts: list[str] = []
+
+        async def tracking_chat(message, **kwargs):
+            used_prompts.append(kwargs.get("system_prompt", ""))
+            return json.dumps({
+                "verdict": "买入", "confidence": 0.8,
+                "key_reasons": ["r1"], "risk_warning": "",
+                "reasoning_chain": {
+                    "step1_signals": ["s1"],
+                    "step2_evaluation": "e1",
+                    "step3_risks": "r1",
+                    "step4_decision": "d1",
+                    "step5_confidence": "0.8",
+                },
+            })
+
+        import json
+        monkeypatch.setattr(mas, "ai_chat", tracking_chat)
+        monkeypatch.setattr(TradingMemoryLog, "get_past_context", lambda *a, **k: "")
+        monkeypatch.setattr(TradingMemoryLog, "get_strategy_context", lambda *a, **k: "")
+        monkeypatch.setattr(mas, "_gather_stock_data", lambda code: {"name": "x", "price": 1.0})
+
+        result = await mas.analyze_stock("000001")
+
+        # 验证裁判用了 COT prompt
+        judge_prompts = [p for p in used_prompts if p in (mas.JUDGE_SYSTEM, mas.JUDGE_SYSTEM_COT)]
+        assert len(judge_prompts) == 1
+        assert judge_prompts[0] == mas.JUDGE_SYSTEM_COT
+        # 结果包含 reasoning_chain
+        assert "reasoning_chain" in result
+        assert result["reasoning_chain"]["step1_signals"] == ["s1"]
+        assert result["enable_cot"] is True
+
+    @pytest.mark.asyncio
+    async def test_disable_cot_uses_legacy_prompt(self, monkeypatch):
+        """enable_cot=False → 裁判退回 JUDGE_SYSTEM"""
+        from services import multi_agent_service as mas
+        from services.trading_memory import TradingMemoryLog
+        import json
+
+        used_prompts: list[str] = []
+
+        async def tracking_chat(message, **kwargs):
+            used_prompts.append(kwargs.get("system_prompt", ""))
+            return json.dumps({"verdict": "持有", "confidence": 0.5, "key_reasons": [], "risk_warning": ""})
+
+        monkeypatch.setattr(mas, "ai_chat", tracking_chat)
+        monkeypatch.setattr(TradingMemoryLog, "get_past_context", lambda *a, **k: "")
+        monkeypatch.setattr(TradingMemoryLog, "get_strategy_context", lambda *a, **k: "")
+        monkeypatch.setattr(mas, "_gather_stock_data", lambda code: {"name": "x", "price": 1.0})
+
+        result = await mas.analyze_stock("000001", enable_cot=False)
+
+        judge_prompts = [p for p in used_prompts if p in (mas.JUDGE_SYSTEM, mas.JUDGE_SYSTEM_COT)]
+        assert len(judge_prompts) == 1
+        assert judge_prompts[0] == mas.JUDGE_SYSTEM
+        assert result["enable_cot"] is False
+        # 无 reasoning_chain 或为空
+        assert result.get("reasoning_chain", {}) == {}
+
+
+class TestParseJudgeResponseWithCot:
+    """_parse_judge_response 应正确提取 reasoning_chain"""
+
+    def test_parse_cot_full_response(self):
+        from services.multi_agent_service import _parse_judge_response
+        import json
+
+        raw = json.dumps({
+            "verdict": "买入",
+            "confidence": 0.85,
+            "key_reasons": ["技术面强势", "资金流入"],
+            "reasoning_chain": {
+                "step1_signals": ["MACD 金叉", "量比 1.5", "5日动量 +3%"],
+                "step2_evaluation": "多头 8 分 vs 空头 4 分",
+                "step3_risks": "系统性回调风险",
+                "step4_decision": "综合判断: 买入",
+                "step5_confidence": "信号清晰,信心 0.85",
+            },
+        })
+        result = _parse_judge_response(raw)
+        assert result["verdict"] == "买入"
+        assert result["confidence"] == 0.85
+        assert "reasoning_chain" in result
+        assert result["reasoning_chain"]["step1_signals"][0] == "MACD 金叉"
+
+    def test_parse_cot_with_markdown_codeblock(self):
+        from services.multi_agent_service import _parse_judge_response
+
+        raw = '''以下是 JSON 输出:
+```json
+{
+  "verdict": "持有",
+  "confidence": 0.6,
+  "key_reasons": ["r1"],
+  "reasoning_chain": {
+    "step1_signals": ["s1"],
+    "step2_evaluation": "e1",
+    "step3_risks": "r1",
+    "step4_decision": "d1",
+    "step5_confidence": "0.6"
+  }
+}
+```'''
+        result = _parse_judge_response(raw)
+        assert result["verdict"] == "持有"
+        assert "reasoning_chain" in result
+        assert result["reasoning_chain"]["step1_signals"] == ["s1"]
+
+    def test_parse_fallback_has_empty_reasoning_chain(self):
+        from services.multi_agent_service import _parse_judge_response
+
+        # 无 JSON 的纯文本 → 回退路径
+        result = _parse_judge_response("综合判断: 买入,信号偏多")
+        assert result["verdict"] == "买入"
+        assert result["reasoning_chain"] == {}

@@ -117,6 +117,45 @@ JUDGE_SYSTEM = """你是资深 A 股投资经理。请审阅以下多空辩论�
 - 用中文"""
 
 
+# v4.0 A3 — CoT (Chain-of-Thought) 增强的裁判 prompt
+# 强制 AI 显式分 5 步推理,每步有结构化输出
+JUDGE_SYSTEM_COT = """你是资深 A 股投资经理。请审阅以下多空辩论,使用 **思维链 (Chain-of-Thought)** 逐步推理后给出最终判断。
+
+## 推理步骤(必须按顺序执行,每步 1-2 句话)
+
+**Step 1 — 关键信号**:从 8 份报告中提取 3-5 个最关键的信号(可量化优先)
+**Step 2 — 多空评估**:基于 Step 1 信号,评估多头和空头论据的相对强度(多空 1-10 分)
+**Step 3 — 风险盘点**:列出 2-3 个最关键的下行风险及触发条件
+**Step 4 — 决策推理**:综合 Step 1-3,说明为什么选择 买入/持有/卖出
+**Step 5 — 信心度评估**:基于信号清晰度 + 多空平衡度,给出 0-1 之间的置信度
+
+## 输出格式(严格 JSON)
+```json
+{
+  "reasoning_chain": {
+    "step1_signals": ["信号1: 数据/趋势", "信号2: ...", "信号3: ..."],
+    "step2_evaluation": "多头 X 分 vs 空头 Y 分, 因为 ...",
+    "step3_risks": "风险 1: ... 触发: ...; 风险 2: ...",
+    "step4_decision": "综合判断: 买入/持有/卖出, 因为 ...",
+    "step5_confidence": "0.0-1.0, 信心度来自 ..."
+  },
+  "verdict": "买入" | "持有" | "卖出",
+  "confidence": 0.0-1.0,
+  "key_reasons": ["理由1", "理由2", "理由3"],
+  "risk_warning": "主要风险提示",
+  "suggested_hold_days": 建议持仓天数,
+  "stop_loss_pct": 建议止损百分比
+}
+```
+
+## 严格要求
+- verdict 必须是 "买入"、"持有"、"卖出" 之一
+- confidence 0-1, 0.7+ 为高置信度
+- reasoning_chain 必须填满 5 步,缺步则视为推理不完整
+- 用中文回答
+"""
+
+
 # ═══════════════════════════════════════════════════════════════
 #  v4.0 A1 — 新增 3 角色(资金面分析师 / 政策解读员 / 做空研究员)
 # ═══════════════════════════════════════════════════════════════
@@ -191,8 +230,9 @@ async def analyze_stock(
     model: str = "",
     strategy_id: str = "",
     enabled_roles: list[str] | None = None,
+    enable_cot: bool = True,
 ) -> dict:
-    """对单只股票运行多 Agent 深度分析(v4.0: 5 → 8 角色, 3 轮调用)
+    """对单只股票运行多 Agent 深度分析(v4.0: 5 → 8 角色, 3 轮调用 + A3 CoT)
 
     Args:
         code: 股票代码
@@ -201,6 +241,9 @@ async def analyze_stock(
         enabled_roles: 可选,限制启用的角色列表;None = 全部 8 角色全启用。
                        backward compat: ["technical","fundamentals","bull","bear","judge"]
                        退化为 5 角色风格。
+        enable_cot: v4.0 A3 — 是否启用 Chain-of-Thought 推理增强。
+                    启用时裁判使用 JUDGE_SYSTEM_COT,输出 reasoning_chain 5 步推理。
+                    关闭时退回 JUDGE_SYSTEM(更快但推理不可见)。
 
     Returns:
         {code, name, price,
@@ -209,7 +252,8 @@ async def analyze_stock(
          bull_case, bear_case, short_researcher_case,    # v4.0 新增
          verdict, confidence, key_reasons, risk_warning,
          suggested_hold_days, stop_loss_pct,
-         agent_count, enabled_roles}
+         reasoning_chain (A3),                         # v4.0 新增
+         agent_count, enabled_roles, enable_cot}
     """
     # ── 决定启用哪些角色(默认 8 角色) ──
     if enabled_roles is None:
@@ -324,7 +368,7 @@ async def analyze_stock(
     try:
         judge_raw = await ai_chat(
             judge_prompt,
-            system_prompt=JUDGE_SYSTEM,
+            system_prompt=JUDGE_SYSTEM_COT if enable_cot else JUDGE_SYSTEM,
             provider=provider, api_key=api_key, model=model,
             function="explain",
         )
@@ -354,9 +398,12 @@ async def analyze_stock(
         "risk_warning": verdict_data.get("risk_warning", ""),
         "suggested_hold_days": verdict_data.get("suggested_hold_days"),
         "stop_loss_pct": verdict_data.get("stop_loss_pct"),
+        # v4.0 A3 — CoT 推理链
+        "reasoning_chain": verdict_data.get("reasoning_chain", {}),
         # 元数据(v4.0 新增)
         "agent_count": len(round1_specs) + len(round2_specs) + 1,  # +1 for judge
         "enabled_roles": enabled_roles,
+        "enable_cot": enable_cot,
     }
 
 
@@ -609,7 +656,7 @@ def _calc_turtle(highs, lows, closes):
 
 
 def _parse_judge_response(raw: str) -> dict:
-    """从 LLM 输出中提取 JSON 判断"""
+    """从 LLM 输出中提取 JSON 判断(v4.0 A3: 提取 reasoning_chain)"""
     import re
     import json as _json
     # 尝试直接解析
@@ -618,15 +665,23 @@ def _parse_judge_response(raw: str) -> dict:
         return data
     except (_json.JSONDecodeError, TypeError):
         pass
-    # 尝试提取代码块中的 JSON
-    m = re.search(r'\{[^{}]*"verdict"[^{}]*\}', raw, re.DOTALL)
+    # 尝试提取代码块中的 JSON(CoT 模式下可能含 reasoning_chain 嵌套对象)
+    # 用更宽松的 regex 匹配最外层 {}
+    m = re.search(r'\{.*\}', raw, re.DOTALL)
     if m:
         try:
-            return _json.loads(m.group(0))
+            data = _json.loads(m.group(0))
+            return data
         except (_json.JSONDecodeError, TypeError):
             pass
-    # 回退：从文本推断
-    result = {"verdict": "持有", "confidence": 0.5, "key_reasons": [], "risk_warning": ""}
+    # 回退:从文本推断
+    result = {
+        "verdict": "持有",
+        "confidence": 0.5,
+        "key_reasons": [],
+        "risk_warning": "",
+        "reasoning_chain": {},  # v4.0 A3 — 解析失败时为空
+    }
     if "买入" in raw:
         result["verdict"] = "买入"
         result["confidence"] = 0.6
