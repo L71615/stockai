@@ -210,6 +210,48 @@
 
 ---
 
+## 2026-07-28 — v4.0 正式发布 🚀
+
+### 📦 版本
+
+- **Tag**: `v4.0`
+- **Release Notes**: [RELEASE-NOTES-v4.0.md](RELEASE-NOTES-v4.0.md)
+
+### 📚 文档同步
+
+- `README.md` / `stockai-project-docs/README.md` / `stockai-project-docs/README.en.md` 三件套同步 v4.0
+- `INDEX.md` / `CLAUDE.md` 当前版本 v4.0
+- `docs/RUNBOOK.md` 新增 §8-§12(T+1 异常 / 工具调用异常 / 反事实异常 / 8 角色异常 / 部署检查清单)
+- `stockai-project-docs/V4-PLAN.md` Phase 1-4 全标完成 ✅,Phase 5 发布节点
+
+### 📊 4 阶段累计
+
+| 阶段 | 测试 | 提交 |
+|------|------|------|
+| Phase 1 (AI + T+1) | 85 | `9a6ad79` |
+| Phase 2 (因子 + 冲击) | 56 | `eab142d` |
+| Phase 3 (闭环) | 46 | `5b2414f` |
+| Phase 4 (Alpha158 + 个性化) | 36 | `a34fde7` |
+| Phase 5 (发布) | — | `0efcbec` + `v4.0` |
+| **累计** | **223** | 6 commits |
+
+### 🆕 v4.0 完整能力清单
+
+- **AI**: 8 角色多 Agent + CoT 5 步推理 + Agent 工具调用(Claude tool_use + OpenAI function_calling)+ 个性化 prompt
+- **因子**: 64 个(29 经典 + 35 Alpha158 B1-B3)
+- **回测**: 滑点(B4 10bps)+ 冲击成本(B5 ADV 平方根)+ 多策略组合(B6 union/intersect/majority)
+- **T+1**: 22:00 Pipeline → 09:30 watcher 模拟成交 → 第三日卖出
+- **闭环**: 反事实报告(基于已有表)+ IC 重新校准接口
+- **3 路由**: counterfactual(2 端点)
+
+### ⏭️ 下一步
+
+- v4.0.x 维护期(社区反馈 / 胶水代码补全 / 监视器适配)
+- 持续因子研究(剩余 Alpha158 K线形态 Q-15 未实现,需 OHLC 数据)
+- 跨市场扩展(M1/HK/US)— 已在 TODOS.md 跟踪
+
+---
+
 ## 2026-07-26 — README 三件套重写 + GitHub 主页修复
 
 ### 📝 README 重写

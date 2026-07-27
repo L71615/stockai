@@ -1,7 +1,9 @@
-# StockAI Runbook — 应急响应 / 回滚 / 灰度 (v3.11+, T8)
+# StockAI Runbook — 应急响应 / 回滚 / 灰度 (v4.0, T8+)
 
 > 出现 metric/settlement 异常、误晋级、用户投诉时, 按本手册执行.
 > 优先级: 1) 关开关 → 2) 保留证据 → 3) 切回老路径 → 4) 排查修复.
+>
+> **v4.0 新增章节**: §8 T+1 模拟成交异常、§9 Agent 工具调用异常、§10 反事实报告异常
 
 ---
 
@@ -232,4 +234,211 @@ FROM approval_proposals WHERE status = 'pending';
 
 - **服务监控**: 看 `/api/health` 和 `/api/pipeline/status`
 - **日志位置**: `backend/backend.log` (rotating)
-- **本次上线变更**: 见 `CHANGELOG.md` v3.11 节
+- **本次上线变更**: 见 `CHANGELOG.md` v4.0 节
+
+---
+
+## 8. T+1 模拟成交异常 (v4.0)
+
+### 8.1 监控点
+
+- **未成交订单堆积**:`t1_pending_orders.status = 'pending_buy'` 数量
+- **卡在 bought 状态**:持有期满但 `exit_date <= today` 仍未 sold
+- **异常 PnL**:大额负 PnL 或胜率 < 30%
+
+```sql
+-- 当前未成交订单
+SELECT status, COUNT(*) FROM t1_pending_orders GROUP BY status;
+
+-- 卡住的 bought 订单
+SELECT * FROM t1_pending_orders
+WHERE status = 'bought' AND exit_date <= date('now')
+LIMIT 20;
+```
+
+### 8.2 应急处理
+
+| 症状 | 立即动作 | 后续排查 |
+|------|----------|----------|
+| `process_pending_buys` 报错 | 检查 `vendor_router` 状态 / 离线 futu 是否影响 | 看 `backend.log` 关键错误 |
+| 历史 K 线缺失 | 手动从 `quant_pipeline.py` 跑 `nightly` 数据同步 | 检查 akshare/baostock fallback |
+| 大量 `cancelled` 订单 | 检查 `t1_watcher.cancel_order` 触发原因 | 翻 `reason` 字段 |
+| holdings/transactions 写入失败 | 检查 DB 锁(可能 `pipeline_lock` 占用) | 杀进程重试 |
+
+### 8.3 关闭 T+1 watcher(极端情况)
+
+```bash
+# 临时禁用:把 cron 任务从 scheduler.py 注释掉,重启后端
+# 不删数据 — `t1_pending_orders` 保留,恢复后继续处理
+```
+
+### 8.4 数据回滚
+
+如需回滚某天的 T+1 模拟成交:
+
+```sql
+-- 找出某天的 holdings 写入
+SELECT * FROM transactions
+WHERE note LIKE '%T+1%' AND date(traded_at) = '2026-07-15';
+
+-- 手动标记订单为 cancelled
+UPDATE t1_pending_orders
+SET status = 'cancelled', reason = '手动回滚: 异常数据'
+WHERE id = 123;
+```
+
+---
+
+## 9. Agent 工具调用异常 (v4.0 A2)
+
+### 9.1 监控点
+
+- `ai_chat_with_tools` 调用失败率
+- 工具调用循环超过 5 轮(死循环信号)
+- 工具返回大量 `error` 字段
+
+### 9.2 常见问题
+
+| 错误 | 原因 | 修复 |
+|------|------|------|
+| `工具未注册` | `agent_tools.TOOL_REGISTRY` 没同步 | 确认 `agent_tools.py` import 正常 |
+| `tool_use` 不被识别 | Claude 模型版本太老(< 3.5 Sonnet) | 升级到 Claude 3.5+ |
+| `function_calling` 不被识别 | DeepSeek API 兼容性问题 | 改用 `base_url` 对齐 OpenAI 协议 |
+| 5 轮循环耗尽 | Agent 没找到工具 | 检查 `tools` 列表是否含目标工具 |
+| 工具结果不返回 | `execute_tool_call` 内部异常 | 看 `agent_tools._get_quote_tool` 等日志 |
+
+### 9.3 应急开关
+
+```python
+# 在 ai_chat.py 中临时关闭工具调用,降级到纯对话
+from services import agent_tools
+agent_tools.TOOL_REGISTRY = {}  # 清空工具列表
+```
+
+### 9.4 与 A3 CoT 交互
+
+- A3 启用时(`enable_cot=True`),JUDGE_SYSTEM_COT 强制结构化 JSON
+- 如果 CoT 解析失败,`_parse_judge_response` 会回退到文本推断
+- 监控: `reasoning_chain` 为空的次数 / 总调用次数
+
+---
+
+## 10. 反事实报告异常 (v4.0 C1)
+
+### 10.1 监控点
+
+- `proposal_outcomes` 表数据稀疏(无 realized_at)
+- `proposal_retrospectives` 缺少 `lesson` 字段
+- `/api/pipeline/counterfactual` 返回空 accepted/rejected
+
+```sql
+-- outcomes 覆盖率
+SELECT
+  COUNT(*) AS total_outcomes,
+  COUNT(*) FILTER (WHERE label = 'good') AS good,
+  COUNT(*) FILTER (WHERE label = 'bad') AS bad
+FROM proposal_outcomes
+WHERE realized_at >= date('now', '-30 days');
+```
+
+### 10.2 异常处理
+
+| 症状 | 排查 |
+|------|------|
+| `accepted.count = 0` | 检查 `proposal_outcomes` 是否有 'approved' 决策的实绩 |
+| `edge` 始终为 0 | 多数 decision 的 fwd_return = 0(未填实绩) |
+| `interpretation` 异常 | 检查 `proposal_retrospectives.lesson` 字段 |
+
+### 10.3 重新生成 retrospective
+
+```bash
+# 触发回填(如有 background job)
+python -m services.retrospective_service backfill --days 30
+```
+
+---
+
+## 11. 8 角色多 Agent 异常 (v4.0 A1)
+
+### 11.1 监控点
+
+- `agent_count < 8`(角色被禁用)
+- Token 消耗(8 角色并发 vs 5 角色 ~2x)
+- 单次 `analyze_stock` 延迟(>30s)
+
+### 11.2 降级
+
+```python
+# 调用方:限制角色到 5(向后兼容)
+result = await analyze_stock(
+    "000001",
+    enabled_roles=["technical", "fundamentals", "bull", "bear", "judge"],
+    enable_cot=False,  # 同时关 CoT,降到 5 角色 + 简单 prompt
+)
+```
+
+### 11.3 CoT (A3) 关闭
+
+```python
+result = await analyze_stock("000001", enable_cot=False)
+# 退回 JUDGE_SYSTEM,更快但 reasoning_chain 为空
+```
+
+### 11.4 个性化 (A4) 关闭
+
+```python
+result = await analyze_stock("000001", personalize=False, user_id=None)
+# 不注入 user_style,适合批量扫股
+```
+
+---
+
+## 12. v4.0 部署检查清单
+
+### 12.1 升级后必须验证
+
+```bash
+# 1. 数据库 schema 正确(新增 t1_pending_orders)
+python -c "from database import init_db; init_db()"
+
+# 2. 所有 v4.0 测试通过
+pytest tests/test_agent_tools.py tests/test_t1_watcher.py \
+       tests/test_counterfactual_api.py tests/test_user_style.py \
+       tests/test_combined_strategies.py tests/test_alpha158_batch1.py \
+       tests/test_alpha158_batch2_3.py tests/test_ic_recalibration.py -v
+# 预期:223+ passed
+
+# 3. 路由注册正确
+python -c "from main import app; print([r.path for r in app.routes if 'counterfactual' in r.path])"
+# 预期:['/api/pipeline/counterfactual', '/api/pipeline/retrospectives']
+```
+
+### 12.2 数据迁移(如有 v3.11 旧库)
+
+```bash
+# 1. 备份
+cp database/stockai.db database/stockai.db.bak.v3.11
+
+# 2. 跑 init_db(自动 IF NOT EXISTS 创建 v4.0 新表)
+python -c "from database import init_db; init_db()"
+
+# 3. 验证
+sqlite3 database/stockai.db ".tables" | grep t1_pending_orders
+# 预期:t1_pending_orders
+```
+
+### 12.3 回滚到 v3.11(紧急)
+
+```bash
+# 1. 拉 v3.11 tag
+git checkout v3.11
+# 2. 备份 v4.0 数据(可选,保留)
+mv database/stockai.db database/stockai.db.v4.0.bak
+# 3. 恢复 v3.11 DB
+cp database/stockai.db.bak.v3.11 database/stockai.db
+# 4. 重启后端
+```
+
+---
+
+**v4.0 RUNBOOK END — 应急响应优先级:关开关 > 保留证据 > 切老路径 > 排查修复**
