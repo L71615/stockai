@@ -211,6 +211,8 @@ CREATE INDEX IF NOT EXISTS idx_experiments_lifecycle ON experiments(lifecycle_st
 CREATE INDEX IF NOT EXISTS idx_experiments_role ON experiments(portfolio_role);
 
 -- 运行历史
+-- experiment_id 为 NOT NULL 但允许特殊值: daily pipeline 用 __pipeline_daily__ 占位
+-- (避免 schema 漂移: experiment_id 仍然必填, daily pipeline 在代码层兜底)
 CREATE TABLE IF NOT EXISTS experiment_runs (
     run_id        SERIAL PRIMARY KEY,
     experiment_id TEXT NOT NULL REFERENCES experiments(experiment_id) ON DELETE CASCADE,

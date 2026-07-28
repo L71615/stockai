@@ -24,7 +24,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
-from database import execute
+from database import execute, query_one
 
 logger = logging.getLogger(__name__)
 
@@ -106,11 +106,53 @@ _CURRENT_RUN_ID: Optional[int] = None
 #  v3.11 write-through helpers (DB is source of truth for runs)
 # ════════════════════════════════════════════════════════════
 
+def _PIPELINE_DAILY_EXPERIMENT_ID() -> str:
+    """daily pipeline 共用的合成 experiment_id (满足 experiment_runs.experiment_id NOT NULL FK).
+
+    实验表中插一行占位 expr='__pipeline_daily__', portfolio_role='none', lifecycle='champion'
+    (daily pipeline 自身就相当于一个常驻 baseline). 一次性创建, 后续 run 复用.
+    """
+    return "__pipeline_daily__"
+
+
+def _ensure_pipeline_daily_experiment() -> str:
+    """确保 __pipeline_daily__ 实验行存在, 返回其 experiment_id. 不存在则创建."""
+    eid = _PIPELINE_DAILY_EXPERIMENT_ID()
+    existing = query_one("SELECT experiment_id FROM experiments WHERE experiment_id = ?", (eid,))
+    if existing:
+        return eid
+    # 找 admin user_id 作为 owner (实验表 NOT NULL FK to users)
+    admin_row = query_one(
+        "SELECT id FROM users WHERE email = ? ORDER BY id LIMIT 1",
+        ("admin@stockai.com",),
+    )
+    owner_id = (admin_row or {}).get("id") if isinstance(admin_row, dict) else None
+    if owner_id is None:
+        # 兜底: 取任意用户
+        any_user = query_one("SELECT id FROM users ORDER BY id LIMIT 1")
+        owner_id = any_user["id"] if any_user else 0
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    execute(
+        "INSERT OR IGNORE INTO experiments "
+        "(experiment_id, owner_user_id, expr_text, policy_version, snapshot_hash, "
+        " lifecycle_status, portfolio_role, proposal_status, version, snapshot_json, "
+        " note, created_at, updated_at) "
+        "VALUES (?, ?, '__pipeline_daily__', 'v1.0.0', '', "
+        " 'champion', 'baseline', 'approved', 1, '{}', "
+        " 'auto-created as parent for pipeline_daily runs', ?, ?)",
+        (eid, owner_id, now, now),
+    )
+    return eid
+
+
 def _persist_run_start(scope: str, experiment_id: Optional[str], run_label: str) -> int:
     """开一个 experiment_run 行, 返回 run_id (INT PK).
 
-    experiment_id 可为空 (例如 daily pipeline run 不绑定实验).
+    experiment_id 为 None 时 (daily pipeline 不绑定实验), 用 __pipeline_daily__ 占位
+    并确保该行已在 experiments 表中存在 (满足 FK + NOT NULL).
     """
+    if experiment_id is None:
+        experiment_id = _ensure_pipeline_daily_experiment()
     cur = execute(
         "INSERT INTO experiment_runs "
         "(experiment_id, scope, status, current_step, started_at, error_json) "
@@ -335,9 +377,16 @@ def run_pipeline() -> dict:
     # write-through — DB 是事实源
     global _CURRENT_RUN_ID
     try:
-        _CURRENT_RUN_ID = _persist_run_start(
-            scope="pipeline_daily", experiment_id=None, run_label=run_id
-        )
+        try:
+            _CURRENT_RUN_ID = _persist_run_start(
+                scope="pipeline_daily", experiment_id=None, run_label=run_id
+            )
+        except Exception as e:
+            # DB write 失败 (例如 schema 漂移) 也要让用户看到失败状态, 不能静默 hanging
+            logger.exception("Pipeline %s: DB persist run start failed: %s", run_id, e)
+            STATUS.error("0_persist", str(e))
+            STATUS.finish("failed", {"error": f"persist_run_start: {e}"})
+            return STATUS.get()
 
         # 按顺序跑 (每步独立 try/except, 失败不影响下一步)
         try:
