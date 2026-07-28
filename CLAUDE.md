@@ -92,8 +92,14 @@ npm run dev:safe     # 4GB 堆内存，适用于大型页
 
 ### 后端（FastAPI · `backend/`）
 - `main.py` — 中间件链（auth → security headers）、全局异常处理（`AIServiceError`→503 / `Exception`→500）、`startup` 启动后台守护线程
-- `routers/` — **12 个 API 路由**（v3.9 +1: `data_ops` 数据运维）。所有 `/api/*` 走 JWT 中间件（公开列表：`/api/auth/login`、`/api/health`、`/api/version`、`/api/docs`、`/api/openapi.json`）
+- `routers/` — **18 个 API 路由**（v3.9 +1 data_ops · v4.0 +5 流水线）。所有 `/api/*` 走 JWT 中间件（公开列表：`/api/auth/login`、`/api/health`、`/api/version`、`/api/docs`、`/api/openapi.json`）
   - **🆕 v3.9 `data_ops.py`** — `/api/data-ops/*` 6 个端点：stocks / freshness / sector-performance / sparkline / sync-stocks / sync-status
+  - **🆕 v4.0 流水线路由**（5 个）：
+    - `approvals.py` — proposal 审批（approve/reject/withdraw）
+    - `experiments.py` — `/api/pipeline/experiments*` 实验查询与审计事件
+    - `counterfactual.py` — `/api/pipeline/counterfactual` + `/api/pipeline/retrospectives` C1 反事实报告（独立 router，避免与 experiments 前缀冲突）
+    - `shadow.py` — shadow 模拟成交
+    - `factor_lab.py` — `/api/factor-lab/*` IC/相关性/散点图
 - `services/` — 40+ 业务服务，关键模块：
   - `factor_service.py` — 55 因子计算（10 大类：价格/动量/波动/成交量/量价/基本面/情绪/资金/技术），因子函数自己消化异常（NaN/inf → None）
   - `factor_lab.py` — **🆕** IC 分析 + 相关性矩阵 + 散点图（+ 衰减评分 `_compute_decay_score()`）
