@@ -3,6 +3,9 @@
 GET /api/pipeline/experiments                列表 (按 lifecycle_status / portfolio_role 过滤)
 GET /api/pipeline/experiments/{id}           详情
 GET /api/pipeline/experiments/{id}/events    审计事件
+
+注: C1 反事实端点(/api/pipeline/counterfactual, /api/pipeline/retrospectives)
+    已在 routers/counterfactual.py 独立实现,避免与本 router 的 /experiments 前缀冲突。
 """
 import logging
 

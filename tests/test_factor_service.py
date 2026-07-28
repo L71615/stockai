@@ -265,20 +265,24 @@ class TestSentimentFactors:
 
 class TestComputeAllFactors:
     def test_complete_input(self):
-        """正常输入应返回全部 25 个因子名 + hit_count"""
+        """正常输入应返回全部因子名 + hit_count"""
         closes = [10.0 + i * 0.05 for i in range(120)]
         highs = [c * 1.02 for c in closes]
         lows = [c * 0.98 for c in closes]
+        opens = [c * 0.99 for c in closes]
         vols = [10000.0] * 120
         fundamentals = {"pe": 15.0, "roe": 12.0, "eps": 2.0, "market_cap_billion": 500.0}
 
-        result = compute_all_factors("600519", closes, highs, lows, vols, fundamentals)
+        result = compute_all_factors(
+            "600519", closes, highs=highs, lows=lows, opens=opens,
+            volumes=vols, fundamentals=fundamentals,
+        )
 
         assert result["code"] == "600519"
         assert "factors" in result
         assert result["hit_count"] > 10  # 大部分因子应有值
-        # 检查关键因子存在
-        for key in ["ret_5d", "roe", "pe_inverse", "rsi_14", "strength_20d"]:
+        # 检查关键因子存在(5 角色经典 + v4.0 B1)
+        for key in ["ret_5d", "roe", "pe_inverse", "rsi_14", "strength_20d", "klen", "roc20", "beta20"]:
             assert key in result["factors"]
 
     def test_minimal_input(self):
