@@ -339,8 +339,8 @@ def start_t1_watcher_thread():
     """v4.1 1A.1: 启动 T+1 watcher 守护线程
 
     - 09:30 触发 (A股开盘后, 数据稳定)
-    - 仅交易日 (用 trading_days_lag_str 判断)
-    - partial pipeline fallback (experiment_runs.status != 'done' 时跳过 buy)
+    - 仅交易日 (用 trading_calendar.is_trading_day 判断)
+    - partial pipeline fallback (experiment_runs.last_status != 'done' 时跳过 buy)
     - 写 watcher_health 表, 3 交易日未跑触发 notify
     - 反事实 writer 自动跟跑
     """
@@ -362,5 +362,50 @@ def start_t1_watcher_thread():
             time.sleep(60)  # 每分钟检查一次
 
     t = threading.Thread(target=_loop, daemon=True, name="t1-watcher")
+    t.start()
+    return t
+
+
+# ═══════════════════════════════════════════════════════════════
+#  v4.1 1A.2 — Daily pipeline 守护线程 (22:00 触发)
+# ═══════════════════════════════════════════════════════════════
+
+def start_daily_pipeline_thread(run_hour: int = 22, run_minute: int = 0):
+    """v4.1 1A.2: 启动 daily_quant_pipeline 守护线程
+
+    - 每天 22:00 触发 (A 股 15:00 收盘 + 7 小时数据稳定)
+    - 仅交易日 (用 trading_calendar.is_trading_day 判断)
+    - 内部 retry: 22:30 / 23:00 各 retry 一次 (GP 失败容错)
+    - 实验状态写 experiment_runs.status (running/done/partial/failed)
+
+    注意: 这是后台 daemon, 不需要 cron 介入. 已有 cron 配置的会重复跑 (idempotent).
+    """
+    def _loop():
+        last_run = None
+        while True:
+            try:
+                now = datetime.now()
+                today_key = now.strftime("%Y-%m-%d")
+                # 22:00-23:59 之间每 30 分钟重试一次, 每天触发后置 last_run
+                if (now.hour >= run_hour and now.minute >= run_minute and last_run != today_key):
+                    if _is_a_share_trading_day(now):
+                        try:
+                            from scripts.daily_quant_pipeline import main as run_pipeline
+                            logger.info("scheduler: 触发 daily_quant_pipeline @ %s", today_key)
+                            run_pipeline()
+                            last_run = today_key
+                        except Exception as e:
+                            logger.warning("scheduler: pipeline 触发失败: %s", e, exc_info=True)
+                            # 失败不置 last_run, 22:30 / 23:00 retry
+                            if now.hour >= 23:
+                                last_run = today_key  # 23:00 后放弃
+                    else:
+                        # 非交易日直接置 last_run (不重试)
+                        last_run = today_key
+            except Exception:
+                logger.warning("scheduler: daily_pipeline 线程异常", exc_info=True)
+            time.sleep(60)  # 每分钟检查
+
+    t = threading.Thread(target=_loop, daemon=True, name="daily-pipeline")
     t.start()
     return t

@@ -9,17 +9,21 @@ from config import DB_PATH
 Path(DB_PATH).parent.mkdir(parents=True, exist_ok=True)
 
 # ── 连接池 ──
-_POOL_SIZE = 5
+# v4.1 1A.2: 5 → 15 (5+ scheduler threads + 22:00 pipeline + 09:30 watcher + drift)
+_POOL_SIZE = 15
 _conn_pool: queue.Queue[sqlite3.Connection] = queue.Queue(maxsize=_POOL_SIZE)
 
 
 def _new_connection() -> sqlite3.Connection:
-    """创建新连接（含 PRAGMA 初始化）"""
-    conn = sqlite3.connect(DB_PATH, timeout=5, check_same_thread=False)
+    """创建新连接（含 PRAGMA 初始化）
+
+    v4.1 1A.2: busy_timeout 5000 → 10000 (GP/ML 长写锁期间不阻塞调度读)
+    """
+    conn = sqlite3.connect(DB_PATH, timeout=10, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
-    conn.execute("PRAGMA busy_timeout=5000")
+    conn.execute("PRAGMA busy_timeout=10000")
     return conn
 
 

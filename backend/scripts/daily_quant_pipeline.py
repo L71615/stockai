@@ -1,14 +1,20 @@
 """
-Daily Quant Pipeline - cron 入口脚本 (v3.10+)
+Daily Quant Pipeline - cron 入口脚本 (v3.10+ / v4.1 改 22:00)
 
-按 plan-ceo-review 2026-07-22 设计:
-  每天 18:00 跑一次, 编排 GP 挖 / ML 训 / 过拟合 / 简报 / 推送
+v4.1 1A.2 改动:
+  - 跑时机 18:00 → 22:00 (A 股 15:00 收盘 + 数据稳定 + GP/ML 跑完 7 小时留 22:00 之前)
+  - GP 跑 ~5-10 分钟, ML 训 ~2-3 分钟, 22:00 触发次日 09:00 前可完成
+  - 加 retry 重试: 22:30 / 23:00 各 retry 一次 (GP 失败容错)
+  - 实验状态写 experiment_runs.status (running/done/partial/failed),
+    09:30 watcher 查此字段判断是否跳过 AI-driven pending_buy
 
-Linux/Mac cron 接入 (A 股 15:00 收盘, 18:00 跑):
-  0 18 * * 1-5 cd /path/to/stockai && python -m scripts.daily_quant_pipeline >> logs/pipeline.log 2>&1
+按 plan-ceo-review 2026-07-22 + plan-ceo-review 2026-07-29 设计:
+
+Linux/Mac cron 接入 (22:00 A 股 15:00 收盘 + 7 小时):
+  0 22 * * 1-5 cd /path/to/stockai && python -m scripts.daily_quant_pipeline >> logs/pipeline.log 2>&1
 
 Windows 任务计划接入:
-  触发器: 每天 18:00 (周一-周五)
+  触发器: 每天 22:00 (周一-周五)
   操作: python -m scripts.daily_quant_pipeline
 
 手动跑:
