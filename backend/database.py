@@ -266,6 +266,15 @@ def init_db():
         conn.execute("CREATE INDEX IF NOT EXISTS idx_t1_orders_status    ON t1_pending_orders(status)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_t1_orders_entry_dt  ON t1_pending_orders(entry_date)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_t1_orders_exit_dt   ON t1_pending_orders(exit_date)")
+
+        # v4.1 1A.1: watcher 健康检查表 (单行 UPSERT, 不需要索引)
+        conn.execute("""CREATE TABLE IF NOT EXISTS watcher_health (
+            id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+            last_run_at        TEXT NOT NULL,
+            last_status        TEXT NOT NULL DEFAULT 'ok',
+            last_run_proposals INTEGER NOT NULL DEFAULT 0,
+            last_error         TEXT NOT NULL DEFAULT ''
+        )""")
         # 向后兼容：为已有数据库添加缺失字段
         for col, col_def in [
             ("asset_type", "TEXT DEFAULT ''"),

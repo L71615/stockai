@@ -130,6 +130,7 @@ def startup():
         start_futu_nightly_sync_thread,
         start_memory_resolution_thread,
         start_futu_nightly_fundamentals_thread,
+        start_t1_watcher_thread,                # v4.1 1A.1
     )
     start_dca_reminder_thread()
     start_stop_loss_thread()
@@ -137,6 +138,7 @@ def startup():
     start_futu_nightly_sync_thread()
     start_memory_resolution_thread()
     start_futu_nightly_fundamentals_thread()
+    start_t1_watcher_thread()                # v4.1 1A.1: 09:30 watcher 自动跑
 
 
 # ── 认证中间件：保护所有 /api/ 路由（登录接口除外）──
