@@ -10,7 +10,7 @@ import threading
 from datetime import datetime
 from pathlib import Path
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
 
 from services.quant_pipeline import STATUS, run_pipeline
 from services.quant_brief import get_latest_brief, list_briefs
@@ -73,3 +73,33 @@ def get_briefs_list(limit: int = 20):
 def get_health():
     """数据源健康度 (akshare + Futu + DB)"""
     return check_health()
+
+
+@router.get("/shadow/equity-curve")
+def get_shadow_equity_curve(
+    portfolio_id: int = Query(..., description="shadow portfolio id"),
+    bucket: str = Query("1d", description="1d / 4h / 1h"),
+    days: int = Query(30, ge=1, le=365),
+):
+    """v4.1 1B.2: shadow 净值曲线 (从预聚合表读, 不实时 scan)
+
+    Returns:
+        {
+          "portfolio_id": int,
+          "bucket": "1d",
+          "points": [{"date", "nav", "drawdown", "turnover", "costs"}, ...],
+          "accumulating": bool,        # 数据 < 5 天 → true (cold-start UX)
+          "v4_metadata": {...}
+        }
+    """
+    from services.shadow_portfolio_service import get_shadow_equity_curve as _get
+
+    points = _get(portfolio_id=portfolio_id, bucket=bucket, days=days)
+    return {
+        "portfolio_id": portfolio_id,
+        "bucket": bucket,
+        "points": points,
+        "count": len(points),
+        "accumulating": len(points) < 5,
+        "v4_metadata": {"phase": "1B.2", "days": days, "bucket": bucket},
+    }

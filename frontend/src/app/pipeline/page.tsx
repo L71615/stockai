@@ -12,10 +12,13 @@ import { cn } from "@/lib/utils"
 import {
   IconPlayerPlay, IconRefresh, IconCircleCheck, IconAlertTriangle,
   IconCircleX, IconClock, IconInbox, IconHistory, IconScale,
+  IconTrendingUp,
 } from "@tabler/icons-react"
 
 import { useProposals } from "@/hooks/use-pipeline"
 import { ProposalRow, ProposalRowSkeleton } from "@/components/pipeline/ProposalRow"
+import { ShadowEquityChart } from "@/components/pipeline/ShadowEquityChart"
+import { useShadowPortfolios } from "@/hooks/use-shadow-portfolios"
 
 // ════════════════════════════════════════════════════════════
 //  T6 /pipeline 页面
@@ -43,6 +46,10 @@ export default function PipelinePage() {
                 <IconScale className="size-3.5 mr-1" />
                 反事实
               </TabsTrigger>
+              <TabsTrigger value="shadow">
+                <IconTrendingUp className="size-3.5 mr-1" />
+                影子组合
+              </TabsTrigger>
             </TabsList>
 
             <TabsContent value="inbox" className="mt-4">
@@ -55,6 +62,10 @@ export default function PipelinePage() {
 
             <TabsContent value="counterfactual" className="mt-4">
               <CounterfactualView />
+            </TabsContent>
+
+            <TabsContent value="shadow" className="mt-4">
+              <ShadowView />
             </TabsContent>
           </Tabs>
         </div>
@@ -736,6 +747,52 @@ function RetrospectiveCard({ r }: { r: Retrospective }) {
           </div>
         )}
       </div>
+    </div>
+  )
+}
+
+// ════════════════════════════════════════════════════════════
+//  v4.1 1B.2 — 影子组合净值曲线 Tab
+// ════════════════════════════════════════════════════════════
+
+function ShadowView() {
+  const { data, isLoading } = useShadowPortfolios()
+  const portfolios = data?.portfolios ?? []
+
+  // 取第一个活跃 portfolio (v4.1 单 portfolio 起步, 多 portfolio 留给 v4.2)
+  const activePortfolio = portfolios.find((p: any) => p.status === "active") ?? portfolios[0]
+
+  return (
+    <div className="space-y-3">
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base">影子组合选择</CardTitle>
+          <CardDescription>
+            v3.11 影子组合 — 模拟跟随 AI 决策的虚拟持仓组合
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {isLoading ? (
+            <Skeleton className="h-8 w-full" />
+          ) : portfolios.length === 0 ? (
+            <div className="text-sm text-muted-foreground py-4">
+              暂无影子组合。等 watcher 跑通后会自动建立第一个 portfolio。
+            </div>
+          ) : (
+            <div className="text-sm">
+              当前查看:{" "}
+              <span className="font-mono tabular-nums">
+                #{activePortfolio?.portfolio_id} {activePortfolio?.name ?? ""}
+              </span>
+              <span className="text-muted-foreground ml-2">
+                (共 {portfolios.length} 个 portfolio)
+              </span>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <ShadowEquityChart portfolioId={activePortfolio?.portfolio_id ?? null} days={30} />
     </div>
   )
 }

@@ -684,6 +684,21 @@ def init_db():
         )""")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_shadow_snap_pf ON shadow_portfolio_snapshots(portfolio_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_shadow_snap_date ON shadow_portfolio_snapshots(observation_date)")
+
+        # v4.1 1B.2: shadow 净值预聚合表 (1h / 4h / 1d buckets)
+        # 避免每次页面查询 5530×30 = 166k 数据点
+        conn.execute("""CREATE TABLE IF NOT EXISTS shadow_equity_aggregated (
+            agg_id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            portfolio_id        INTEGER NOT NULL REFERENCES shadow_portfolios(portfolio_id) ON DELETE CASCADE,
+            bucket              TEXT NOT NULL,    -- '1h' / '4h' / '1d'
+            observation_date    TEXT NOT NULL,
+            nav                 REAL NOT NULL,
+            drawdown            REAL NOT NULL DEFAULT 0,
+            turnover            REAL NOT NULL DEFAULT 0,
+            costs               REAL NOT NULL DEFAULT 0,
+            UNIQUE(portfolio_id, bucket, observation_date)
+        )""")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_shadow_agg_pf ON shadow_equity_aggregated(portfolio_id, bucket)")
         # ── T5 审批 ──
         conn.execute("""CREATE TABLE IF NOT EXISTS approval_proposals (
             proposal_id         INTEGER PRIMARY KEY AUTOINCREMENT,

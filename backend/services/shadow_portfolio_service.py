@@ -420,10 +420,26 @@ def _insert_snapshot(
                 return row
         raise
     snapshot_id = int(cur["lastrowid"])
-    return query_one(
+    result = query_one(
         "SELECT * FROM shadow_portfolio_snapshots WHERE snapshot_id = ?",
         (snapshot_id,),
     )
+
+    # v4.1 1B.2: 同步写预聚合 (1d bucket, 最新 snapshot 的当日值)
+    # 失败不阻塞 settlement 主流程 (best-effort)
+    try:
+        _upsert_aggregated_snapshot(
+            portfolio_id=portfolio_id,
+            observation_date=observation_date,
+            nav=nav,
+            drawdown=drawdown,
+            turnover=turnover,
+            costs=costs,
+        )
+    except Exception as e:
+        logger.warning("v4.1 1B.2: 预聚合写入失败 (portfolio=%s date=%s): %s",
+                       portfolio_id, observation_date, e)
+    return result
 
 
 # ════════════════════════════════════════════════════════════
@@ -515,3 +531,65 @@ def get_snapshot(
         row["actual_weights"] = json.loads(row.get("actual_weights_json") or "{}")
         row["baseline_diff"] = json.loads(row.get("baseline_diff_json") or "{}")
     return row
+
+
+# ════════════════════════════════════════════════════════════
+#  v4.1 1B.2 — 净值预聚合 (避免 166k 数据点实时 scan)
+# ════════════════════════════════════════════════════════════
+
+def _upsert_aggregated_snapshot(
+    *, portfolio_id: int, observation_date: str,
+    nav: float, drawdown: float, turnover: float, costs: float,
+) -> None:
+    """snapshot 写完后立即把 '1d' bucket 同步进 shadow_equity_aggregated.
+
+    1d bucket 是真实每日结算值, 1h / 4h 由查询时动态 roll up.
+    """
+    execute(
+        """INSERT INTO shadow_equity_aggregated
+           (portfolio_id, bucket, observation_date, nav, drawdown, turnover, costs)
+           VALUES (?, '1d', ?, ?, ?, ?, ?)
+           ON CONFLICT(portfolio_id, bucket, observation_date)
+           DO UPDATE SET nav = excluded.nav,
+                         drawdown = excluded.drawdown,
+                         turnover = excluded.turnover,
+                         costs = excluded.costs""",
+        (portfolio_id, observation_date, nav, drawdown, turnover, costs),
+    )
+
+
+def get_shadow_equity_curve(
+    *, portfolio_id: int, bucket: str = "1d", days: int = 30,
+) -> list[dict]:
+    """v4.1 1B.2: 拉取 shadow 净值曲线 (按 bucket 粒度)
+
+    Returns:
+        [{"date": "2026-07-01", "nav": 1.023, "drawdown": -0.012, ...}, ...]
+        数据从 shadow_equity_aggregated 直接拿 (避免 5530×30 实时 scan).
+
+    bucket 支持:
+      - '1d'  每日 1 个点 (默认)
+      - '4h'  每 4 小时 1 个点 (仅当日有数据)
+      - '1h'  每小时 1 个点 (仅当日有数据)
+    注: 1h / 4h 当前只对当日 1d bucket 做线性 roll-up (近似), 后续可改为真实高频采样.
+    """
+    from datetime import datetime, timedelta
+    cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+
+    rows = query_all(
+        """SELECT observation_date, nav, drawdown, turnover, costs
+           FROM shadow_equity_aggregated
+           WHERE portfolio_id = ? AND bucket = ? AND observation_date >= ?
+           ORDER BY observation_date ASC""",
+        (portfolio_id, bucket, cutoff),
+    )
+    return [
+        {
+            "date": r["observation_date"],
+            "nav": r["nav"],
+            "drawdown": r["drawdown"],
+            "turnover": r["turnover"],
+            "costs": r["costs"],
+        }
+        for r in rows
+    ]
