@@ -721,6 +721,7 @@ def init_db():
             decided_at          TEXT,
             decided_by          TEXT,
             decision_reason     TEXT NOT NULL DEFAULT '',
+            decision_score      REAL NOT NULL DEFAULT 0.0,  -- v4.1 1B.3: AI 置信度 [0,1], bulk-approve 用 ≥0.85 过滤
             version             INTEGER NOT NULL DEFAULT 1,
             created_at          TEXT NOT NULL,
             updated_at          TEXT NOT NULL
@@ -729,6 +730,21 @@ def init_db():
         conn.execute("CREATE INDEX IF NOT EXISTS idx_appr_prop_status ON approval_proposals(status)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_appr_prop_exp ON approval_proposals(experiment_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_appr_prop_lease ON approval_proposals(lease_expires_at)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_appr_prop_score ON approval_proposals(decision_score)")
+        # v4.1 1B.3: 旧库兼容 — 加 decision_score 字段
+        try:
+            conn.execute("ALTER TABLE approval_proposals ADD COLUMN decision_score REAL NOT NULL DEFAULT 0.0")
+        except Exception:
+            pass  # 字段已存在
+        # v4.1 1B.3: t1_pending_orders 旧库兼容 — 加 source / proposal_id 列
+        try:
+            conn.execute("ALTER TABLE t1_pending_orders ADD COLUMN source TEXT NOT NULL DEFAULT 'user_manual'")
+        except Exception:
+            pass
+        try:
+            conn.execute("ALTER TABLE t1_pending_orders ADD COLUMN proposal_id INTEGER")
+        except Exception:
+            pass
         conn.execute("""CREATE TABLE IF NOT EXISTS approval_attempts (
             attempt_id          INTEGER PRIMARY KEY AUTOINCREMENT,
             proposal_id         INTEGER NOT NULL REFERENCES approval_proposals(proposal_id) ON DELETE CASCADE,

@@ -32,7 +32,9 @@ from services.approval_service import (
     list_proposals,
     list_attempts,
     submit_decision,
+    submit_bulk_decision,
     reopen_lease,
+    BULK_LEASE_TTL_SECONDS,
     ApprovalNotFoundError,
     ApprovalConflictError,
     ApprovalExpiredError,
@@ -105,6 +107,7 @@ def create_new_proposal(payload: dict):
             policy_version=payload.get("policy_version", "v1.0.0"),
             policy_hash=payload.get("policy_hash", ""),
             snapshot_hash=payload.get("snapshot_hash", ""),
+            decision_score=float(payload.get("decision_score", 0.0)),
             lease_ttl_seconds=int(payload.get("lease_ttl_seconds", 86400)),
         )
         return proposal
@@ -131,6 +134,61 @@ def get_proposal_attempts(proposal_id: int):
         get_proposal(proposal_id, owner_user_id=user_id)
         return {"attempts": list_attempts(proposal_id), "proposal_id": proposal_id}
     except (ApprovalNotFoundError, ApprovalAuthorizationError) as e:
+        raise _to_http(e)
+
+
+@router.post("/bulk-approve")
+def bulk_approve(payload: dict):
+    """一键接受高分提案 (v4.1 1B.3).
+
+    Body:
+      {
+        "proposal_ids": [101, 102, 103, ...],       # 必填
+        "min_score": 0.85,                           # 必填, decision_score 阈值
+        "stock_codes": {101: "600519", 102: "000001"},  # 可选, 只对提供的 proposal_id 创建 pending_buy
+        "order_params": {                            # 可选, 每条 pending_buy 的参数
+          "101": {"shares": 100, "hold_days": 1, "slippage_bps": 10.0}
+        },
+        "reason": "auto accept high-score batch"
+      }
+
+    Returns:
+      {
+        "succeeded": [proposal_id, ...],
+        "rejected_low_score": [{...}],
+        "failed": [{...}],
+        "pending_orders_created": [order_id, ...],
+        "lease_expires_at": "...",
+        "min_score": 0.85
+      }
+
+    Notes:
+      - 全部 approve + pending_buy INSERT 在一个事务里,任何一条失败全部回滚
+      - lease TTL = 60s (vs 单个 24h),防止 stale batch
+      - experiment transition 失败仅记日志,不回滚 proposal
+    """
+    user_id = get_current_user_id()
+    proposal_ids = payload.get("proposal_ids") or []
+    min_score = payload.get("min_score")
+    if not proposal_ids:
+        raise HTTPException(422, "proposal_ids required")
+    if min_score is None:
+        raise HTTPException(422, "min_score required")
+    try:
+        return submit_bulk_decision(
+            proposal_ids=list(proposal_ids),
+            min_score=float(min_score),
+            actor=f"user:{user_id}",
+            owner_user_id=user_id,
+            stock_codes=payload.get("stock_codes") or {},
+            order_params=payload.get("order_params") or {},
+            default_shares=int(payload.get("default_shares", 100)),
+            default_hold_days=int(payload.get("default_hold_days", 1)),
+            default_slippage_bps=float(payload.get("default_slippage_bps", 10.0)),
+            reason=str(payload.get("reason", "bulk_approve"))[:500],
+        )
+    except (ApprovalNotFoundError, ApprovalAuthorizationError,
+            ApprovalConflictError, ApprovalExpiredError) as e:
         raise _to_http(e)
 
 
