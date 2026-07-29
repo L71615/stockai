@@ -271,6 +271,15 @@ def init_db():
         conn.execute("CREATE INDEX IF NOT EXISTS idx_t1_orders_entry_dt  ON t1_pending_orders(entry_date)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_t1_orders_exit_dt   ON t1_pending_orders(exit_date)")
 
+        # v4.1 1A.3: ALTER TABLE 加 source 字段 (pipeline_proposal / user_manual)
+        # 用 try/except 处理"列已存在" (OperationalError)
+        try:
+            conn.execute(
+                "ALTER TABLE t1_pending_orders ADD COLUMN source TEXT NOT NULL DEFAULT 'user_manual'"
+            )
+        except Exception:
+            pass  # 列已存在, 跳过
+
         # v4.1 1A.1: watcher 健康检查表 (单行 UPSERT, 不需要索引)
         conn.execute("""CREATE TABLE IF NOT EXISTS watcher_health (
             id                 INTEGER PRIMARY KEY AUTOINCREMENT,

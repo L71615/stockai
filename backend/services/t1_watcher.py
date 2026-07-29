@@ -74,15 +74,19 @@ def create_pending_order(
     slippage_bps: float = 10.0,
     entry_date: str | None = None,
     reason: str = "",
+    source: str = "user_manual",                 # v4.1 1A.3: pipeline_proposal / user_manual
+    proposal_id: int | None = None,             # v4.1 1A.3: 关联 approval_proposals.proposal_id
 ) -> dict:
     """创建一条 T+1 pending_buy 订单
 
     Args:
         entry_date: 计划买入日期(YYYY-MM-DD),默认明天
+        source: 'pipeline_proposal' (来自 /pipeline 收件箱) 或 'user_manual' (默认)
+        proposal_id: 当 source='pipeline_proposal' 时关联的 approval_proposals.proposal_id
         其他参数: 见 schema
 
     Returns:
-        {"id": 新订单 ID, "status": "pending_buy", ...}
+        {"id": 新订单 ID, "status": "pending_buy", "source": ..., ...}
     """
     from database import execute, query_one
 
@@ -96,20 +100,45 @@ def create_pending_order(
 
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    result = execute(
-        """INSERT INTO t1_pending_orders
-           (user_id, stock_code, stock_name, brief_id, shares,
-            planned_entry_price, planned_exit_price, hold_days,
-            status, slippage_bps, entry_date, exit_date, reason,
-            created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (
-            user_id, stock_code, stock_name, brief_id, shares,
-            planned_entry_price, planned_exit_price, hold_days,
-            STATUS_PENDING_BUY, slippage_bps, entry_date, exit_date,
-            reason, now, now,
-        ),
-    )
+    # v4.1 1A.3: source 字段 + proposal_id 字段 (v4.0 schema 可能没有, 用 try/except ALTER)
+    # 这里直接 INSERT, source 是新字段, proposal_id 也加进去
+    try:
+        result = execute(
+            """INSERT INTO t1_pending_orders
+               (user_id, stock_code, stock_name, brief_id, shares,
+                planned_entry_price, planned_exit_price, hold_days,
+                status, slippage_bps, entry_date, exit_date, reason,
+                source, proposal_id, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                user_id, stock_code, stock_name, brief_id, shares,
+                planned_entry_price, planned_exit_price, hold_days,
+                STATUS_PENDING_BUY, slippage_bps, entry_date, exit_date,
+                reason, source, proposal_id, now, now,
+            ),
+        )
+    except Exception:
+        # 旧 schema 无 source / proposal_id 字段 — 回退到基础 insert
+        try:
+            execute(
+                """ALTER TABLE t1_pending_orders ADD COLUMN proposal_id INTEGER""",
+            )
+        except Exception:
+            pass
+        result = execute(
+            """INSERT INTO t1_pending_orders
+               (user_id, stock_code, stock_name, brief_id, shares,
+                planned_entry_price, planned_exit_price, hold_days,
+                status, slippage_bps, entry_date, exit_date, reason,
+                source, proposal_id, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                user_id, stock_code, stock_name, brief_id, shares,
+                planned_entry_price, planned_exit_price, hold_days,
+                STATUS_PENDING_BUY, slippage_bps, entry_date, exit_date,
+                reason, source, proposal_id, now, now,
+            ),
+        )
     order_id = result.get("lastrowid") if isinstance(result, dict) else None
     return {
         "id": order_id,
@@ -122,6 +151,8 @@ def create_pending_order(
         "hold_days": hold_days,
         "status": STATUS_PENDING_BUY,
         "slippage_bps": slippage_bps,
+        "source": source,
+        "proposal_id": proposal_id,
     }
 
 

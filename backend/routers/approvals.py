@@ -182,7 +182,7 @@ def _do_decision(proposal_id: int, action: str, payload: dict):
     if expected_version is None:
         raise HTTPException(422, "expected_version required")
     try:
-        return submit_decision(
+        result = submit_decision(
             proposal_id=proposal_id,
             action=action,
             expected_version=int(expected_version),
@@ -191,6 +191,33 @@ def _do_decision(proposal_id: int, action: str, payload: dict):
             lease_id=lease_id,
             owner_user_id=user_id,
         )
+
+        # v4.1 1A.3: 接受成功 → 自动创建 pending_buy
+        # 仅当 payload 含 stock_code 时触发 (UI 决定是否下单, 不是 implicit)
+        if action == "approve":
+            stock_code = payload.get("stock_code")
+            if stock_code:
+                try:
+                    from services.t1_watcher import create_pending_order
+                    order = create_pending_order(
+                        user_id=user_id,
+                        stock_code=stock_code,
+                        stock_name=payload.get("stock_name", ""),
+                        shares=int(payload.get("shares", 100)),
+                        planned_entry_price=payload.get("planned_entry_price"),
+                        planned_exit_price=payload.get("planned_exit_price"),
+                        hold_days=int(payload.get("hold_days", 1)),
+                        slippage_bps=float(payload.get("slippage_bps", 10.0)),
+                        entry_date=payload.get("entry_date"),
+                        reason=f"pipeline_proposal:{proposal_id}",
+                        source="pipeline_proposal",
+                        proposal_id=proposal_id,
+                    )
+                    result["pending_buy"] = order
+                except Exception as e:
+                    logger.warning("v4.1 1A.3: 创建 pending_buy 失败 (proposal %s): %s", proposal_id, e)
+                    result["pending_buy_error"] = str(e)
+        return result
     except (ApprovalNotFoundError, ApprovalAuthorizationError,
             ApprovalConflictError, ApprovalExpiredError) as e:
         raise _to_http(e)
