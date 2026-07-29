@@ -34,6 +34,7 @@ from typing import Any
 from services.fees import calc_buy_fee, calc_sell_fee
 from services.t1_cost import calc_t1_holding_cost
 from services.vendor_router import route
+from services.notify_service import send_notification
 
 logger = logging.getLogger(__name__)
 
@@ -171,7 +172,31 @@ def cancel_order(order_id: int, user_id: int, reason: str = "用户取消") -> b
         (STATUS_CANCELLED, f"[{now}] {reason}", now,
          order_id, user_id, STATUS_PENDING_BUY),
     )
+
+    # v4.1 1B.1: 推送取消通知 (best-effort, 不阻塞取消主流程)
+    _notify_settlement(
+        title="[订单取消]",
+        body=f"订单 #{order_id} 已取消\n原因: {reason}",
+        order_id=order_id,
+    )
     return True
+
+
+def _notify_settlement(title: str, body: str, order_id: int) -> None:
+    """v4.1 1B.1: 成交通知推送 (best-effort)
+
+    失败不阻塞 watcher 主流程:
+      - notify_service 内部已 try/except 每个 channel
+      - 这里再套一层 try/except 防御 send_notification 自身抛异常
+      - 无渠道时仅 log "[notify_skip]", 不算错
+    """
+    try:
+        result = send_notification(markdown=body, title=title, run_id=f"t1_watcher_{order_id}")
+        if not result.get("sent"):
+            logger.info("[notify_skip] order %s: %s", order_id, result.get("reason", "no channel"))
+    except Exception as e:
+        # 通知失败不影响 watcher 模拟成交 — 已在 notify_log 留 audit
+        logger.warning("notify_settlement order %s failed: %s", order_id, e)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -291,6 +316,18 @@ def _simulate_buy(order: dict, open_price: float) -> dict:
          now, now, order_id),
     )
 
+    # 4. v4.1 1B.1: 推送模拟买入通知（不影响主流程，失败仅 audit log）
+    _notify_settlement(
+        title=f"[模拟买入] {stock_code} {stock_name}",
+        body=(
+            f"已模拟买入 {stock_code} {stock_name} {shares} 股 @ {round(open_price, 4)}\n"
+            f"金额: ¥{round(buy_amount, 2)} + 费 ¥{round(fee['total'], 2)}\n"
+            f"总成本: ¥{round(total_cost, 2)}\n"
+            f"持仓时间: {today}"
+        ),
+        order_id=order_id,
+    )
+
     return {
         "order_id": order_id,
         "filled_price": round(open_price, 4),
@@ -385,6 +422,18 @@ def _simulate_sell(order: dict, open_price: float) -> dict:
          t1.get("holding_risk_premium", 0), t1.get("gross_pnl", 0),
          t1.get("net_pnl", 0), t1.get("net_return_pct", 0),
          now, now, order_id),
+    )
+
+    # 5. v4.1 1B.1: 推送模拟卖出通知
+    _notify_settlement(
+        title=f"[模拟卖出] {stock_code} {stock_name}",
+        body=(
+            f"已模拟卖出 {stock_code} {stock_name} {shares} 股 @ {round(open_price, 4)}\n"
+            f"毛收益: ¥{round(t1.get('gross_pnl', 0), 2)}\n"
+            f"净收益: ¥{round(t1.get('net_pnl', 0), 2)} ({round(t1.get('net_return_pct', 0) * 100, 2)}%)\n"
+            f"持仓: {hold_days} 天, 卖费: ¥{round(fee['total'], 2)}"
+        ),
+        order_id=order_id,
     )
 
     return {
