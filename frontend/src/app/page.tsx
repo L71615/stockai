@@ -4,6 +4,7 @@ import { useState } from "react"
 import { useRouter } from "next/navigation"
 import { SiteHeader } from "@/components/site-header"
 import { PortfolioRiskCards } from "@/components/portfolio-risk-cards"
+import { HoldingsVsShadowCard } from "@/components/portfolio/holdings-vs-shadow-card"
 import { ChartAreaInteractive } from "@/components/chart-area-interactive"
 import { DataTable } from "@/components/data-table"
 import { Card, CardAction, CardContent, CardFooter, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
@@ -226,6 +227,8 @@ export default function Home() {
 
             {/* 组合风险指标 */}
             <PortfolioRiskCards data={riskData as { sharpe?: number | null; max_drawdown?: number | null; volatility?: number | null; beta?: number | null } | null | undefined} />
+
+            <HoldingsVsShadowCard window="30d" maxRows={10} />
 
             {aiHeadline && (
               <div className="px-4 lg:px-6">

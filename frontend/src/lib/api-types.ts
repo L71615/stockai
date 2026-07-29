@@ -397,3 +397,70 @@ export interface ShadowSnapshotsResponse {
   snapshots: ShadowSnapshot[]
   count: number
 }
+
+// ════════════════════════════════════════════════════════════
+// v4.1 1B.4 — Holdings vs Shadow Portfolio Comparison Card
+// ════════════════════════════════════════════════════════════
+
+export type WindowKey = "7d" | "30d" | "90d" | "180d"
+export type DiffSide = "both" | "actual_only" | "shadow_only" | "aligned_zero"
+
+export interface HoldingVsShadowSide {
+  quantity: number | null
+  cost_price: number | null
+  last_price: number | null
+  market_value: number | null
+  pnl: number | null
+  pnl_pct: number | null
+  today_pnl: number | null
+  weight_pct: number | null
+}
+
+export interface HoldingVsShadowDiff {
+  stock_code: string
+  stock_name: string
+  actual: HoldingVsShadowSide
+  shadow: HoldingVsShadowSide
+  delta_qty: number | null
+  delta_market_value: number | null
+  diff_side: DiffSide
+}
+
+export interface PortfolioComparisonSummary {
+  market_value: number
+  cost_basis: number
+  pnl: number
+  pnl_pct: number
+  today_pnl: number
+}
+
+export interface ShadowComparisonSummary {
+  nav: number
+  cash: number
+  market_value: number
+  delta_nav: number
+  delta_nav_pct: number
+}
+
+export interface PortfolioComparisonDiffSummary {
+  value_gap: number
+  value_gap_pct: number
+  position_overlap_count: number
+  actual_only_count: number
+  shadow_only_count: number
+}
+
+export interface PortfolioComparisonResponse {
+  window_days: number
+  shadow_portfolio_id: number | null
+  shadow_portfolio_name: string | null
+  snapshot_date: string | null
+  accumulating: boolean
+  snapshot_count: number
+  snapshot_target: number
+  actual: PortfolioComparisonSummary
+  shadow: ShadowComparisonSummary
+  diff_summary: PortfolioComparisonDiffSummary
+  rows: HoldingVsShadowDiff[]
+  message?: string
+}

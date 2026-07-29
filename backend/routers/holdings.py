@@ -2,13 +2,14 @@
 
 from datetime import datetime
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 from database import query_all, query_one, execute, execute_many
 from services.utils import get_market, detect_asset_type, get_fund_nav, calc_xirr, get_fee_config, FeeConfig
 from routers.stocks import _cached_quote  # 共享的行情缓存函数
 from dependencies import get_current_user_id
+from services.portfolio_comparison_service import get_holdings_vs_shadow
 
 
 def _estimate_sell_fee(market_value: float, asset_type: str, stock_code: str = "") -> float:
@@ -124,6 +125,28 @@ def update_journal(holding_id: int, body: JournalBody):
     execute("UPDATE holdings SET journal = ?, updated_at = datetime('now','localtime') WHERE id = ?",
             (body.journal, holding_id))
     return {"message": "已保存", "journal": body.journal}
+
+
+@router.get("/holdings/shadow-comparison")
+def get_holdings_shadow_comparison(
+    window: str = Query("30d", pattern=r"^(7d|30d|90d|180d)$"),
+):
+    """持仓 vs 影子组合差异 (v4.1 1B.4)
+
+    Args:
+        window: 7d / 30d / 90d / 180d (默认 30d)
+
+    Returns:
+        dict — 见 services/portfolio_comparison_service.py docstring
+
+    Notes:
+        - 自动取最近一个 status='active' 的 shadow portfolio
+        - 永远显示 actual 侧 PnL;无 active 时 shadow 部分为 0
+        - 积累不足 (< window 天 snapshot) → accumulating=True
+    """
+    user_id = get_current_user_id()
+    days = int(window.rstrip("d"))
+    return get_holdings_vs_shadow(user_id=user_id, window_days=days)
 
 
 @router.get("/holdings/with-pnl")
