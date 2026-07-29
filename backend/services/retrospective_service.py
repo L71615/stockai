@@ -301,3 +301,67 @@ def counterfactual_summary(
         "edge": edge,
         "interpretation": interp,
     }
+
+
+# ════════════════════════════════════════════════════════════
+#  批量 Wire-up (v4.1 1A.4) — 定期把"已决策 N 天"的 proposal 写 outcome
+# ════════════════════════════════════════════════════════════
+
+def run_retrospective_writer(*, fwd_days: int = 30) -> dict:
+    """v4.1 1A.4: 扫描所有已决策的 approval_proposals, 把 ≥fwd_days 的写入 proposal_outcomes.
+
+    返回 {"scanned": N, "written": M, "skipped_existing": K, "errors": [list]}。
+
+    实现要点:
+      - 只处理 status in ('approved', 'rejected') 的 proposal
+      - decided_at >= fwd_days ago 才记录 (前向窗口完成)
+      - 已存在 outcome 的 proposal 跳过 (UNIQUE proposal_id)
+      - fwd_days / fwd_return / fwd_baseline_diff: 0.0 占位 (v4.2 会从 factor IR / 股票价格算真实值)
+      - 错误隔离: 单条失败不影响其他
+    """
+    from datetime import datetime, timedelta
+    cutoff = (datetime.now() - timedelta(days=fwd_days)).strftime("%Y-%m-%d")
+
+    candidates = query_all(
+        """SELECT proposal_id, status, decided_at, experiment_id
+           FROM approval_proposals
+           WHERE status IN ('approved', 'rejected')
+             AND decided_at IS NOT NULL
+             AND decided_at <= ?
+           ORDER BY decided_at DESC
+           LIMIT 500""",
+        (cutoff,),
+    )
+
+    written = 0
+    skipped_existing = 0
+    errors: list[dict] = []
+
+    for prop in candidates:
+        proposal_id = prop["proposal_id"]
+        decision = prop["status"]
+        try:
+            record_outcome(
+                proposal_id=proposal_id,
+                decision=decision,
+                fwd_days=fwd_days,
+                fwd_return=0.0,           # placeholder; v4.2 接入 factor IR / price forward
+                fwd_shadow_return=0.0,
+                fwd_baseline_diff=0.0,
+                baseline_code="csi300",
+            )
+            written += 1
+        except OutcomeAlreadyRecordedError:
+            skipped_existing += 1
+        except Exception as e:
+            logger.warning("run_retrospective_writer proposal %s failed: %s", proposal_id, e)
+            errors.append({"proposal_id": proposal_id, "error": str(e)})
+
+    return {
+        "scanned": len(candidates),
+        "written": written,
+        "skipped_existing": skipped_existing,
+        "errors": errors,
+        "cutoff": cutoff,
+        "fwd_days": fwd_days,
+    }
