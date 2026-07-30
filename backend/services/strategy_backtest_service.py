@@ -584,6 +584,23 @@ def _load_strategy_conditions(strategy_ids: list[str], param_overrides: dict | N
     import os
     import yaml
 
+    # v4.1.1: 用 registry 校验,typo 不再静默通过
+    try:
+        from services.strategy_registry import get_registry
+        valid_ids, invalid_ids = get_registry().validate(strategy_ids)
+        if invalid_ids:
+            logger.warning(
+                "strategy_backtest: %d 个策略 ID 不存在,跳过: %s (可用: %s)",
+                len(invalid_ids), invalid_ids,
+                [s.id for s in get_registry().scan()],
+            )
+            strategy_ids = valid_ids
+            if not strategy_ids:
+                return None
+    except Exception as e:
+        # registry 不可用(测试 mock 等)时 fallback 到原行为
+        logger.debug("strategy_backtest: registry 不可用,fallback 直接加载: %s", e)
+
     strategies_dir = os.path.join(os.path.dirname(__file__), "..", "strategies")
     all_conditions = []
     overrides = param_overrides or {}
@@ -633,37 +650,17 @@ def _apply_param_overrides(conditions: list[dict], overrides: dict[str, any]) ->
 
 
 def _list_available_strategies() -> list[dict]:
-    """列出所有可用策略（包含来源、标签、可调参数等元信息）"""
-    import os
-    import yaml
+    """列出所有可用策略（包含来源、标签、可调参数等元信息）
 
-    strategies_dir = os.path.join(os.path.dirname(__file__), "..", "strategies")
-    result = []
-    if not os.path.isdir(strategies_dir):
-        return result
-
-    for fname in sorted(os.listdir(strategies_dir)):
-        if not fname.endswith(".yaml"):
-            continue
-        try:
-            with open(os.path.join(strategies_dir, fname), "r", encoding="utf-8") as f:
-                data = yaml.safe_load(f)
-            result.append({
-                "id": data.get("id", fname.replace(".yaml", "")),
-                "name": data.get("name", ""),
-                "description": data.get("description", ""),
-                "source": data.get("source", ""),
-                "source_url": data.get("source_url", ""),
-                "tags": data.get("tags", []),
-                "params": data.get("params", []),
-                "market_state": data.get("market_state", []),
-                "recommended_position": data.get("recommended_position", ""),
-                "conditions_count": len(data.get("conditions", [])),
-            })
-        except Exception:
-            pass
-
-    return result
+    v4.1.1: 委托给 strategy_registry,行为兼容(返回 dict 列表,字段一致)。
+    """
+    try:
+        from services.strategy_registry import list_strategies as _list
+        return _list()
+    except Exception as e:
+        # registry 不可用时返回空(不静默失败,记 warning 便于排查)
+        logger.warning("strategy_backtest: registry 不可用,_list 返回空: %s", e)
+        return []
 
 
 def _build_trade_reason(code: str, strategy_ids: list[str]) -> str:
