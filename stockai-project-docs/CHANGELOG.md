@@ -5,6 +5,26 @@
 
 ---
 
+## 2026-07-30 — v4.1.1 patch (策略注册 + 冲击成本修复)
+
+### 🆕 YAML 策略注册中心 (移植自 OSS quant-trading-system)
+- **新文件** `backend/services/strategy_registry.py` — 单例 + 自动扫描 + mtime 失效 + validate
+- 13 个内置策略(boll_mean / turtle_s1 / momentum_leader 等)自动发现,无需手动注册
+- `_load_strategy_conditions` 用 `registry.validate()` 拦截 typo,不再静默通过
+- 加新策略:丢 YAML 进 `backend/strategies/`,API/前端自动出现
+- 测试: `tests/test_strategy_registry.py` 15/15 passed
+
+### 🐛 fix: `_calc_impact_cost_bps` 移除未来数据泄漏
+- **Bug**: 原 SQL 用 `date('now','-1 day')` 做 ADV 上限 → 回测 2024 年时读 2026 年真实数据
+- **修复**: 加 `as_of_date: str` 必需 kw 参数,3 处调用方传 `next_date`/`final_date`
+- **回归测试**: `test_as_of_date_isolates_historical_window` — 2024 截面 vs 2026 截面 impact 比 > 1.5x
+
+### 📊 累计
+- 测试: 35 passed (registry 15 + impact 12 + slippage 8)
+- Commits: 13 个未推送到 origin (含 v4.1 的 11 个 + 2 个 patch)
+
+---
+
 ## 2026-07-30 — v4.1 完成 (Phase 1A/1B/2A/2B)
 
 ### 🎯 v4.1 战略: Decision-Loop 闭环 + 真实基准 + 漂移监控
