@@ -156,7 +156,7 @@ def update_all_factors() -> dict:
         except Exception as e:
             logger.warning("write %s failed: %s", factor_name, str(e)[:200])
 
-    return {
+    result = {
         "updated": updated,
         "statuses": statuses,
         "retired": retired_list,
@@ -171,6 +171,55 @@ def update_all_factors() -> dict:
         },
         "evaluated_at": now,
     }
+
+    # v4.1.1: 联动通知(retired / 新 warning)
+    _notify_lifecycle_changes(retired_list, new_warnings, p.version)
+
+    return result
+
+
+def _notify_lifecycle_changes(retired_list: list[str], new_warnings: list[str], policy_version: str) -> None:
+    """v4.1.1: 因子生命周期变更联动通知
+
+    当因子被自动退役或新进入 warning 状态时,通过 notify_service 推送到
+    邮件/微信/Telegram。失败不中断主流程(异常被吞 + log warning)。
+
+    Args:
+        retired_list: 本轮被标记为 retired 的因子
+        new_warnings: 本轮新进入 warning 状态的因子
+        policy_version: 触发这次决策的 policy 版本号
+    """
+    if not retired_list and not new_warnings:
+        return
+    try:
+        from services.notify_service import send_notification
+    except Exception as e:
+        logger.debug("factor_lifecycle notify: notify_service 不可用,跳过: %s", e)
+        return
+
+    lines: list[str] = []
+    if retired_list:
+        lines.append(f"## ❌ 已退役 ({len(retired_list)})")
+        for f in retired_list:
+            lines.append(f"- `{f}` — IR 长期低于阈值,自动退役")
+    if new_warnings:
+        lines.append(f"\n## ⚠️ 新增警告 ({len(new_warnings)})")
+        for f in new_warnings:
+            lines.append(f"- `{f}` — IR 接近退役阈值,持续观察")
+
+    body = (
+        f"# 因子生命周期更新\n\n"
+        f"Policy: `{policy_version}`\n\n"
+        + "\n".join(lines)
+        + "\n\n详见 `/factor-lab` IC 分析页。"
+    )
+
+    title = f"[StockAI] 因子生命周期: {len(retired_list)} 退役, {len(new_warnings)} 新警告"
+    try:
+        send_notification(body, title)
+    except Exception as e:
+        # 通知失败不掩盖研究结论(参考 D7: 通知独立 audit)
+        logger.warning("factor_lifecycle notify: 发送失败(不阻塞主流程): %s", e)
 
 
 def get_all_statuses() -> list[dict]:

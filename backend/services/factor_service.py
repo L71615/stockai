@@ -274,6 +274,58 @@ def factor_macd_signal(closes: list[float]) -> Optional[float]:
         return None
 
 
+def factor_rsrs(highs: list[float], lows: list[float], window: int = 18) -> Optional[float]:
+    """RSRS 阻力支撑相对强度 (Resistance Support Relative Strength)
+
+    原理 (源自 quant-trading-system OSS strategies/rsrs.py):
+      每天 high ~ low 做 OLS 回归 H = α + β × L + ε
+      β 越大 → 当日买方推力越强(收盘前能买在离最高价更近的位置)
+      β 越小 → 卖方压制
+
+    用滚动窗口计算每日 β,然后对 β 做 z-score 标准化:
+      rsrs = (β_today - mean(β)) / std(β)
+
+    返回值:正 → 阻力位上移,看涨;负 → 支撑位下移,看跌
+
+    Args:
+        highs:  最高价序列(至少 window+5 条)
+        lows:   最低价序列
+        window: 回归窗口(默认 18 日)
+    """
+    min_len = min(len(highs), len(lows)) if highs and lows else 0
+    if min_len < window + 2:
+        return None
+    try:
+        h = highs[-min_len:]
+        l = lows[-min_len:]
+        betas: list[float] = []
+        for i in range(window - 1, len(h)):
+            h_w = h[i - window + 1 : i + 1]
+            l_w = l[i - window + 1 : i + 1]
+            if len(h_w) < 2:
+                continue
+            mean_l = sum(l_w) / len(l_w)
+            mean_h = sum(h_w) / len(h_w)
+            cov = sum((l_w[k] - mean_l) * (h_w[k] - mean_h) for k in range(len(l_w)))
+            var_l = sum((x - mean_l) ** 2 for x in l_w)
+            if var_l > 0:
+                betas.append(cov / var_l)
+        if len(betas) < 2:
+            return None
+        mu = sum(betas) / len(betas)
+        # ddof=1 (样本标准差),与 OSS rsrs.py 一致
+        if len(betas) < 2:
+            return None
+        variance = sum((b - mu) ** 2 for b in betas) / (len(betas) - 1)
+        if variance <= 0:
+            return 0.0
+        sigma = math.sqrt(variance)
+        return round((betas[-1] - mu) / sigma, 4)
+    except Exception:
+        logger.debug("factor_rsrs: calculation failed, returning None", exc_info=True)
+        return None
+
+
 def factor_ma_disposition(closes: list[float]) -> Optional[float]:
     """均线排列度：短中长均线方向一致性（正=多头排列，负=空头）"""
     if len(closes) < 60:
@@ -1289,6 +1341,12 @@ def compute_all_factors(
     factors["macd_signal"] = factor_macd_signal(closes)
     factors["ma_disposition"] = factor_ma_disposition(closes)
 
+    # ── 技术指标类 (需要 high/low) ──
+    if highs and lows:
+        factors["rsrs"] = factor_rsrs(highs[-n:], lows[-n:], window=18)
+    else:
+        factors["rsrs"] = None
+
     # ── 价格类 ──
     factors["ma5"] = factor_ma5(closes)
     factors["ma10"] = factor_ma10(closes)
@@ -1608,6 +1666,7 @@ FACTOR_REGISTRY: dict[str, dict] = {
     "BOLL_UPPER":   {"status": "done", "fn": "factor_boll_upper",   "category": "技术指标因子", "direction": "正向"},
     "BOLL_LOWER":   {"status": "done", "fn": "factor_boll_lower",   "category": "技术指标因子", "direction": "正向"},
     "BOLL_POSITION":{"status": "done", "fn": "factor_boll_position","category": "技术指标因子", "direction": "正向"},
+    "RSRS":         {"status": "done",    "fn": "factor_rsrs",         "category": "技术指标因子", "direction": "正向"},
 
     # ── 动量因子 (9) ──
     "RET_5D":       {"status": "done",    "fn": "factor_ret_5d",       "category": "动量因子", "direction": "正向"},
