@@ -25,6 +25,40 @@
 
 ---
 
+## 2026-07-30 — v4.1.1 OSS port (RSRS + 仓位算法 + 联动通知)
+
+移植自 `D:\some-oss\quant-trading-system` 的 strategies/rsrs.py + risk/sizing.py
+
+### 🆕 factor_rsrs — 阻力支撑相对强度
+- **新函数** `factor_service.factor_rsrs(highs, lows, window=18)`
+- 经典 alpha: high~low OLS 回归 beta z-score,正=买方推力强
+- 注册到 `FACTOR_REGISTRY['RSRS']`,`compute_all_factors` 自动调用
+- 测试: 5/5 passed
+
+### 🆕 risk_sizing.py — 4 种仓位算法
+- **新文件** `backend/services/risk_sizing.py`
+- FixedFraction / Kelly (half_kelly + 25% cap) / RiskParity / VolTarget
+- 统一入口 `get_position_size(method="kelly", ...)` 返回 dict 带 diagnostic
+- `calc_win_rate_and_profit_factor(trades)` 从历史交易算 Kelly 输入
+- 测试: 22/22 passed
+
+### 🆕 factor_lifecycle.retired → 通知
+- **新函数** `factor_lifecycle._notify_lifecycle_changes(retired, warnings, policy_version)`
+- 因子自动退役或新进 warning 时,推送邮件/微信/Telegram
+- 失败不阻塞主流程(D7: 通知独立 audit 原则)
+- 测试: 5/5 passed
+
+### 📊 累计
+- 测试: 47 passed (registry 15 + rsrs/sizing/notify 32)
+- v4.1.1 总 commits: 4 (impact fix + registry + rsrs/sizing + docs)
+
+### 🚫 没做(架构或红线原因)
+- **配对交易策略** — StockAI YAML 单 symbol,不支持 spread 模式 → 推 v4.2
+- **TWAP 拆单** — 7K 本金单笔 100 股不需要
+- **QMT broker** — 红线:不做实时量化
+
+---
+
 ## 2026-07-30 — v4.1 完成 (Phase 1A/1B/2A/2B)
 
 ### 🎯 v4.1 战略: Decision-Loop 闭环 + 真实基准 + 漂移监控
