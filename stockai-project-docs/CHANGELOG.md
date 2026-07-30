@@ -59,6 +59,40 @@
 
 ---
 
+## 2026-07-30 — v4.1.1 risk_guard + dev DB seed
+
+### 🆕 risk_guard.py — 4 条规则纯函数评估器
+移植自 `D:\some-oss\quant-trading-system\execution\risk_guard.py`
+
+4 条规则按严重度递增:
+1. 最大回撤 > 20% → `LIQUIDATE_ALL`(全部平仓)
+2. 日亏损 > 5%    → `BLOCK_BUY`(锁仓,只允许平)
+3. 单品种 > 30%   → `BLOCK_BUY`
+4. 总仓位 > 80%   → `BLOCK_BUY`
+
+返回 `RiskCheckResult(action, reason, 各指标快照)` — 便于审计/通知
+
+- **新文件** `backend/services/risk_guard.py`
+- **新测试** `tests/test_risk_guard.py` — 16 测试(各规则 + 边界 + 自定义阈值)
+- 与 `discipline_service.py` 互补:本模块"实时硬拦截",discipline 是"用户纪律配置"
+
+### 🆕 dev DB 5 年一次性 seed
+- **index_kline** 180 rows → 7500 rows (6 indices × 1250 天, 2021-06 → 2026-07)
+- **etf_kline** 仍 0 rows(eastmoney API 限频,scheduler 17:10 nightly 会补)
+- 用户首次部署需手动跑: `python -c "from backend.services.index_sync_service import run_full_seed; run_full_seed()"`
+
+### 🐛 fix: registry 与 loader 路径不一致
+- `_load_strategy_conditions` 改用 `registry.get(sid).yaml_path` 加载
+- 之前 registry 用 monkeypatch 目录(测试),loader 用真实 `backend/strategies/`
+- 修后两边共享同一目录源 + mtime 缓存
+
+### 📊 累计
+- 测试: 67 passed (risk_guard 16 + registry 15 + rsrs/sizing 32 + impact 12
+  含 8 个 Windows DB lock 噪音)
+- 总 v4.1.1 commits: 6 个未推 origin
+
+---
+
 ## 2026-07-30 — v4.1 完成 (Phase 1A/1B/2A/2B)
 
 ### 🎯 v4.1 战略: Decision-Loop 闭环 + 真实基准 + 漂移监控
