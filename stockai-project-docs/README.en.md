@@ -6,7 +6,7 @@
 
 **64 factors · 13 strategies · 8-role multi-agent + agent tool calls · Auto Quant Pipeline · T+1 simulated fills · Counterfactual reports · Multi-strategy portfolio**
 
-![Version](https://img.shields.io/badge/version-v4.0-success?style=flat-square)
+![Version](https://img.shields.io/badge/version-v4.1.1-success?style=flat-square)
 ![Python](https://img.shields.io/badge/python-3.11+-blue?style=flat-square&logo=python&logoColor=white)
 ![Next.js](https://img.shields.io/badge/Next.js-16-black?style=flat-square&logo=next.js&logoColor=white)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.6-3178C6?style=flat-square&logo=typescript&logoColor=white)
@@ -20,15 +20,21 @@
 
 ## 🎯 TL;DR
 
-StockAI v4.0 is a **purely local** A-share quant toolbox with the main scenario upgraded to **T+1/T+2 short-term forecast** (run pipeline at 22:00 → simulate fill at next open → sell on day 3), complemented by full factor backtest / decision loop / evidence visualization.
+StockAI v4.1 is a **purely local** A-share quant toolbox with the main scenario of **T+1/T+2 short-term forecast** (run pipeline at 22:00 → simulate fill at next open → sell on day 3), complemented by full factor backtest / decision loop / evidence visualization.
 
+**v4.1 three main lines + v4.1.1 patch:**
+- **Decision loop** — scheduler 22:00 pipeline + 09:35 T+1 watcher + bulk-approve single transaction + auto counterfactual
+- **Real benchmarks** — index_kline (6 indices) + etf_kline (11 ETFs) + 4-tier fallback
+- **Drift monitoring** — PSI/KL versioned thresholds + experiment_runs gate + baseline_value tracking
+- **v4.1.1 patch** — YAML strategy auto-registry + RSRS factor + 4 sizing algorithms + 4-rule risk guard + factor retirement notify + impact cost look-ahead fix
+
+**Core capabilities**:
 - **8-role multi-agent + CoT reasoning** + agent tool calls (Claude tool_use / OpenAI function_calling)
-- **64 factors** (29 classic + 35 Alpha158 extended) + IC recalibration + multi-strategy portfolio backtest
-- **T+1 simulated fill watcher** (state machine pending_buy → bought → sold, writes holdings + transactions)
-- **Slippage + market impact** models (B4 default 10bps + B5 ADV square-root)
-- **Counterfactual reports** (based on `proposal_retrospectives`, no new tables) + personalized prompts (A4)
-- **Evidence loop**: tri-axis state machine + OOS snapshots + shadow portfolios + approval inbox + feature flags
-- **Backend monitor**: Electron desktop app for real-time backend / log / database observation
+- **65 factors** (29 classic + 35 Alpha158 + 1 RSRS resistance/support)
+- **T+1 simulated fill watcher** + **single-position > 30% risk gate** (v4.1.1)
+- **Slippage + market impact** models (B4 10bps + B5 ADV square-root, with `as_of_date` to prevent look-ahead)
+- **Evidence loop**: tri-axis state machine + OOS snapshots + T+1 watcher + approval inbox + counterfactual + feature flags + Drift PSI/KL
+- **Backend monitor**: Electron desktop app
 
 > 📖 Full docs: [stockai-project-docs/](stockai-project-docs/) · 📋 Monitor: [monitor-desktop/](monitor-desktop/)
 - **Strategy backtest**: 13 YAML strategy templates + parameter optimization + slippage/cost model + overfit warnings
@@ -217,6 +223,8 @@ stocks/
 
 | Version | Date | Theme |
 |---------|------|-------|
+| **v4.1.1** | 2026-07-30 | patch: YAML strategy auto-registry + RSRS factor + 4 sizing algorithms + 4-rule risk guard + factor retirement notify + impact cost look-ahead fix (63 new tests) |
+| **v4.1** | 2026-07-30 | Decision loop + real benchmarks (index_kline / etf_kline) + Drift PSI/KL monitoring (53 new tests) |
 | **v4.0** | 2026-07-28 | T+1 short-term forecast mainline · 8-role multi-agent + CoT + tool calls + personalization · 64 factors · slippage + market impact · multi-strategy portfolio · counterfactual (193 new tests) |
 | **v3.11** | 2026-07-25 | Research→Decision Evidence Loop (9 steps delivered, 187 tests) |
 | v3.10.4 | 2026-07-24 | /quotes perf 50× + K-line tests |

@@ -6,7 +6,7 @@
 
 **64 因子 · 13 策略 · 8 角色多 Agent + Agent 工具调用 · 自动量化 Pipeline · T+1 模拟成交 · 反事实报告 · 多策略组合**
 
-![Version](https://img.shields.io/badge/version-v4.0-success?style=flat-square)
+![Version](https://img.shields.io/badge/version-v4.1.1-success?style=flat-square)
 ![Python](https://img.shields.io/badge/python-3.11+-blue?style=flat-square&logo=python&logoColor=white)
 ![Next.js](https://img.shields.io/badge/Next.js-16-black?style=flat-square&logo=next.js&logoColor=white)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.6-3178C6?style=flat-square&logo=typescript&logoColor=white)
@@ -20,15 +20,21 @@
 
 ## 🎯 TL;DR
 
-StockAI v4.0 是一个**纯本地化**的 A 股量化工具箱,主线场景升级为 **T+1/T+2 短线预测**(前晚 22:00 跑 Pipeline → 次日开盘模拟成交 → 第三日卖出),辅以完整的因子回测 / 决策闭环 / 证据可视化。
+StockAI v4.1 是一个**纯本地化**的 A 股量化工具箱,主线场景为 **T+1/T+2 短线预测**(前晚 22:00 跑 Pipeline → 次日开盘模拟成交 → 第三日卖出),辅以完整的因子回测 / 决策闭环 / 证据可视化。
 
+**v4.1 三大主线 + v4.1.1 patch:**
+- **决策闭环** — scheduler 22:00 守护 pipeline + 09:35 T+1 watcher + bulk-approve 单事务 + 反事实自动跟跑
+- **真实基准** — index_kline (6 指数) + etf_kline (11 ETF) + 4 段 fallback
+- **漂移监控** — PSI/KL 阈值版本化 + experiment_runs gate + baseline_value 真实填值
+- **v4.1.1 patch** — YAML 策略自动注册 + RSRS 因子 + 4 种仓位算法 + 4 规则风控拦截 + 因子退役通知 + impact cost look-ahead 修复
+
+**核心能力**:
 - **8 角色多 Agent + CoT 推理** + Agent 工具调用(Claude tool_use / OpenAI function_calling)
-- **64 因子**(29 经典 + 35 Alpha158 扩展) + IC 重新校准 + 多策略组合回测
-- **T+1 模拟成交 watcher**(状态机 pending_buy → bought → sold,写 holdings + transactions)
-- **滑点 + 冲击成本**模型(B4 默认 10bps + B5 基于 ADV 平方根)
-- **反事实报告** (基于 `proposal_retrospectives`,无新表) + 个性化 prompt(A4)
-- **证据闭环**(v3.11 基础 + v4.0 增强): 三轴状态机 + OOS 快照 + **T+1 模拟成交 watcher** + 审批收件箱 + **反事实报告可视化** + 灰度 flag
-- **后端监视器**: Electron 桌面 app,实时观察 stockai 后端进程 / 日志 / 数据库
+- **65 因子**(29 经典 + 35 Alpha158 + 1 RSRS 阻力支撑)
+- **T+1 模拟成交 watcher** + **单仓位 > 30% 风控拦截** (v4.1.1)
+- **滑点 + 冲击成本**模型(B4 10bps + B5 ADV 平方根,带 as_of_date 防 look-ahead)
+- **证据闭环**: 三轴状态机 + OOS 快照 + T+1 watcher + 审批收件箱 + 反事实可视化 + 灰度 flag + Drift PSI/KL
+- **后端监视器**: Electron 桌面 app
 
 > 📖 完整文档: [stockai-project-docs/](stockai-project-docs/) · 📋 监视器: [monitor-desktop/](monitor-desktop/)
 
@@ -240,6 +246,8 @@ stocks/
 
 | 版本 | 日期 | 主题 |
 |------|------|------|
+| **v4.1.1** | 2026-07-30 | patch: YAML 策略自动注册 + RSRS 因子 + 4 仓位算法 + 4 规则风控 + 因子退役通知 + impact cost look-ahead 修复 (63 新测试) |
+| **v4.1** | 2026-07-30 | 决策闭环 + 真实基准(index_kline / etf_kline) + Drift PSI/KL 监控 (53 新测试) |
 | **v4.0** | 2026-07-28 | T+1 短线预测主线 · 8 角色多 Agent + CoT + 工具调用 + 个性化 · 64 因子 · 滑点+冲击 · 多策略组合 · 反事实(193 新测试) |
 | **v3.11** | 2026-07-25 | 研究→决策证据闭环(9 step 交付, 187 测试) |
 | v3.10.4 | 2026-07-24 | /quotes 性能 50× + K 线测试 |
