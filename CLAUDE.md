@@ -102,16 +102,19 @@ npm run dev:safe     # 4GB 堆内存，适用于大型页
     - `factor_lab.py` — `/api/factor-lab/*` IC/相关性/散点图
   - **🆕 v4.1 不增加新路由** — 现有路由的语义升级（holdings vs shadow 对比卡 / bulk-approve 单事务 / 反事实可视化）
 - `services/` — 40+ 业务服务，关键模块：
-  - `factor_service.py` — 55 因子计算（10 大类：价格/动量/波动/成交量/量价/基本面/情绪/资金/技术），因子函数自己消化异常（NaN/inf → None）
+  - `factor_service.py` — 55 因子计算（10 大类：价格/动量/波动/成交量/量价/基本面/情绪/资金/技术），因子函数自己消化异常（NaN/inf → None）+ **🆕 v4.1.1** `factor_rsrs` (阻力支撑相对强度,18 日 OLS beta z-score)
   - `factor_lab.py` — **🆕** IC 分析 + 相关性矩阵 + 散点图（+ 衰减评分 `_compute_decay_score()`）
   - `factor_expr.py` — **🆕** GP 遗传编程挖掘因子（表达式 AST 安全求值）
   - `factor_ml.py` — **🆕** LightGBM ML 因子 + **GP+ML 联合训练** (`train_ml_with_gp_factors()`)
-  - `factor_lifecycle.py` — **🆕** 因子生命周期管理（active / warning / retired 三态 + 自动退役）
+  - `factor_lifecycle.py` — **🆕** 因子生命周期管理(active / warning / retired 三态 + 自动退役) + **🆕 v4.1.1** `_notify_lifecycle_changes` 联动通知
   - `ai_service.py` + `vendor_router.py` + `ai_exceptions.py` — 多供应商（5 家）× 7 功能独立路由，异常体系 5 级
   - **`agent_tools.py`** — **🆕 v4.0 A2** Agent 工具注册表(get_quote / get_factor / run_backtest / calc_t1_cost),支持 OpenAI function_calling + Anthropic tool_use 双协议
   - **`t1_cost.py`** — **🆕 v4.0 C2** T+1/T+2 持仓成本计算器(卖费+持仓风险溢价+滑点)
-  - **`t1_watcher.py`** — **🆕 v4.0** T+1 模拟成交 watcher,状态机 pending_buy→bought→sold,写 holdings + transactions
-  - `condition_engine.py` + `strategies/*.yaml` — 13 个 YAML 策略模板，AND/OR 组合 + 可调参数
+  - **`t1_watcher.py`** — **🆕 v4.0** T+1 模拟成交 watcher,状态机 pending_buy→bought→sold,写 holdings + transactions + **🆕 v4.1.1** `_evaluate_buy_risk` 风控拦截
+  - `condition_engine.py` + `strategies/*.yaml` — 13 个 YAML 策略模板,AND/OR 组合 + 可调参数
+  - **`strategy_registry.py`** — **🆕 v4.1.1** YAML 策略自动注册中心(单例 + mtime 失效 + validate)
+  - **`risk_sizing.py`** — **🆕 v4.1.1** 4 种仓位算法(FixedFraction / Kelly / RiskParity / VolTarget) + calc_win_rate_and_profit_factor
+  - **`risk_guard.py`** — **🆕 v4.1.1** 4 规则风控评估器(max_drawdown / daily_loss / single_position / total_exposure)
   - `futu_client.py` / `futu_ingest_service.py` / `futu_sync_service.py` — Futu OpenD 行情接入与 `intraday`/`nightly` 批量同步
   - `backtest_service.py` / `strategy_backtest_service.py` / `multi_agent_service.py` — 回测引擎（含 **🆕 v4.0 B4 滑点模型** + F10 买卖点标注 + `_evaluate_protection()` 6 维风险评估）+ **🆕 v4.0 A1 8 角色多空辩论**(资金面/政策/做空)
   - `trading_memory.py` — 决策→验证→反思→注入 闭环

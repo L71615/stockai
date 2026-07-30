@@ -234,6 +234,135 @@ def _notify_settlement(title: str, body: str, order_id: int) -> None:
 #  Watcher — 模拟买入 / 卖出
 # ═══════════════════════════════════════════════════════════════
 
+# ═══════════════════════════════════════════════════════════════
+#  v4.1.1 — risk_guard 集成
+# ═══════════════════════════════════════════════════════════════
+
+# 风险拦截原因(写到 order.reason / notifications)
+RISK_BLOCKED_REASON = "blocked_by_risk"
+
+
+def _get_user_positions_value(user_id: int) -> dict[str, float]:
+    """查询用户当前持仓市值(用 cost_basis 作 fallback,避免每次拉最新价)
+
+    Returns:
+        {stock_code: market_value} — market_value 优先用最新 close,
+        没数据时 fallback 到 cost_basis (保守估计)
+    """
+    from database import query_all
+    rows = query_all(
+        """SELECT h.stock_code, h.quantity, h.cost_price,
+                  (SELECT close FROM historical_kline
+                   WHERE stock_code = h.stock_code
+                   ORDER BY trade_date DESC LIMIT 1) AS last_close
+           FROM holdings h WHERE h.user_id = ? AND h.quantity > 0""",
+        (user_id,),
+    )
+    out: dict[str, float] = {}
+    for r in rows:
+        qty = float(r["quantity"])
+        last_close = r.get("last_close")
+        if last_close is not None:
+            value = qty * float(last_close)
+        else:
+            value = qty * float(r["cost_price"])
+        out[r["stock_code"]] = value
+    return out
+
+
+def _evaluate_buy_risk(
+    user_id: int,
+    stock_code: str,
+    proposed_value: float,
+) -> dict:
+    """评估单笔买入是否会触发风控(v4.1.1 集成 risk_guard)
+
+    简化版 (v4.1.1):只检查 single_position 规则 (max_position_pct)。
+    不检查 total_exposure / max_drawdown / daily_loss — 后者需要 cash + NAV
+    历史基建,本版未到位。
+
+    Args:
+        user_id: 用户 ID
+        stock_code: 拟买入的股票代码
+        proposed_value: 本次买入的市值估算 (open_price × shares × (1+slippage))
+
+    Returns:
+        {action, reason, max_position_symbol, max_position_pct_actual, ...}
+    """
+    try:
+        from services.risk_guard import check_risk, RiskAction, RiskLimits
+    except Exception as e:
+        logger.debug("t1_watcher: risk_guard 不可用,跳过: %s", e)
+        return {"action": RiskAction.ALLOW.value, "reason": "risk_guard_unavailable"}
+
+    positions = _get_user_positions_value(user_id)
+    positions_with_pending = dict(positions)
+    positions_with_pending[stock_code] = positions_with_pending.get(stock_code, 0.0) + proposed_value
+
+    total_value = sum(positions_with_pending.values())
+    if total_value <= 0:
+        return {"action": RiskAction.ALLOW.value, "reason": "no_positions",
+                "max_position_pct_actual": 0.0, "max_position_symbol": ""}
+
+    # 用单仓阈值 (默认 30%),其他规则阈值设极高避免误触
+    limits = RiskLimits(
+        max_position_pct=0.30,
+        max_total_exposure=10.0,  # 禁用:无 cash 跟踪时永远 100% → 误触
+        max_daily_loss=10.0,      # 禁用:无 day_start_nav 历史
+        max_drawdown=10.0,        # 禁用:无 peak_nav 历史
+    )
+    result = check_risk(
+        current_nav=total_value,
+        positions=positions_with_pending,
+        day_start_nav=total_value,
+        peak_nav=total_value,
+        limits=limits,
+    )
+    return {
+        "action": result.action.value,
+        "reason": result.reason,
+        "max_position_symbol": result.max_position_symbol,
+        "max_position_pct_actual": result.max_position_pct_actual,
+        "total_exposure_pct": result.total_exposure_pct,
+    }
+
+
+def _notify_risk_block(order_id: int, user_id: int, stock_code: str, risk_result: dict) -> None:
+    """风控拦截时通知用户(v4.1.1)"""
+    try:
+        from services.notify_service import send_notification
+        body = (
+            f"# 🚫 风控拦截买入\n\n"
+            f"- 订单 ID: `{order_id}`\n"
+            f"- 股票: `{stock_code}`\n"
+            f"- 原因: {risk_result.get('reason', 'unknown')}\n"
+            f"- 总仓位: {risk_result.get('total_exposure_pct', 0)*100:.1f}%\n\n"
+            f"订单已标记 `blocked_by_risk`,可在 /pipeline 收件箱查看。"
+        )
+        send_notification(body, title=f"[StockAI] 买入风控拦截 {stock_code}")
+    except Exception as e:
+        logger.warning("t1_watcher: 风险通知失败(不阻塞): %s", e)
+
+
+def _cancel_blocked_order(order_id: int, reason: str) -> None:
+    """风控拦截时把订单标 cancelled + 记录原因
+
+    不复用 cancel_order(user_id, reason="用户取消"),因为这里没有 user_id 校验
+    需求(订单本来就是这个用户的)。直接 UPDATE。
+    """
+    from database import execute
+    try:
+        execute(
+            """UPDATE t1_pending_orders
+               SET status = ?, updated_at = ?
+               WHERE id = ? AND status = ?""",
+            (STATUS_CANCELLED, datetime.now().isoformat(), order_id, STATUS_PENDING_BUY),
+        )
+        logger.info("t1_watcher: order %s marked cancelled by risk: %s", order_id, reason)
+    except Exception as e:
+        logger.warning("t1_watcher: cancel blocked order %s failed: %s", order_id, e)
+
+
 def _get_open_price(stock_code: str, date: str) -> float | None:
     """获取指定日期的开盘价(从 historical_kline)
 
@@ -562,6 +691,34 @@ def process_pending_buys(today: str | None = None) -> list[dict]:
                 continue
 
             filled_price = _apply_slippage(open_price, "buy", slippage_bps)
+
+            # v4.1.1: 风控检查 — 单仓位 > 30% / 总仓位 > 80% → BLOCK_BUY
+            planned_shares = int(order.get("planned_shares") or 0)
+            proposed_value = filled_price * planned_shares if planned_shares > 0 else filled_price * 100
+            risk_result = _evaluate_buy_risk(order["user_id"], stock_code, proposed_value)
+
+            if risk_result.get("action") == "liquidate":
+                # 极端情况:最大回撤触发 — v4.1.1 dry-run,只 log 不自动平仓
+                logger.warning(
+                    "process_pending_buys: order %s LIQUIDATE_ALL triggered (dry-run, no auto-liquidate): %s",
+                    order_id, risk_result,
+                )
+            elif risk_result.get("action") == "block_buy":
+                # 仓位超标 — 标记订单 cancelled + 通知
+                logger.warning(
+                    "process_pending_buys: order %s BLOCKED by risk: %s",
+                    order_id, risk_result.get("reason"),
+                )
+                _cancel_blocked_order(order_id, risk_result.get("reason", ""))
+                _notify_risk_block(order_id, order["user_id"], stock_code, risk_result)
+                results.append({
+                    "order_id": order_id,
+                    "filled": False,
+                    "reason": f"风控拦截: {risk_result.get('reason', 'unknown')}",
+                    "risk_action": "block_buy",
+                })
+                continue
+
             result = _simulate_buy(order, filled_price)
             result["filled"] = True
             results.append(result)

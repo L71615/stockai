@@ -40,9 +40,9 @@ D:\stocks\
 - **后端**: Python FastAPI (端口 3000)
 - **前端**: Next.js 16 (端口 3001)
 - **数据库**: SQLite (WAL 模式)
-- **当前版本**: **v4.0** (2026-07-28 发布)
-- **下一大版本**: v4.x 维护期
-- **核心能力**: 64 因子 / 8 角色多 Agent / Agent 工具调用 / T+1 模拟成交 / 滑点+冲击成本 / 反事实报告 / 多策略组合
+- **当前版本**: **v4.1.1** (2026-07-30 patch,基于 v4.1)
+- **下一大版本**: v4.x 维护期 / v4.2 候选
+- **核心能力**: 64 因子 + 1 OSS移植(RSRS) / 8 角色多 Agent / Agent 工具调用 / T+1 模拟成交 + **风控拦截** / 滑点+冲击成本 / 反事实报告 / 多策略组合 / **YAML 策略自动注册**
 - **项目入口**: `stockai-project-docs/README.md`
 - **GitHub 主页**: `README.md` (根)
 
@@ -109,6 +109,29 @@ D:\stocks\
 | **新建 MD 文件 / 重构目录** | `INDEX.md`(本文件) |
 
 **同步后必须做的事**: `git add` + `git commit` + `git push` 到 `main`,确认 GitHub 渲染正常。
+
+---
+
+## 🆕 v4.1.1 新增内容(2026-07-30 patch)
+
+| 项 | 文件 | 说明 |
+|----|------|------|
+| YAML 策略注册中心 | `backend/services/strategy_registry.py` | 自动扫描 + 校验,加新策略无需改代码 |
+| RSRS 阻力支撑因子 | `factor_service.factor_rsrs` | OSS 移植的经典 alpha |
+| 仓位算法库 | `backend/services/risk_sizing.py` | Kelly / RiskParity / VolTarget |
+| 风控守护 | `backend/services/risk_guard.py` | 4 规则纯函数评估器 |
+| T+1 风控拦截 | `t1_watcher._evaluate_buy_risk` | 单仓位 > 30% 拒单 + 通知 |
+| 因子退役 → 通知 | `factor_lifecycle._notify_lifecycle_changes` | 自动推送 |
+
+**修复**:
+- `_calc_impact_cost_bps` look-ahead bias(回测 2024 不再用 2026 真实 ADV)
+- `_load_strategy_conditions` 路径不一致(registry 与 loader 共享 `yaml_path`)
+
+**dev DB 5 年 seed**:
+- `index_kline`: 180 → 7500 rows(2021-06 → 2026-07)
+- `etf_kline`: scheduler 17:10 nightly 自动补
+
+**OSS 学习来源**: `D:\some-oss\quant-trading-system`(commit `edfdd89`)
 
 ---
 
