@@ -409,3 +409,109 @@ def start_daily_pipeline_thread(run_hour: int = 22, run_minute: int = 0):
     t = threading.Thread(target=_loop, daemon=True, name="daily-pipeline")
     t.start()
     return t
+
+
+# ═══════════════════════════════════════════════════════════════
+#  v4.1 Phase 2A — 指数 / ETF / Drift 后台线程
+# ═══════════════════════════════════════════════════════════════
+
+
+def start_index_sync_thread(run_hour: int = 17, run_minute: int = 0):
+    """v4.1 Phase 2A: 指数 K 线 nightly — 17:00 (A 股收盘 + 2h, 数据稳定).
+
+    - 仅交易日 (trading_calendar.is_trading_day)
+    - 6 只指数 × 1s/只 ≈ 6s, 0.1s sleep 已够
+    - 失败 3 重试由 BaseVendorSyncService 内部 status 跟踪, 不需重试调度
+    """
+    def _loop():
+        last_run = None
+        while True:
+            try:
+                now = datetime.now()
+                today_key = now.strftime("%Y-%m-%d")
+                if (now.hour == run_hour and now.minute >= run_minute
+                        and last_run != today_key
+                        and _is_a_share_trading_day(now)):
+                    from services.index_sync_service import run_nightly_index_sync
+                    result = run_nightly_index_sync()
+                    logger.info(
+                        "scheduler: 指数 sync — status=%s saved=%d/%d",
+                        result.get("status"),
+                        result.get("success_count", 0),
+                        result.get("target_count", 0),
+                    )
+                    last_run = today_key
+            except Exception:
+                logger.warning("scheduler: index_sync 线程异常", exc_info=True)
+            time.sleep(60)
+
+    t = threading.Thread(target=_loop, daemon=True, name="index-sync")
+    t.start()
+    return t
+
+
+def start_etf_sync_thread(run_hour: int = 17, run_minute: int = 10):
+    """v4.1 Phase 2A: ETF K 线 nightly — 17:10 (指数 sync 后 10 分钟).
+
+    - 仅交易日
+    - 11 只 ETF × 1s ≈ 12s
+    """
+    def _loop():
+        last_run = None
+        while True:
+            try:
+                now = datetime.now()
+                today_key = now.strftime("%Y-%m-%d")
+                if (now.hour == run_hour and now.minute >= run_minute
+                        and last_run != today_key
+                        and _is_a_share_trading_day(now)):
+                    from services.etf_sync_service import run_nightly_etf_sync
+                    result = run_nightly_etf_sync()
+                    logger.info(
+                        "scheduler: ETF sync — status=%s saved=%d/%d",
+                        result.get("status"),
+                        result.get("success_count", 0),
+                        result.get("target_count", 0),
+                    )
+                    last_run = today_key
+            except Exception:
+                logger.warning("scheduler: etf_sync 线程异常", exc_info=True)
+            time.sleep(60)
+
+    t = threading.Thread(target=_loop, daemon=True, name="etf-sync")
+    t.start()
+    return t
+
+
+def start_drift_monitor_thread(run_hour: int = 23, run_minute: int = 30):
+    """v4.1 Phase 2A: Drift PSI/KL nightly — 23:30 (pipeline 22:00 后 1.5h).
+
+    - 仅交易日
+    - Phase 2A: 横截面 compare (schema + write path 验证)
+    - Phase 2B: 接 experiment_runs.status='done' event binding
+    """
+    def _loop():
+        last_run = None
+        while True:
+            try:
+                now = datetime.now()
+                today_key = now.strftime("%Y-%m-%d")
+                if (now.hour == run_hour and now.minute >= run_minute
+                        and last_run != today_key
+                        and _is_a_share_trading_day(now)):
+                    from services.drift_monitor import run_nightly_drift_check
+                    result = run_nightly_drift_check()
+                    logger.info(
+                        "scheduler: drift — events=%d severe=%d warning=%d",
+                        result.get("events_written", 0),
+                        result.get("by_severity", {}).get("severe", 0),
+                        result.get("by_severity", {}).get("warning", 0),
+                    )
+                    last_run = today_key
+            except Exception:
+                logger.warning("scheduler: drift_monitor 线程异常", exc_info=True)
+            time.sleep(60)
+
+    t = threading.Thread(target=_loop, daemon=True, name="drift-monitor")
+    t.start()
+    return t

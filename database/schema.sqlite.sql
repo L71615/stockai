@@ -146,3 +146,9 @@ CREATE INDEX idx_transactions_user   ON transactions(user_id);
 CREATE INDEX idx_transactions_date   ON transactions(traded_at);
 CREATE INDEX idx_ai_messages_conv    ON ai_messages(conversation_id);
 CREATE INDEX idx_alerts_user         ON price_alerts(user_id);
+
+-- ── v4.1 Phase 2A 占位 ──
+-- index_kline / etf_kline / index_sync_runs / index_sync_run_items /
+-- etf_sync_runs / etf_sync_run_items / drift_events 已在
+-- backend/database.py:init_db() 第 832 行之后内嵌创建。
+-- 完整 SQL 见 database/schema.sql（reference only，不被运行时加载）。

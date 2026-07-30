@@ -36,6 +36,7 @@ docs/TODOS.md
 backend-start.err.log
 backend-start.out.log
 backend-start.test.log
+backend/logs/
 *.tsbuildinfo
 
 # --- 本地报告（含交易数据/选股结果，不提交）---

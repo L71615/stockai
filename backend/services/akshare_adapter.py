@@ -9,6 +9,7 @@ import re
 import time
 import logging
 import urllib.request
+from datetime import datetime, timedelta
 from typing import Optional
 
 logger = logging.getLogger(__name__)
@@ -302,6 +303,128 @@ def get_kline(code: str, days: int = 120) -> dict:
     except Exception as e:
         logger.debug(f"get_kline({code}): {e}")
         return {"error": f"获取K线失败: {e}", "code": code}
+
+
+# ==================== v4.1 Phase 2A: 指数 + ETF K 线 ====================
+
+
+def get_index_kline(symbol: str, days: int = 1250) -> dict:
+    """akshare.stock_zh_index_daily 拉取指数日 K 线（不复权，指数无复权）.
+
+    Args:
+        symbol: ak-share 格式 'sh000300' / 'sz399006' / 'sh000905' / 'sh000016'
+                / 'sh000852' / 'sh000688'
+        days: 回看天数（默认 1250 ≈ 5 年交易日）
+
+    Returns:
+        {'code': symbol, 'dates': [...], 'opens': [...], 'highs': [...],
+         'lows': [...], 'closes': [...], 'volumes': [...]}
+        失败: {'error': str, 'code': symbol}
+
+    Fallback: 腾讯日 K 接口（不复权）.
+    """
+    cache_key = f"idx:{symbol}:{days}"
+    now = time.time()
+    if cache_key in _KLINE_CACHE:
+        ts, data = _KLINE_CACHE[cache_key]
+        if now - ts < _KLINE_TTL:
+            return data
+
+    try:
+        import akshare as ak
+        df = ak.stock_zh_index_daily(symbol=symbol)
+        if df is None or len(df) == 0:
+            return {"error": "akshare 返回空", "code": symbol}
+        df = df.tail(days).reset_index(drop=True)
+        result = {
+            "code": symbol,
+            "dates":   df["date"].astype(str).tolist(),
+            "opens":   df["open"].astype(float).tolist(),
+            "highs":   df["high"].astype(float).tolist(),
+            "lows":    df["low"].astype(float).tolist(),
+            "closes":  df["close"].astype(float).tolist(),
+            "volumes": df["volume"].astype(float).tolist(),
+        }
+        _KLINE_CACHE[cache_key] = (now, result)
+        return result
+    except Exception as e:
+        logger.debug("get_index_kline(%s) failed: %s", symbol, e)
+        # Fallback: 腾讯指数日 K（无复权）
+        try:
+            url = (
+                f"https://web.ifzq.gtimg.cn/appstock/app/fqkline/get"
+                f"?param={symbol},day,,,{days}"
+            )
+            raw = _http_get(url, encoding="utf-8")
+            data = json.loads(raw)
+            if data.get("code") != 0:
+                return {"error": "tencent 返回非 0", "code": symbol}
+            klines = (
+                data.get("data", {}).get(symbol, {}).get("day") or []
+            )[-days:]
+            if not klines:
+                return {"error": "tencent 空", "code": symbol}
+            return {
+                "code": symbol,
+                "dates":   [k[0] for k in klines],
+                "opens":   [float(k[1]) for k in klines],
+                "closes":  [float(k[2]) for k in klines],
+                "highs":   [float(k[3]) for k in klines],
+                "lows":    [float(k[4]) for k in klines],
+                "volumes": [float(k[5]) for k in klines],
+            }
+        except Exception as e2:
+            return {"error": f"akshare+tencent failed: {e2}", "code": symbol}
+
+
+def get_etf_kline(code: str, days: int = 1250) -> dict:
+    """akshare.fund_etf_hist_em 拉取 ETF 日 K 线（后复权 hfq）.
+
+    Args:
+        code: 6 位代码, e.g. '510300' / '159915' / '512880'
+
+    Returns:
+        与 get_kline 同结构: {'code', 'dates', 'opens', ..., 'volumes'}
+        失败: {'error': str, 'code': code}
+    """
+    cache_key = f"etf:{code}:{days}"
+    now = time.time()
+    if cache_key in _KLINE_CACHE:
+        ts, data = _KLINE_CACHE[cache_key]
+        if now - ts < _KLINE_TTL:
+            return data
+
+    try:
+        import akshare as ak
+        # days 转 calendar days (~1.5x 冗余, 防周末节假日不足)
+        end = datetime.now().strftime("%Y-%m-%d")
+        start = (
+            datetime.now() - timedelta(days=int(days * 1.5))
+        ).strftime("%Y-%m-%d")
+        df = ak.fund_etf_hist_em(
+            symbol=code,
+            period="daily",
+            start_date=start.replace("-", ""),
+            end_date=end.replace("-", ""),
+            adjust="hfq",  # ETF 走后复权, 避免分红噪音
+        )
+        if df is None or len(df) == 0:
+            return {"error": "akshare 返回空", "code": code}
+        df = df.tail(days).reset_index(drop=True)
+        result = {
+            "code": code,
+            "dates":   df["日期"].astype(str).tolist(),
+            "opens":   df["开盘"].astype(float).tolist(),
+            "highs":   df["最高"].astype(float).tolist(),
+            "lows":    df["最低"].astype(float).tolist(),
+            "closes":  df["收盘"].astype(float).tolist(),
+            "volumes": df["成交量"].astype(float).tolist(),
+        }
+        _KLINE_CACHE[cache_key] = (now, result)
+        return result
+    except Exception as e:
+        logger.debug("get_etf_kline(%s) failed: %s", code, e)
+        return {"error": f"获取 ETF K 线失败: {e}", "code": code}
 
 
 # ==================== 搜索 ====================
@@ -823,8 +946,6 @@ def get_us_kline(code: str, days: int = 120) -> dict:
 # ═══════════════════════════════════════════════════════════════
 #  市场热点 — 板块资金流向 + 涨停统计 + 北向排名
 # ═══════════════════════════════════════════════════════════════
-
-from datetime import datetime
 
 
 def _safe_float(val) -> float:

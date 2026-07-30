@@ -132,6 +132,9 @@ def startup():
         start_futu_nightly_fundamentals_thread,
         start_t1_watcher_thread,                # v4.1 1A.1
         start_daily_pipeline_thread,           # v4.1 1A.2
+        start_index_sync_thread,               # v4.1 Phase 2A
+        start_etf_sync_thread,                 # v4.1 Phase 2A
+        start_drift_monitor_thread,            # v4.1 Phase 2A
     )
     start_dca_reminder_thread()
     start_stop_loss_thread()
@@ -141,6 +144,9 @@ def startup():
     start_futu_nightly_fundamentals_thread()
     start_t1_watcher_thread()                # v4.1 1A.1: 09:30 watcher 自动跑
     start_daily_pipeline_thread()            # v4.1 1A.2: 22:00 daily pipeline 自动跑
+    start_index_sync_thread()                # v4.1 Phase 2A: 17:00 nightly 指数 K 线
+    start_etf_sync_thread()                  # v4.1 Phase 2A: 17:10 nightly ETF K 线
+    start_drift_monitor_thread()             # v4.1 Phase 2A: 23:30 PSI/KL 漂移监测
 
 
 # ── 认证中间件：保护所有 /api/ 路由（登录接口除外）──

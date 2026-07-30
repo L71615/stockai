@@ -1071,8 +1071,57 @@ def _get_stock_name(code: str) -> str:
 # ═══════════════════════════════════════════════════════════════
 
 def _get_benchmark_curve(benchmark: str, start: str, end: str) -> list[dict]:
-    """获取基准指数净值曲线——优先用 ETF，否则用全市场等权合成基准"""
-    # 尝试 ETF 代理
+    """v4.1 Phase 2A: 基准指数净值曲线 — 三段式回退.
+
+    1) index_kline (真实沪深300等指数)
+    2) etf_kline (510300/510500/159915 等 ETF)
+    3) historical_kline (旧 ETF proxy, 给 index_sync seed 之前过渡)
+    4) 全市场等权合成 (last-resort, 旧行为)
+    """
+    # 1) index_kline 优先 (000/399 code → ak-share symbol)
+    if benchmark[:3] in ("000", "399"):
+        sym_map = {
+            "000300": "sh000300",
+            "000905": "sh000905",
+            "399006": "sz399006",
+            "000016": "sh000016",
+            "000852": "sh000852",
+            "000688": "sh000688",
+        }
+        sym = sym_map.get(benchmark)
+        if sym:
+            rows = query_all(
+                """SELECT trade_date, close FROM index_kline
+                   WHERE symbol = ? AND trade_date >= ? AND trade_date <= ?
+                   ORDER BY trade_date ASC""",
+                (sym, start, end),
+            )
+            if rows:
+                base = rows[0]["close"]
+                if base:
+                    return [
+                        {"date": r["trade_date"],
+                         "value": round(float(r["close"]) / float(base) * 100000, 2)}
+                        for r in rows
+                    ]
+
+    # 2) etf_kline 回退 (510/159 code)
+    rows = query_all(
+        """SELECT trade_date, close FROM etf_kline
+           WHERE code = ? AND trade_date >= ? AND trade_date <= ?
+           ORDER BY trade_date ASC""",
+        (benchmark, start, end),
+    )
+    if rows:
+        base = rows[0]["close"]
+        if base:
+            return [
+                {"date": r["trade_date"],
+                 "value": round(float(r["close"]) / float(base) * 100000, 2)}
+                for r in rows
+            ]
+
+    # 3) 旧 historical_kline ETF proxy (过渡 fallback)
     proxy_map = {"000300": "510300", "000905": "510500", "399006": "159915"}
     proxy = proxy_map.get(benchmark, benchmark)
 
@@ -1139,6 +1188,8 @@ def _get_benchmark_curve(benchmark: str, start: str, end: str) -> list[dict]:
         result.append({"date": date, "value": round(value, 2)})
 
     return result
+
+
 
 
 def _interpolate_benchmark(curve: list[dict], date: str) -> float | None:

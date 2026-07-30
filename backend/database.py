@@ -831,6 +831,117 @@ def init_db():
         conn.execute("CREATE INDEX IF NOT EXISTS idx_retro_exp ON proposal_retrospectives(experiment_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_retro_decision ON proposal_retrospectives(decision)")
 
+        # ── v4.1 Phase 2A: 指数 K 线 (CSI300 / CSI500 / 创业板指 / 上证 50) ──
+        conn.execute("""CREATE TABLE IF NOT EXISTS index_kline (
+            symbol      TEXT NOT NULL,
+            name        TEXT,
+            trade_date  TEXT NOT NULL,
+            open        REAL,
+            high        REAL,
+            low         REAL,
+            close       REAL,
+            volume      REAL,
+            source      TEXT DEFAULT 'akshare',
+            updated_at  TEXT DEFAULT (datetime('now','localtime')),
+            PRIMARY KEY (symbol, trade_date)
+        )""")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_index_kline_date      ON index_kline(trade_date)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_index_kline_sym_date  ON index_kline(symbol, trade_date)")
+
+        # ── v4.1 Phase 2A: ETF K 线 (固定 universe: 510300/510500/159915/...) ──
+        conn.execute("""CREATE TABLE IF NOT EXISTS etf_kline (
+            code        TEXT NOT NULL,
+            name        TEXT,
+            trade_date  TEXT NOT NULL,
+            open        REAL,
+            high        REAL,
+            low         REAL,
+            close       REAL,
+            volume      REAL,
+            source      TEXT DEFAULT 'akshare',
+            updated_at  TEXT DEFAULT (datetime('now','localtime')),
+            PRIMARY KEY (code, trade_date)
+        )""")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_etf_kline_date      ON etf_kline(trade_date)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_etf_kline_code_date ON etf_kline(code, trade_date)")
+
+        # ── v4.1 Phase 2A: 指数同步审计 (index_sync_runs / index_sync_run_items) ──
+        conn.execute("""CREATE TABLE IF NOT EXISTS index_sync_runs (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_type      TEXT NOT NULL,
+            target_count  INTEGER NOT NULL,
+            success_count INTEGER NOT NULL DEFAULT 0,
+            failed_count  INTEGER NOT NULL DEFAULT 0,
+            status        TEXT DEFAULT 'running',
+            error_summary TEXT DEFAULT '',
+            started_at    TEXT NOT NULL,
+            finished_at   TEXT,
+            duration_ms   INTEGER NOT NULL DEFAULT 0
+        )""")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_isync_runs_started ON index_sync_runs(started_at)")
+
+        conn.execute("""CREATE TABLE IF NOT EXISTS index_sync_run_items (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id        INTEGER NOT NULL,
+            symbol        TEXT NOT NULL,
+            sync_type     TEXT NOT NULL,
+            status        TEXT NOT NULL,
+            rows_upserted INTEGER NOT NULL DEFAULT 0,
+            error_message TEXT DEFAULT '',
+            started_at    TEXT NOT NULL,
+            finished_at   TEXT,
+            duration_ms   INTEGER NOT NULL DEFAULT 0
+        )""")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_isync_items_run ON index_sync_run_items(run_id)")
+
+        # ── v4.1 Phase 2A: ETF 同步审计 (etf_sync_runs / etf_sync_run_items) ──
+        conn.execute("""CREATE TABLE IF NOT EXISTS etf_sync_runs (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_type      TEXT NOT NULL,
+            target_count  INTEGER NOT NULL,
+            success_count INTEGER NOT NULL DEFAULT 0,
+            failed_count  INTEGER NOT NULL DEFAULT 0,
+            status        TEXT DEFAULT 'running',
+            error_summary TEXT DEFAULT '',
+            started_at    TEXT NOT NULL,
+            finished_at   TEXT,
+            duration_ms   INTEGER NOT NULL DEFAULT 0
+        )""")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_esync_runs_started ON etf_sync_runs(started_at)")
+
+        conn.execute("""CREATE TABLE IF NOT EXISTS etf_sync_run_items (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id        INTEGER NOT NULL,
+            code          TEXT NOT NULL,
+            sync_type     TEXT NOT NULL,
+            status        TEXT NOT NULL,
+            rows_upserted INTEGER NOT NULL DEFAULT 0,
+            error_message TEXT DEFAULT '',
+            started_at    TEXT NOT NULL,
+            finished_at   TEXT,
+            duration_ms   INTEGER NOT NULL DEFAULT 0
+        )""")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_esync_items_run ON etf_sync_run_items(run_id)")
+
+        # ── v4.1 Phase 2A: 漂移事件 (PSI / KL) ──
+        conn.execute("""CREATE TABLE IF NOT EXISTS drift_events (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            factor_name     TEXT NOT NULL,
+            metric_type     TEXT NOT NULL,
+            value           REAL NOT NULL,
+            baseline_value  REAL,
+            threshold_warn  REAL NOT NULL,
+            threshold_severe REAL NOT NULL,
+            severity        TEXT NOT NULL,
+            snapshot_at     TEXT NOT NULL,
+            baseline_as_of  TEXT NOT NULL,
+            n_baseline      INTEGER NOT NULL,
+            n_current       INTEGER NOT NULL,
+            created_at      TEXT DEFAULT (datetime('now','localtime'))
+        )""")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_drift_factor_created ON drift_events(factor_name, created_at)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_drift_severity_created ON drift_events(severity, created_at)")
+
         # ── 数据库索引（性能关键）──
         # 使用 IF NOT EXISTS 幂等，已有索引不重复创建
         indexes = [
