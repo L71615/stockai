@@ -2,9 +2,9 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-> **当前版本: v4.0**(2026-07-28 发布)
-> **量化方向**: T+1/T+2 短线预测主线 + AI 选股智能化(8 角色 + 工具调用)
-> **最新改动**: v4.0 完整 4 阶段交付(A1-A4 + B1-B6 + C1 + T+1 模拟成交)
+> **当前版本: v4.1**(2026-07-30 发布)
+> **量化方向**: T+1/T+2 短线预测主线 + AI 选股智能化(8 角色 + 工具调用) + 决策闭环(Phase 1A/1B) + 真实基准 + Drift PSI/KL 监控(Phase 2A/2B)
+> **最新改动**: v4.1 完整 4 阶段交付(1A.1-1A.5 + 1B.1-1B.4 + 2A.1-2A.3 + 2B.1-2B.4) + v4.0 outside voice 5 项修复
 > **详细记录**: 看 `stockai-project-docs/CHANGELOG.md` 和 `stockai-project-docs/V4-PLAN.md`
 > **文档结构**: 根目录 `INDEX.md` 是入口,所有 MD 已分类到 `stockai-project-docs/` 与 `monitor-desktop-docs/`
 
@@ -100,6 +100,7 @@ npm run dev:safe     # 4GB 堆内存，适用于大型页
     - `counterfactual.py` — `/api/pipeline/counterfactual` + `/api/pipeline/retrospectives` C1 反事实报告（独立 router，避免与 experiments 前缀冲突）
     - `shadow.py` — shadow 模拟成交
     - `factor_lab.py` — `/api/factor-lab/*` IC/相关性/散点图
+  - **🆕 v4.1 不增加新路由** — 现有路由的语义升级（holdings vs shadow 对比卡 / bulk-approve 单事务 / 反事实可视化）
 - `services/` — 40+ 业务服务，关键模块：
   - `factor_service.py` — 55 因子计算（10 大类：价格/动量/波动/成交量/量价/基本面/情绪/资金/技术），因子函数自己消化异常（NaN/inf → None）
   - `factor_lab.py` — **🆕** IC 分析 + 相关性矩阵 + 散点图（+ 衰减评分 `_compute_decay_score()`）
@@ -116,7 +117,13 @@ npm run dev:safe     # 4GB 堆内存，适用于大型页
   - `trading_memory.py` — 决策→验证→反思→注入 闭环
   - `cache.py` — 三层缓存（factor_snapshot / daily_north_flow / daily_inst_holding + 24h TTL lazy-write）。**⚠️ 注意：所有 `row[]` 访问必须用列名（query_all 已 dict 化）**
   - `akshare_adapter.py` — A 股数据（东方财富/腾讯/新浪 fallback）。**⚠️ 腾讯免费 API 有 QPS 限制，连续 3000+ 调用必触发限频**
-  - `scheduler.py` — 后台守护线程（DCA 提醒 / 止损 / Futu intraday+nightly 同步 / 记忆解析 / 晚间基本面）
+  - `scheduler.py` — 后台守护线程（DCA 提醒 / 止损 / Futu intraday+nightly 同步 / 记忆解析 / 晚间基本面 / **v4.1: index-sync 17:00 / etf-sync 17:10 / daily-pipeline 22:00 / drift-monitor 23:30**）
+- **`base_vendor_sync.py`** — **🆕 v4.1 2A** Abstract BaseClass 模板方法（`_record_run` / `_record_item` / `_finalize_run` / `_maybe_alert` / `run_sync`），子共享给 Index/ETF sync
+- **`index_sync_service.py`** — **🆕 v4.1 2A** 6 默认指数 K 线同步（沪深300/中证500/创业板/上证50/中证1000/科创50）
+- **`etf_sync_service.py`** — **🆕 v4.1 2A** 11 默认 ETF K 线同步（6 宽基 + 5 行业/跨境/商品）
+- **`drift_policy.py`** — **🆕 v4.1 2A/2B** PSI/KL 纯函数 + `load_active_policy()` 阈值版本化（DriftThresholds + 分类）
+- **`drift_monitor.py`** — **🆕 v4.1 2A/2B** orchestrator，`experiment_runs.status='done'` gate + `_historical_metric_mean()` 填 baseline_value + severe 通知
+- **`database.execute_transaction()`** — **🆕 v4.1** 单事务 helper（t1_watcher._simulate_buy/_simulate_sell / acquire_pipeline_lock 用）
 - `strategies/` — 13 个 YAML 策略（boll / turtle / momentum / value / pullback 等）
 
 ### 数据库（SQLite · `database/`）
@@ -125,7 +132,9 @@ npm run dev:safe     # 4GB 堆内存，适用于大型页
 - 关键表：`users` · `holdings` · `transactions` · `dca_plans` · `futu_raw_quote` · `futu_raw_kline` · `historical_kline` · `futu_sync_runs` · `futu_sync_run_items` · `ai_*` · `trading_memory_*`
 - **🆕 v3.9 因子实验室表**：`factor_snapshot`（55 因子 × 全市场 · 24h TTL）· `factor_candidates`（GP/ML 挖掘候选因子）· `factor_lifecycle_status`（active/warning/retired）
 - **🆕 v4.0 T+1/T+2 表**：`t1_pending_orders`(状态机 pending_buy→bought→sold,模拟成交 + 收益统计)
-- Schema：`database/schema.sql`（应用初始化时由 `database.init_db()` 执行）
+- **🆕 v4.1 2A 基准表**：`index_kline`（6 默认指数 sh000300/sz399006 等 · PK (symbol, trade_date)）· `etf_kline`（11 默认 ETF 510300/510500/159915 等）· `index_sync_runs`/`index_sync_run_items` · `etf_sync_runs`/`etf_sync_run_items`
+- **🆕 v4.1 2A/2B 漂移表**：`drift_events`（factor/metric/value/severity 记录）· `drift_policies`（版本化阈值 policy_version + effective_from/to，init_db 自动插入 v1.0-default）
+- Schema：`database/schema.sql`（应用初始化时由 `database.init_db()` 执行 — **关键单点风险**：新表必须同步 4 处 `database.py` + `schema.sql` + `schema.sqlite.sql` + 直接 apply dev DB）
 
 ### 前端（Next.js 16 · `frontend/`）
 - `src/app/` — App Router，**🆕 9 个页面**（`/` 持仓概览 · **`/browse` 🆕 全市场浏览** · `/quant` 量化 · `/screener` AI 选股 · `/screener/condition` 条件选股 · `/transactions` 交易记录 · `/ai-assistant` AI 对话 · `/settings` 设置 · `/market` 大盘指数）

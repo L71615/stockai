@@ -1,7 +1,58 @@
 # StockAI 项目日志
 
-> StockAI 从 0 到 v4.0 的完整演进记录。按时间倒序。
-> **当前版本: v4.0 Phase 4 完成** · 下一阶段: Phase 5 (发布)
+> StockAI 从 0 到 v4.1 的完整演进记录。按时间倒序。
+> **当前版本: v4.1 完成** · 下一阶段: v4.2 (Full order/fill sim + Auto Champion)
+
+---
+
+## 2026-07-30 — v4.1 完成 (Phase 1A/1B/2A/2B)
+
+### 🎯 v4.1 战略: Decision-Loop 闭环 + 真实基准 + 漂移监控
+
+| 维度 | v4.0 (旧) | v4.1 (新) |
+|---|---|---|
+| Pipeline 入口 | daily_quant_pipeline 手动触发 | 22:00 守护线程 + busy_timeout 10s + pool 15 |
+| T+1 watcher | 单线程一次跑 | scheduler 守护 + 09:35 first-tick 校验 + 通知 |
+| Shadow 组合 | 跑通但无 UI | 净值曲线图 + holdings vs shadow 对比卡 |
+| Bulk approve | 无 | 单事务 + 三层乐观锁 + 0.85 边界 |
+| 反事实 | 一次性 | run_retrospective_writer 自动跟跑 |
+| 基准曲线 | ETF 510300 代理 | index_kline (6 默认指数) + etf_kline (11 默认 ETF) |
+| Drift | 无 | drift_events + PSI/KL + 阈值版本化 + pipeline gate |
+
+### 📋 实施完成清单 (4 个 Phase, 11 个 commit)
+
+#### Phase 1A — Daily Pipeline 入口
+- **1A.1** scheduler 守护注册 t1_watcher (25b7e96)
+- **1A.2** pipeline 路由 18→22 + 连接池 5→15 (54b874f)
+- **1A.3** inbox accept → pending_buy + source 字段 (4d6ac21)
+- **1A.4** 反事实接入 run_retrospective_writer (b45a16c)
+- **1A.5** fees.py audit (no code) (52c65a1)
+
+#### Phase 1B — Watcher + Bulk Approve + UI
+- **1B.1** watcher 推送通知 (9f72072)
+- **1B.2** shadow 净值曲线图 (9c7c592)
+- **1B.3** bulk-approve 单事务 + 0.85 边界 (a87ea48)
+- **1B.4** holdings vs shadow 对比卡 (aadd55e)
+
+#### Phase 2A — 真实基准 (Index/ETF K-line)
+- **2A.1** index_kline + etf_kline 同步服务 (6 指数 + 11 ETF)
+- **2A.2** strategy_backtest_service._get_benchmark_curve 4 段 fallback
+- **2A.3** drift_policy PSI/KL 纯函数 + drift_monitor orchestrator
+
+#### Phase 2B — Drift 监控 + v4.0 outside voice 修复
+- **2B.1** drift_policies 表版本化阈值
+- **2B.2** run_drift_check pipeline gate (实验 done 才跑)
+- **2B.3** baseline_value 真实填值 (历史 30 天均值)
+- **2B.4** v4.0 outside voice 5 项修复: ALTER 顺序 / watcher 事务 / pipeline_lock / 09:30 race / admin lookup
+
+### 🧪 测试统计
+- v4.1 新增: 30 测试 (Phase 2A 21 + Phase 2B 9)
+- 总计: 53+ 测试 (含 v4.0 已存在的 32+ 回归)
+- 全部: 单文件跑全过; 全集跑因 pytest collection Windows file-lock 已知问题有噪音
+
+### 📦 已删除的 WIP: commit
+- 全部 10 个 WIP: 前缀的 commit 通过本次合并转正 (e.g. 9c7c592, 54b874f 等已收尾)
+- commit history 清理详见 git log
 
 ---
 
