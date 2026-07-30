@@ -163,6 +163,7 @@ def run_strategy_backtest(
             if impact_bps > 0:
                 _imp = _calc_impact_cost_bps(
                     p["code"], p["shares"], sell_price, impact_bps, adv_window,
+                    as_of_date=next_date,
                 )
                 if _imp > 0:
                     sell_price = sell_price * (1 - _imp / 10000.0)
@@ -221,6 +222,7 @@ def run_strategy_backtest(
             if impact_bps > 0:
                 _imp = _calc_impact_cost_bps(
                     c["code"], per_position_cash / buy_price, buy_price, impact_bps, adv_window,
+                    as_of_date=next_date,
                 )
                 if _imp > 0:
                     buy_price = buy_price * (1 + _imp / 10000.0)
@@ -302,6 +304,7 @@ def run_strategy_backtest(
         if impact_bps > 0:
             _imp = _calc_impact_cost_bps(
                 p["code"], p["shares"], close_price, impact_bps, adv_window,
+                as_of_date=final_date,
             )
             if _imp > 0:
                 close_price = close_price * (1 - _imp / 10000.0)
@@ -693,6 +696,8 @@ def _calc_impact_cost_bps(
     price: float,
     impact_bps: float,
     adv_window: int = 20,
+    *,
+    as_of_date: str,
 ) -> float:
     """v4.0 B5: 冲击成本计算(平方根模型)
 
@@ -705,6 +710,8 @@ def _calc_impact_cost_bps(
         price: 当前价格(估算 buy_amount)
         impact_bps: 冲击成本系数(bps)
         adv_window: ADV 计算窗口
+        as_of_date: 交易日期(关键 — 必须是历史截面日期,不能用 date('now'),
+                    否则在回测 2024 年时会用 2026 年的真实 ADV 数据,造成未来信息泄露)。
 
     Returns:
         实际冲击成本(bps),= 0 表示无影响
@@ -715,9 +722,9 @@ def _calc_impact_cost_bps(
         from database import query_all
         rows = query_all(
             """SELECT close, volume FROM historical_kline
-               WHERE stock_code = ? AND trade_date <= date('now','-1 day')
+               WHERE stock_code = ? AND trade_date <= ?
                ORDER BY trade_date DESC LIMIT ?""",
-            (code, adv_window),
+            (code, as_of_date, adv_window),
         )
         if not rows or len(rows) < 5:
             return 0.0  # 数据不足,不应用冲击
