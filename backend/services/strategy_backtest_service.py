@@ -584,15 +584,16 @@ def _load_strategy_conditions(strategy_ids: list[str], param_overrides: dict | N
     import os
     import yaml
 
-    # v4.1.1: 用 registry 校验,typo 不再静默通过
+    # v4.1.1: 用 registry 校验 + 共享 yaml_path,typo 不再静默通过
     try:
         from services.strategy_registry import get_registry
-        valid_ids, invalid_ids = get_registry().validate(strategy_ids)
+        registry = get_registry()
+        valid_ids, invalid_ids = registry.validate(strategy_ids)
         if invalid_ids:
             logger.warning(
                 "strategy_backtest: %d 个策略 ID 不存在,跳过: %s (可用: %s)",
                 len(invalid_ids), invalid_ids,
-                [s.id for s in get_registry().scan()],
+                [s.id for s in registry.scan()],
             )
             strategy_ids = valid_ids
             if not strategy_ids:
@@ -600,13 +601,24 @@ def _load_strategy_conditions(strategy_ids: list[str], param_overrides: dict | N
     except Exception as e:
         # registry 不可用(测试 mock 等)时 fallback 到原行为
         logger.debug("strategy_backtest: registry 不可用,fallback 直接加载: %s", e)
+        registry = None
 
-    strategies_dir = os.path.join(os.path.dirname(__file__), "..", "strategies")
     all_conditions = []
     overrides = param_overrides or {}
 
     for sid in strategy_ids:
-        yaml_path = os.path.join(strategies_dir, f"{sid}.yaml")
+        # v4.1.1: 优先从 registry 拿 yaml_path(共享目录/缓存)
+        yaml_path = None
+        if registry is not None:
+            info = registry.get(sid)
+            if info is not None:
+                yaml_path = info.yaml_path
+
+        # Fallback: registry 不可用时,本地拼接路径
+        if yaml_path is None:
+            strategies_dir = os.path.join(os.path.dirname(__file__), "..", "strategies")
+            yaml_path = os.path.join(strategies_dir, f"{sid}.yaml")
+
         if not os.path.exists(yaml_path):
             logger.warning("strategy_backtest: strategy file not found: %s", yaml_path)
             continue
