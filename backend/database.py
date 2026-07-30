@@ -107,6 +107,42 @@ def execute_many(statements: list[tuple[str, tuple]]) -> None:
         conn.close()
 
 
+def execute_transaction(fn) -> dict:
+    """v4.1 outside voice fix: 单事务 helper — 在同一 cursor 上做多步 read+write,
+    全部成功才 commit, 任何异常回滚.
+
+    Usage:
+        def _do(cur):
+            row = cur.execute("SELECT ...").fetchone()
+            cur.execute("UPDATE ...", (...,))
+            return {"ok": True, "id": row["id"]}
+        result = execute_transaction(_do)
+
+    Args:
+        fn: 接收 sqlite3.Cursor 参数的回调, 返回任意 dict(调用方可拿到).
+
+    Returns:
+        回调的返回值(任意 JSON-serializable).
+
+    Raises:
+        透传回调中未捕获的异常, 事务已回滚.
+    """
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        result = fn(cur)
+        conn.commit()
+        return result
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        raise
+    finally:
+        conn.close()
+
+
 def init_db():
     """初始化数据库表（幂等）"""
     conn = get_db()
@@ -730,12 +766,12 @@ def init_db():
         conn.execute("CREATE INDEX IF NOT EXISTS idx_appr_prop_status ON approval_proposals(status)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_appr_prop_exp ON approval_proposals(experiment_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_appr_prop_lease ON approval_proposals(lease_expires_at)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_appr_prop_score ON approval_proposals(decision_score)")
-        # v4.1 1B.3: 旧库兼容 — 加 decision_score 字段
+        # v4.1 Phase 2B bug fix: 老库升级顺序 — ALTER 必须先于 CREATE INDEX, 否则老库缺 decision_score 列会失败
         try:
             conn.execute("ALTER TABLE approval_proposals ADD COLUMN decision_score REAL NOT NULL DEFAULT 0.0")
         except Exception:
             pass  # 字段已存在
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_appr_prop_score ON approval_proposals(decision_score)")
         # v4.1 1B.3: t1_pending_orders 旧库兼容 — 加 source / proposal_id 列
         try:
             conn.execute("ALTER TABLE t1_pending_orders ADD COLUMN source TEXT NOT NULL DEFAULT 'user_manual'")
@@ -942,6 +978,44 @@ def init_db():
         conn.execute("CREATE INDEX IF NOT EXISTS idx_drift_factor_created ON drift_events(factor_name, created_at)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_drift_severity_created ON drift_events(severity, created_at)")
 
+        # v4.1 Phase 2B: 阈值版本化 — 不同时间窗可用不同阈值
+        conn.execute("""CREATE TABLE IF NOT EXISTS drift_policies (
+            policy_id       INTEGER PRIMARY KEY AUTOINCREMENT,
+            version         TEXT NOT NULL UNIQUE,
+            psi_warn        REAL NOT NULL,
+            psi_severe      REAL NOT NULL,
+            kl_warn         REAL NOT NULL,
+            kl_severe       REAL NOT NULL,
+            bins            INTEGER NOT NULL DEFAULT 10,
+            effective_from  TEXT NOT NULL,
+            effective_to    TEXT,
+            created_by      TEXT NOT NULL DEFAULT 'system',
+            note            TEXT NOT NULL DEFAULT '',
+            created_at      TEXT NOT NULL
+        )""")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_drift_policy_effective ON drift_policies(effective_from)")
+        # 默认政策 — v4.1 Phase 2B 启动时插入一次 (幂等: UNIQUE 冲突则跳过)
+        # 关键: effective_from 用纯日期 'YYYY-MM-DD', load_active_policy 比较才能稳定命中
+        _today_date = _dt.now().strftime("%Y-%m-%d")
+        try:
+            conn.execute(
+                """INSERT INTO drift_policies
+                   (version, psi_warn, psi_severe, kl_warn, kl_severe, bins,
+                    effective_from, created_by, note, created_at)
+                   VALUES ('v1.0-default',
+                           0.10, 0.25, 0.10, 0.50, 10,
+                           ?, 'system',
+                           'Phase 2A 默认阈值, 数值与 DriftThresholds 默认值一致',
+                           ?)""",
+                (_today_date, _today_date),
+            )
+        except Exception as _insert_err:
+            # UNIQUE 冲突 (已存在) 视为幂等成功; 其它异常吞掉避免阻塞启动
+            err_str = str(_insert_err).lower()
+            if "unique" not in err_str and "constraint" not in err_str:
+                # 不是 UNIQUE 冲突, 打印但不抛 (启动不能因为 policy 缺失失败)
+                print(f"[drift_policies] default policy insert warning: {_insert_err}")
+
         # ── 数据库索引（性能关键）──
         # 使用 IF NOT EXISTS 幂等，已有索引不重复创建
         indexes = [
@@ -1013,22 +1087,42 @@ def ensure_admin_user():
 
     conn = get_db()
     try:
+        # v4.1 outside voice fix: 同时按 email 和 username='admin' 查 — 旧库可能 email 不一致
+        # 但 username='admin' 是约定. 命中任一即视为管理员.
         row = conn.execute(
-            "SELECT id, password FROM users WHERE email = ?", (ADMIN_EMAIL,)
+            "SELECT id, password, username, email FROM users "
+            "WHERE email = ? OR username = 'admin' "
+            "ORDER BY (email = ?) DESC LIMIT 1",
+            (ADMIN_EMAIL, ADMIN_EMAIL),
         ).fetchone()
         if row:
+            existing_id = row["id"]
+            existing_email = row["email"]
             # 用户已存在，检查密码是否与 .env 一致（不一致则更新）
             if _bcrypt.checkpw(pwd.encode("utf-8"), row["password"].encode("utf-8")):
-                print(f"[AUTH] 管理员账号已存在: {ADMIN_EMAIL}")
+                # 同步 username='admin' 和 email — 防止 .env 改动未同步
+                if row["username"] != "admin" or existing_email != ADMIN_EMAIL:
+                    conn.execute(
+                        "UPDATE users SET username = ?, email = ? WHERE id = ?",
+                        ("admin", ADMIN_EMAIL, existing_id),
+                    )
+                    conn.commit()
+                    print(f"[AUTH] 管理员账号已同步: {ADMIN_EMAIL}")
+                else:
+                    print(f"[AUTH] 管理员账号已存在: {ADMIN_EMAIL}")
             else:
                 hashed = _bcrypt.hashpw(pwd.encode("utf-8"), _bcrypt.gensalt()).decode("utf-8")
-                conn.execute("UPDATE users SET password = ? WHERE id = ?", (hashed, row["id"]))
+                conn.execute(
+                    "UPDATE users SET username = ?, email = ?, password = ? WHERE id = ?",
+                    ("admin", ADMIN_EMAIL, hashed, existing_id),
+                )
                 conn.commit()
                 print(f"[AUTH] 管理员密码已更新: {ADMIN_EMAIL}")
         else:
+            # v4.1 fix: 不再硬编码 id=1 — 让 AUTOINCREMENT 分配, 避免与旧库冲突
             hashed = _bcrypt.hashpw(pwd.encode("utf-8"), _bcrypt.gensalt()).decode("utf-8")
             conn.execute(
-                "INSERT INTO users (id, username, email, password) VALUES (1, ?, ?, ?)",
+                "INSERT INTO users (username, email, password) VALUES (?, ?, ?)",
                 ("admin", ADMIN_EMAIL, hashed),
             )
             conn.commit()

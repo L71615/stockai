@@ -235,21 +235,43 @@ def _notify_settlement(title: str, body: str, order_id: int) -> None:
 # ═══════════════════════════════════════════════════════════════
 
 def _get_open_price(stock_code: str, date: str) -> float | None:
-    """获取指定日期的开盘价(从 historical_kline)"""
+    """获取指定日期的开盘价(从 historical_kline)
+
+    v4.1 outside voice fix: first-tick 校验 — 若 historical_kline.open 缺失,
+    拒绝用 prev_close 或 pre-open 报价当 open (会引入虚假 fill).
+    Fallback 仅在 09:35 之后且 realtime 报价标记了 first_tick=True 时启用.
+    """
     from database import query_one
 
     row = query_one(
-        """SELECT open FROM historical_kline
+        """SELECT open, close FROM historical_kline
            WHERE stock_code = ? AND trade_date = ?
            ORDER BY trade_date DESC LIMIT 1""",
         (stock_code, date),
     )
-    if row and row.get("open") is not None:
+    if row and row.get("open") is not None and row["open"] > 0:
+        # first-tick 校验 — 开盘价必须在昨收 ±20% 区间内 (A 股涨跌停 ±10%)
+        if row.get("close") and row["close"] > 0:
+            prev_close = float(row["close"])
+            open_p = float(row["open"])
+            if open_p < prev_close * 0.80 or open_p > prev_close * 1.20:
+                # 数据异常, 不当 fill
+                return None
         return float(row["open"])
-    # Fallback: 调实时数据(如果当天还没收盘)
+
+    # Fallback: 09:35 之后才允许走 realtime, 且必须是 first_tick 确认过的真实 open
+    now = datetime.now()
+    if now.hour < 9 or (now.hour == 9 and now.minute < 35):
+        # 09:35 之前不允许 fallback — 集合竞价阶段 prev_close/indicative 易被误当 open
+        return None
     try:
         quote = route("get_realtime_quote", code=stock_code)
-        if isinstance(quote, dict) and "open" in quote and quote["open"] is not None:
+        if (
+            isinstance(quote, dict)
+            and quote.get("first_tick") is True
+            and quote.get("open") is not None
+            and float(quote["open"]) > 0
+        ):
             return float(quote["open"])
     except Exception:
         pass
@@ -274,6 +296,9 @@ def _apply_slippage(price: float, side: str, slippage_bps: float) -> float:
 def _simulate_buy(order: dict, open_price: float) -> dict:
     """模拟买入 — 写 holdings + transactions + 更新订单状态
 
+    v4.1 outside voice fix: 4 步写入现在封装在单个事务中, 任一异常全部回滚,
+    避免"成交已记 + 持仓未更新"或"持仓已加 + 订单状态未变"的不一致.
+
     Args:
         order: t1_pending_orders 记录
         open_price: 开盘价(已应用滑点)
@@ -281,7 +306,7 @@ def _simulate_buy(order: dict, open_price: float) -> dict:
     Returns:
         {"order_id", "filled_price", "filled_shares", "fee", "holdings_id"}
     """
-    from database import execute, query_one
+    from database import execute_transaction
 
     order_id = order["id"]
     user_id = order["user_id"]
@@ -297,55 +322,65 @@ def _simulate_buy(order: dict, open_price: float) -> dict:
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     today = datetime.now().strftime("%Y-%m-%d")
 
-    # 1. 写 transactions
-    execute(
-        """INSERT INTO transactions
-           (user_id, stock_code, stock_name, direction, price, quantity, amount, fee, traded_at, note)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (
-            user_id, stock_code, stock_name, "buy",
-            round(open_price, 4), shares,
-            round(total_cost, 2),
-            round(fee["total"], 2),
-            now,
-            f"[T+1 模拟成交] brief_id={order.get('brief_id')}",
-        ),
-    )
+    def _do(cur) -> dict:
+        # 1. 写 transactions
+        cur.execute(
+            """INSERT INTO transactions
+               (user_id, stock_code, stock_name, direction, price, quantity, amount, fee, traded_at, note)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                user_id, stock_code, stock_name, "buy",
+                round(open_price, 4), shares,
+                round(total_cost, 2),
+                round(fee["total"], 2),
+                now,
+                f"[T+1 模拟成交] brief_id={order.get('brief_id')}",
+            ),
+        )
 
-    # 2. 更新或新增 holdings
-    existing = query_one(
-        "SELECT id, quantity, cost_price FROM holdings WHERE user_id = ? AND stock_code = ?",
-        (user_id, stock_code),
-    )
-    if existing:
-        old_qty = float(existing["quantity"])
-        old_cost = float(existing["cost_price"])
-        new_qty = old_qty + shares
-        new_cost = (old_cost * old_qty + open_price * shares) / new_qty if new_qty > 0 else open_price
-        execute(
-            """UPDATE holdings
-               SET quantity = ?, cost_price = ?, stock_name = ?, updated_at = ?
+        # 2. 更新或新增 holdings — 单事务内 SELECT 看到的是已 BEGIN 的快照
+        existing = cur.execute(
+            "SELECT id, quantity, cost_price FROM holdings "
+            "WHERE user_id = ? AND stock_code = ?",
+            (user_id, stock_code),
+        ).fetchone()
+        holdings_id: int
+        if existing:
+            existing_d = dict(existing)
+            old_qty = float(existing_d["quantity"])
+            old_cost = float(existing_d["cost_price"])
+            new_qty = old_qty + shares
+            new_cost = (old_cost * old_qty + open_price * shares) / new_qty if new_qty > 0 else open_price
+            cur.execute(
+                """UPDATE holdings
+                   SET quantity = ?, cost_price = ?, stock_name = ?, updated_at = ?
+                   WHERE id = ?""",
+                (new_qty, round(new_cost, 4), stock_name, now, existing_d["id"]),
+            )
+            holdings_id = int(existing_d["id"])
+        else:
+            cur.execute(
+                """INSERT INTO holdings
+                   (user_id, stock_code, stock_name, asset_type, quantity, cost_price, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (user_id, stock_code, stock_name, "stock",
+                 shares, round(open_price, 4), now, now),
+            )
+            holdings_id = int(cur.lastrowid)
+
+        # 3. 更新订单状态
+        cur.execute(
+            """UPDATE t1_pending_orders
+               SET status = ?, executed_entry_price = ?, entry_fee = ?,
+                   actual_entry_at = ?, updated_at = ?
                WHERE id = ?""",
-            (new_qty, round(new_cost, 4), stock_name, now, existing["id"]),
-        )
-    else:
-        execute(
-            """INSERT INTO holdings
-               (user_id, stock_code, stock_name, asset_type, quantity, cost_price, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-            (user_id, stock_code, stock_name, "stock",
-             shares, round(open_price, 4), now, now),
+            (STATUS_BOUGHT, round(open_price, 4), round(fee["total"], 2),
+             now, now, order_id),
         )
 
-    # 3. 更新订单状态
-    execute(
-        """UPDATE t1_pending_orders
-           SET status = ?, executed_entry_price = ?, entry_fee = ?,
-               actual_entry_at = ?, updated_at = ?
-           WHERE id = ?""",
-        (STATUS_BOUGHT, round(open_price, 4), round(fee["total"], 2),
-         now, now, order_id),
-    )
+        return {"holdings_id": holdings_id}
+
+    result = execute_transaction(_do)
 
     # 4. v4.1 1B.1: 推送模拟买入通知（不影响主流程，失败仅 audit log）
     _notify_settlement(
@@ -366,11 +401,14 @@ def _simulate_buy(order: dict, open_price: float) -> dict:
         "fee": round(fee["total"], 2),
         "total_cost": round(total_cost, 2),
         "entry_date": today,
+        "holdings_id": result["holdings_id"],
     }
 
 
 def _simulate_sell(order: dict, open_price: float) -> dict:
     """模拟卖出 — 写 transactions + 更新持仓 + 更新订单状态 + 收益统计
+
+    v4.1 outside voice fix: 同 _simulate_buy — 4 步写入封装在单事务.
 
     Args:
         order: t1_pending_orders 记录(已 bought)
@@ -379,7 +417,7 @@ def _simulate_sell(order: dict, open_price: float) -> dict:
     Returns:
         {"order_id", "filled_price", "filled_shares", "fee", "pnl", "net_return_pct"}
     """
-    from database import execute, query_one
+    from database import execute_transaction
 
     order_id = order["id"]
     user_id = order["user_id"]
@@ -401,38 +439,6 @@ def _simulate_sell(order: dict, open_price: float) -> dict:
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     today = datetime.now().strftime("%Y-%m-%d")
 
-    execute(
-        """INSERT INTO transactions
-           (user_id, stock_code, stock_name, direction, price, quantity, amount, fee, traded_at, note)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (
-            user_id, stock_code, stock_name, "sell",
-            round(open_price, 4), shares,
-            round(net_proceeds, 2),
-            round(fee["total"], 2),
-            now,
-            f"[T+1 模拟卖出] order_id={order_id}",
-        ),
-    )
-
-    # 2. 扣减 holdings
-    existing = query_one(
-        "SELECT id, quantity, cost_price FROM holdings WHERE user_id = ? AND stock_code = ?",
-        (user_id, stock_code),
-    )
-    if existing:
-        old_qty = float(existing["quantity"])
-        new_qty = max(0, old_qty - shares)
-        if new_qty == 0:
-            execute("DELETE FROM holdings WHERE id = ?", (existing["id"],))
-        else:
-            execute(
-                """UPDATE holdings
-                   SET quantity = ?, updated_at = ?
-                   WHERE id = ?""",
-                (new_qty, now, existing["id"]),
-            )
-
     # 3. 收益统计 — 复用 t1_cost
     t1 = calc_t1_holding_cost(
         entry_price=entry_price,
@@ -442,18 +448,57 @@ def _simulate_sell(order: dict, open_price: float) -> dict:
         slippage_bps=0,  # 滑点已在 open_price 中应用
     )
 
-    # 4. 更新订单状态
-    execute(
-        """UPDATE t1_pending_orders
-           SET status = ?, executed_exit_price = ?, exit_fee = ?,
-               holding_risk_premium = ?, gross_pnl = ?, net_pnl = ?, net_return_pct = ?,
-               actual_exit_at = ?, updated_at = ?
-           WHERE id = ?""",
-        (STATUS_SOLD, round(open_price, 4), round(fee["total"], 2),
-         t1.get("holding_risk_premium", 0), t1.get("gross_pnl", 0),
-         t1.get("net_pnl", 0), t1.get("net_return_pct", 0),
-         now, now, order_id),
-    )
+    def _do(cur) -> dict:
+        # 写 transactions
+        cur.execute(
+            """INSERT INTO transactions
+               (user_id, stock_code, stock_name, direction, price, quantity, amount, fee, traded_at, note)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                user_id, stock_code, stock_name, "sell",
+                round(open_price, 4), shares,
+                round(net_proceeds, 2),
+                round(fee["total"], 2),
+                now,
+                f"[T+1 模拟卖出] order_id={order_id}",
+            ),
+        )
+
+        # 扣减 holdings
+        existing = cur.execute(
+            "SELECT id, quantity, cost_price FROM holdings "
+            "WHERE user_id = ? AND stock_code = ?",
+            (user_id, stock_code),
+        ).fetchone()
+        if existing:
+            existing_d = dict(existing)
+            old_qty = float(existing_d["quantity"])
+            new_qty = max(0, old_qty - shares)
+            if new_qty == 0:
+                cur.execute("DELETE FROM holdings WHERE id = ?", (existing_d["id"],))
+            else:
+                cur.execute(
+                    """UPDATE holdings
+                       SET quantity = ?, updated_at = ?
+                       WHERE id = ?""",
+                    (new_qty, now, existing_d["id"]),
+                )
+
+        # 更新订单状态
+        cur.execute(
+            """UPDATE t1_pending_orders
+               SET status = ?, executed_exit_price = ?, exit_fee = ?,
+                   holding_risk_premium = ?, gross_pnl = ?, net_pnl = ?, net_return_pct = ?,
+                   actual_exit_at = ?, updated_at = ?
+               WHERE id = ?""",
+            (STATUS_SOLD, round(open_price, 4), round(fee["total"], 2),
+             t1.get("holding_risk_premium", 0), t1.get("gross_pnl", 0),
+             t1.get("net_pnl", 0), t1.get("net_return_pct", 0),
+             now, now, order_id),
+        )
+        return {}
+
+    execute_transaction(_do)
 
     # 5. v4.1 1B.1: 推送模拟卖出通知
     _notify_settlement(

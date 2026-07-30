@@ -143,3 +143,35 @@ def classify_drift(
     if psi >= thresholds.psi_warn or kl >= thresholds.kl_warn:
         return "warning"
     return "none"
+
+
+def load_active_policy(as_of: str | None = None) -> DriftThresholds:
+    """v4.1 Phase 2B: 从 drift_policies 读当前生效阈值.
+
+    选 effective_from <= as_of 且 (effective_to IS NULL OR effective_to > as_of) 的最新一条.
+    无生效阈值时返回 DriftThresholds() 默认值.
+
+    注意: 此函数做 DB read, 不再是纯函数. 单元测试中应 monkeypatch.
+    """
+    from database import query_one
+
+    as_of = as_of or ""
+    row = query_one(
+        """SELECT psi_warn, psi_severe, kl_warn, kl_severe, bins
+           FROM drift_policies
+           WHERE effective_from <= ? AND (effective_to IS NULL OR effective_to > ?)
+           ORDER BY effective_from DESC LIMIT 1""",
+        (as_of, as_of),
+    )
+    if not row:
+        return DEFAULT_THRESHOLDS
+    try:
+        return DriftThresholds(
+            psi_warn=float(row["psi_warn"]),
+            psi_severe=float(row["psi_severe"]),
+            kl_warn=float(row["kl_warn"]),
+            kl_severe=float(row["kl_severe"]),
+            bins=int(row["bins"]),
+        )
+    except Exception:
+        return DEFAULT_THRESHOLDS

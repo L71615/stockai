@@ -349,45 +349,56 @@ def acquire_pipeline_lock(
 
     Returns True if acquired, False if another holder owns it.
     过期锁会被新 holder 抢占 (读 expires_at 判断).
+
+    v4.1 outside voice fix: 整体封装在 BEGIN IMMEDIATE 事务里 — SQLite 的写锁
+    保证跨进程串行化, INSERT OR IGNORE + UPDATE 在同一事务中避免 TOCTOU race.
     """
+    from database import execute_transaction
+
     now_iso = _now()
     expires_iso = (datetime.now() + timedelta(seconds=ttl_seconds)).strftime(
         "%Y-%m-%d %H:%M:%S"
     )
-    # 用 INSERT OR IGNORE 避免覆盖现有锁, 然后 UPDATE 抢占过期的
-    execute(
-        "INSERT OR IGNORE INTO pipeline_lock "
-        "(scope, holder_pid, acquired_at, expires_at) VALUES (?, ?, ?, ?)",
-        (scope, holder_pid, now_iso, expires_iso),
-    )
-    # 检查是否真的是我们持有 (不是别人)
-    row = query_one(
-        "SELECT holder_pid, expires_at FROM pipeline_lock WHERE scope = ?",
-        (scope,),
-    )
-    if not row:
-        return False
-    # 过期锁 -> 抢占
-    if row["holder_pid"] != holder_pid:
-        try:
-            expires_dt = datetime.strptime(row["expires_at"], "%Y-%m-%d %H:%M:%S")
-        except ValueError:
-            expires_dt = datetime.now()
-        if expires_dt < datetime.now():
-            cur = execute(
-                "UPDATE pipeline_lock SET holder_pid = ?, acquired_at = ?, "
-                "expires_at = ? WHERE scope = ? AND holder_pid = ? "
-                "AND expires_at = ?",
-                (holder_pid, now_iso, expires_iso, scope, row["holder_pid"], row["expires_at"]),
-            )
-            return cur["changes"] > 0
-        return False
-    # 已经是我们持有, 续期
-    execute(
-        "UPDATE pipeline_lock SET expires_at = ? WHERE scope = ? AND holder_pid = ?",
-        (expires_iso, scope, holder_pid),
-    )
-    return True
+
+    def _do(cur) -> bool:
+        # 用 INSERT OR IGNORE 避免覆盖现有锁, 然后 UPDATE 抢占过期的
+        cur.execute(
+            "INSERT OR IGNORE INTO pipeline_lock "
+            "(scope, holder_pid, acquired_at, expires_at) VALUES (?, ?, ?, ?)",
+            (scope, holder_pid, now_iso, expires_iso),
+        )
+        # 检查是否真的是我们持有 (不是别人)
+        row = cur.execute(
+            "SELECT holder_pid, expires_at FROM pipeline_lock WHERE scope = ?",
+            (scope,),
+        ).fetchone()
+        if not row:
+            return False
+        row_d = dict(row)
+        # 过期锁 -> 抢占
+        if row_d["holder_pid"] != holder_pid:
+            try:
+                expires_dt = datetime.strptime(row_d["expires_at"], "%Y-%m-%d %H:%M:%S")
+            except ValueError:
+                expires_dt = datetime.now()
+            if expires_dt < datetime.now():
+                # 必须加 holder_pid/expires_at 守卫, 否则会覆盖别人刚续期的锁
+                cur2 = cur.execute(
+                    "UPDATE pipeline_lock SET holder_pid = ?, acquired_at = ?, "
+                    "expires_at = ? WHERE scope = ? AND holder_pid = ? "
+                    "AND expires_at = ?",
+                    (holder_pid, now_iso, expires_iso, scope, row_d["holder_pid"], row_d["expires_at"]),
+                )
+                return cur2.rowcount > 0
+            return False
+        # 已经是我们持有, 续期
+        cur.execute(
+            "UPDATE pipeline_lock SET expires_at = ? WHERE scope = ? AND holder_pid = ?",
+            (expires_iso, scope, holder_pid),
+        )
+        return True
+
+    return execute_transaction(_do)
 
 
 def release_pipeline_lock(scope: str, holder_pid: str) -> bool:

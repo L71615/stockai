@@ -353,8 +353,9 @@ def start_t1_watcher_thread():
             try:
                 now = datetime.now()
                 today_key = now.strftime("%Y-%m-%d")
-                # 09:30-09:35 之间触发一次 / 每天一次
-                if (now.hour == 9 and 30 <= now.minute < 35 and last_run != today_key):
+                # v4.1 outside voice fix: 09:30 -> 09:35 避免集合竞价+第一笔 tick 未稳定.
+                # 09:35-09:40 之间触发一次 / 每天一次.
+                if (now.hour == 9 and 35 <= now.minute < 40 and last_run != today_key):
                     _t1_watcher_cycle()
                     last_run = today_key
             except Exception:

@@ -537,3 +537,20 @@ CREATE TABLE IF NOT EXISTS drift_events (
 );
 CREATE INDEX IF NOT EXISTS idx_drift_factor_created  ON drift_events(factor_name, created_at);
 CREATE INDEX IF NOT EXISTS idx_drift_severity_created ON drift_events(severity, created_at);
+
+-- v4.1 Phase 2B: 阈值版本化
+CREATE TABLE IF NOT EXISTS drift_policies (
+    policy_id       INTEGER PRIMARY KEY AUTOINCREMENT,
+    version         TEXT    NOT NULL UNIQUE,
+    psi_warn        REAL    NOT NULL,
+    psi_severe      REAL    NOT NULL,
+    kl_warn         REAL    NOT NULL,
+    kl_severe       REAL    NOT NULL,
+    bins            INTEGER NOT NULL DEFAULT 10,
+    effective_from  TEXT    NOT NULL,
+    effective_to    TEXT,
+    created_by      TEXT    NOT NULL DEFAULT 'system',
+    note            TEXT    NOT NULL DEFAULT '',
+    created_at      TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_drift_policy_effective ON drift_policies(effective_from);
