@@ -1089,6 +1089,54 @@ def compare_monthly(month: str = ""):
     return compare_monthly_reports(ym)
 
 
+# ═══════════════════════════════════════════════════════════
+#  改进建议引擎 (7 月核心计划 P1)
+#  - analyze_loss_attribution: 规则化亏损归因
+#  - generate_improvement_suggestions: 基于归因推荐具体参数调整
+#  - apply_improvement_suggestion: 记录用户已接受(决策审计)
+# ═══════════════════════════════════════════════════════════
+
+
+class ApplyImprovementRequest(BaseModel):
+    suggestion_id: str
+    accepted_param_changes: list[dict] = []
+
+
+@router.get("/improvement-suggestions")
+def get_improvement_suggestions(
+    lookback_trades: int = Query(50, ge=10, le=200, description="回看最近 N 笔交易"),
+):
+    """改进建议 — 亏损归因 + 参数调整推荐"""
+    from services.review_service import generate_improvement_suggestions
+    try:
+        return generate_improvement_suggestions(lookback_trades=lookback_trades)
+    except Exception as e:
+        logger.error("improvement suggestions failed: %s", str(e), exc_info=True)
+        raise HTTPException(500, f"建议生成失败: {str(e)[:200]}")
+
+
+@router.post("/apply-improvement-suggestion")
+def apply_improvement(req: ApplyImprovementRequest):
+    """记录用户已接受某条改进建议(决策审计)
+
+    注: 参数实际修改仍需走策略参数配置 + 审批流。
+    本端点只做审计记录。
+    """
+    from services.review_service import apply_improvement_suggestion
+    from dependencies import get_current_user_id
+
+    try:
+        user_id = get_current_user_id()
+        return apply_improvement_suggestion(
+            user_id=user_id,
+            suggestion_id=req.suggestion_id,
+            accepted_param_changes=req.accepted_param_changes,
+        )
+    except Exception as e:
+        logger.error("apply improvement failed: %s", str(e), exc_info=True)
+        raise HTTPException(500, f"应用建议失败: {str(e)[:200]}")
+
+
 # ═══════════════════════════════════════════════════════════════
 #  多 Agent 深度分析
 # ═══════════════════════════════════════════════════════════════

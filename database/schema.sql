@@ -554,3 +554,14 @@ CREATE TABLE IF NOT EXISTS drift_policies (
     created_at      TEXT    NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_drift_policy_effective ON drift_policies(effective_from);
+
+-- v4.1+ 改进建议引擎 — 决策审计表
+CREATE TABLE IF NOT EXISTS improvement_accepted (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id          INTEGER NOT NULL,
+    suggestion_id    TEXT    NOT NULL,
+    accepted_at      TEXT    NOT NULL,
+    param_changes_json TEXT  NOT NULL DEFAULT '[]'
+);
+CREATE INDEX IF NOT EXISTS idx_improvement_user_accepted
+    ON improvement_accepted(user_id, accepted_at);

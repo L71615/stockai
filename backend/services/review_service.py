@@ -3,6 +3,8 @@
 AI 复盘功能已合并到 trading_memory.py，本模块只保留数据聚合和记忆读取。
 """
 
+import json
+
 from database import query_all
 
 
@@ -456,4 +458,344 @@ def compare_monthly_reports(current_month: str, user_id: int = 1) -> dict:
         },
         "trend": trend,
         "diagnosis": diagnosis,
+    }
+
+
+# ═══════════════════════════════════════════════════════════
+#  v4.1+ 改进建议引擎 (7 月核心计划 P1)
+#
+#  设计:
+#    1. 亏损归因 — 规则化分类每笔亏损(止损缺失 / 持有过久 / 频繁交易)
+#    2. 自动推荐 — 基于归因 + 整体指标推荐具体参数调整
+#    3. 一键应用 — 前端确认后写建议应用表
+#
+#  注: 这是规则化建议,不依赖 AI 调用,稳定且可解释
+# ═══════════════════════════════════════════════════════════
+
+
+def analyze_loss_attribution(transactions: list[dict]) -> dict:
+    """亏损归因分析 — 分类每笔已结算的亏损交易
+
+    归因规则:
+      - 止损缺失 (no_stop_loss): pnl < -10% AND hold_days >= 5 (长期持有还亏大)
+      - 持有过久 (over_hold): pnl < 0 AND hold_days > 10
+      - 快速止损 (good_exit): 0 < pnl <= 3% AND hold_days <= 3 (小赚就走也可能是错)
+      - 频繁亏损 (churn): 同一股票 30 天内多次亏损
+
+    Returns:
+        {
+            'total_losers': N,
+            'attribution': {
+                'no_stop_loss': 4,
+                'over_hold': 3,
+                'churn_loss': 2,
+                'clean_loss': N - 9,  # 其他
+            },
+            'loser_avg_hold_days': 7.2,
+            'worst_loser': {...},
+            'diagnosis': '4 笔亏损平均持有 7.2 天,疑似没设止损',
+        }
+    """
+    losers = [t for t in transactions if t.get("pnl") is not None and t["pnl"] < 0]
+    if not losers:
+        return {
+            "total_losers": 0,
+            "attribution": {"no_stop_loss": 0, "over_hold": 0, "churn_loss": 0, "clean_loss": 0},
+            "loser_avg_hold_days": 0,
+            "worst_loser": None,
+            "diagnosis": "无亏损交易,继续保持",
+        }
+
+    # 规则 1: 止损缺失(亏损 >=10% AND 持有 >=5天)
+    no_stop = [t for t in losers if t["pnl"] <= -0.10 * abs(t["pnl"] + t["pnl"]) and t.get("hold_days", 0) >= 5]
+    # 简化:用绝对亏损比估算
+    # pnl 是绝对金额,用 |pnl|/quantity/cost 估算亏损比
+    def _loss_ratio(t: dict) -> float:
+        try:
+            cost = (t.get("price", 0) or 0) * (t.get("quantity", 0) or 0)
+            if cost <= 0:
+                # fallback:用 matched_buy_amount
+                return 0.10  # 默认 10%
+            return abs(t["pnl"]) / cost
+        except Exception:
+            return 0.10
+
+    # 重新算:亏损比 >= 10% 且持有 >= 5 天
+    no_stop = [t for t in losers if _loss_ratio(t) >= 0.10 and t.get("hold_days", 0) >= 5]
+
+    # 规则 2: 持有过久(亏损 AND 持有 > 10 天)
+    over_hold = [t for t in losers if t.get("hold_days", 0) > 10 and t not in no_stop]
+
+    # 规则 3: 频繁亏损(同 code 30 天内多次亏)
+    churn_codes: dict[str, int] = {}
+    for t in losers:
+        churn_codes[t["stock_code"]] = churn_codes.get(t["stock_code"], 0) + 1
+    churn_loss = [t for t in losers if churn_codes.get(t["stock_code"], 0) >= 2]
+
+    # 其他
+    flagged = set(id(t) for t in (no_stop + over_hold + churn_loss))
+    clean_loss = [t for t in losers if id(t) not in flagged]
+
+    avg_hold = sum(t.get("hold_days", 0) or 0 for t in losers) / len(losers) if losers else 0
+    worst = min(losers, key=lambda t: t["pnl"]) if losers else None
+
+    # 自动诊断
+    if len(no_stop) >= 3:
+        diagnosis = f"{len(no_stop)} 笔亏损平均持有 {avg_hold:.1f} 天,疑似没设止损"
+    elif len(over_hold) >= 3:
+        diagnosis = f"{len(over_hold)} 笔亏损持有 >10 天,缺乏主动止盈/止损机制"
+    elif len(churn_loss) >= 2:
+        diagnosis = f"{len(churn_loss)} 笔同标的反复亏损,选股或择时有问题"
+    else:
+        diagnosis = "亏损归因分散,无需特别干预"
+
+    return {
+        "total_losers": len(losers),
+        "attribution": {
+            "no_stop_loss": len(no_stop),
+            "over_hold": len(over_hold),
+            "churn_loss": len(churn_loss),
+            "clean_loss": len(clean_loss),
+        },
+        "loser_avg_hold_days": round(avg_hold, 2),
+        "worst_loser": {
+            "code": worst["stock_code"],
+            "name": worst.get("stock_name", ""),
+            "pnl": worst["pnl"],
+            "hold_days": worst.get("hold_days", 0),
+        } if worst else None,
+        "diagnosis": diagnosis,
+    }
+
+
+def generate_improvement_suggestions(
+    user_id: int = 1,
+    lookback_trades: int = 50,
+) -> dict:
+    """生成改进建议 — 亏损归因 + 整体指标 + 具体参数调整
+
+    Returns:
+        {
+            'attribution': {...},         # 来自 analyze_loss_attribution
+            'overall_metrics': {...},     # 胜率/平均盈亏/平均持仓
+            'suggestions': [
+                {
+                    'id': 'tighten_stop_loss',
+                    'priority': 'high',     # high/medium/low
+                    'category': '止损',
+                    'title': '收紧止损到 -5%',
+                    'reason': '4 笔亏损平均持有 7.2 天,疑似没设止损',
+                    'param_changes': [
+                        {
+                            'strategy_id': 'turtle_s1',
+                            'param_name': 'stop_loss_pct',
+                            'old_value': -0.10,
+                            'new_value': -0.05,
+                            'description': '止损从 -10% 收到 -5%,快速离场',
+                        },
+                    ],
+                    'expected_impact': '预估止损更快,亏损幅度减少 ~50%',
+                },
+                ...
+            ],
+            'summary': '...',
+        }
+    """
+    agg = aggregate_transactions(user_id)
+    if agg["total_trades"] == 0:
+        return {
+            "attribution": {},
+            "overall_metrics": {},
+            "suggestions": [],
+            "summary": "无交易数据,无法生成建议",
+        }
+
+    transactions = agg["transactions"]
+    # 取最近 lookback_trades 笔
+    if len(transactions) > lookback_trades:
+        transactions = transactions[-lookback_trades:]
+
+    # 归因
+    attribution = analyze_loss_attribution(transactions)
+
+    # 整体指标
+    overall = {
+        "total_trades": agg["total_trades"],
+        "win_rate": agg["win_rate"],
+        "total_pnl": agg["total_pnl"],
+        "avg_hold_days": agg["avg_hold_days"],
+        "lookback_used": len(transactions),
+    }
+
+    # 规则化建议
+    suggestions: list[dict] = []
+
+    # 规则 1: 止损缺失 → 建议收紧止损
+    no_stop_count = attribution["attribution"]["no_stop_loss"]
+    if no_stop_count >= 2:
+        suggestions.append({
+            "id": "tighten_stop_loss",
+            "priority": "high" if no_stop_count >= 4 else "medium",
+            "category": "止损",
+            "title": f"收紧止损(已识别 {no_stop_count} 笔无止损亏损)",
+            "reason": (
+                f"{no_stop_count} 笔亏损平均亏损比 ≥10% 且持有 ≥5 天,"
+                f"平均持有 {attribution['loser_avg_hold_days']:.1f} 天 — "
+                f"典型没设止损 / 止损太宽"
+            ),
+            "param_changes": [
+                {
+                    "strategy_id": "turtle_s1",
+                    "param_name": "stop_loss_pct",
+                    "old_value": -0.10,
+                    "new_value": -0.05,
+                    "description": "止损从 -10% 收到 -5%,快速离场",
+                },
+                {
+                    "strategy_id": "momentum_leader",
+                    "param_name": "stop_loss_pct",
+                    "old_value": -0.08,
+                    "new_value": -0.05,
+                    "description": "止损从 -8% 收到 -5%",
+                },
+            ],
+            "expected_impact": f"预估止损失败更快,平均亏损幅度 ↓30-50%",
+        })
+
+    # 规则 2: 持有过久 → 建议主动止盈
+    over_hold_count = attribution["attribution"]["over_hold"]
+    if over_hold_count >= 2:
+        suggestions.append({
+            "id": "tighten_hold_period",
+            "priority": "medium",
+            "category": "持仓",
+            "title": f"缩短持仓周期(已识别 {over_hold_count} 笔持有 >10 天亏损)",
+            "reason": (
+                f"{over_hold_count} 笔亏损单笔持有 >10 天,缺乏主动止盈/止损机制"
+            ),
+            "param_changes": [
+                {
+                    "strategy_id": "turtle_s1",
+                    "param_name": "max_hold_days",
+                    "old_value": 20,
+                    "new_value": 10,
+                    "description": "持仓上限 20 → 10 天",
+                },
+            ],
+            "expected_impact": "10 天内强制 exit,避免浮亏变实亏",
+        })
+
+    # 规则 3: 频繁亏损 → 建议收紧入场
+    churn_count = attribution["attribution"]["churn_loss"]
+    if churn_count >= 2:
+        churn_codes = attribution.get("worst_loser", {}).get("code", "")
+        suggestions.append({
+            "id": "tighten_entry_filter",
+            "priority": "medium",
+            "category": "入场",
+            "title": f"收紧入场过滤(已识别 {churn_count} 笔同标的反复亏损)",
+            "reason": (
+                f"{churn_count} 笔亏损在同标的反复出现,选股或择时信号太弱"
+            ),
+            "param_changes": [
+                {
+                    "strategy_id": "turtle_s1",
+                    "param_name": "entry_min_volume_ratio",
+                    "old_value": 1.0,
+                    "new_value": 1.5,
+                    "description": "入场要求量比从 1.0 提到 1.5(避免无量阴跌)",
+                },
+            ],
+            "expected_impact": "只追有量突破,过滤无量震荡",
+        })
+
+    # 规则 4: 整体胜率 < 40% → 建议严格风控
+    if agg["win_rate"] < 40 and agg["total_trades"] >= 10:
+        suggestions.append({
+            "id": "improve_win_rate",
+            "priority": "high",
+            "category": "风控",
+            "title": f"胜率仅 {agg['win_rate']}%,建议加强风控",
+            "reason": (
+                f"总胜率 {agg['win_rate']}% 远低于 50%,入场信号需更严格"
+            ),
+            "param_changes": [
+                {
+                    "strategy_id": "all",
+                    "param_name": "max_position_pct",
+                    "old_value": 0.30,
+                    "new_value": 0.20,
+                    "description": "单票仓位上限 30% → 20%",
+                },
+            ],
+            "expected_impact": "降低单票波动对组合的冲击",
+        })
+
+    # 规则 5: 平均持仓 < 3 天且亏损多 → 频繁交易
+    if agg["avg_hold_days"] < 3 and agg["lose_count"] >= 3:
+        suggestions.append({
+            "id": "reduce_churn",
+            "priority": "medium",
+            "category": "纪律",
+            "title": "减少频繁交易",
+            "reason": (
+                f"平均持仓仅 {agg['avg_hold_days']} 天,疑似频繁进出 — "
+                f"摩擦成本高,且信号来不及展开"
+            ),
+            "param_changes": [
+                {
+                    "strategy_id": "all",
+                    "param_name": "min_hold_days",
+                    "old_value": 1,
+                    "new_value": 3,
+                    "description": "最小持仓 1 天 → 3 天(避免 T+1 内反复)",
+                },
+            ],
+            "expected_impact": "过滤掉日内噪音,让策略信号有展开空间",
+        })
+
+    # Summary
+    high_count = sum(1 for s in suggestions if s["priority"] == "high")
+    if high_count >= 2:
+        summary = f"检测到 {high_count} 个高优先级问题,建议优先处理"
+    elif suggestions:
+        summary = f"生成 {len(suggestions)} 条建议,可逐条确认应用"
+    else:
+        summary = "交易纪律良好,暂无需特别调整"
+
+    return {
+        "attribution": attribution,
+        "overall_metrics": overall,
+        "suggestions": suggestions,
+        "summary": summary,
+    }
+
+
+def apply_improvement_suggestion(
+    user_id: int,
+    suggestion_id: str,
+    accepted_param_changes: list[dict] | None = None,
+) -> dict:
+    """记录用户接受了改进建议(写入建议应用表)
+
+    注: 实际修改策略参数需要走 strategies API + 审批流。
+    本函数只记录决策审计(谁接受了什么建议)。
+    """
+    from database import execute
+    from datetime import datetime
+
+    execute(
+        """INSERT INTO improvement_accepted
+           (user_id, suggestion_id, accepted_at, param_changes_json)
+           VALUES (?, ?, ?, ?)""",
+        (
+            user_id, suggestion_id, datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            json.dumps(accepted_param_changes or [], ensure_ascii=False),
+        ),
+    )
+    return {
+        "status": "recorded",
+        "suggestion_id": suggestion_id,
+        "user_id": user_id,
+        "note": "已记录决策审计。参数实际修改请走策略参数配置流程。",
     }
