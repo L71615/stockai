@@ -19,11 +19,18 @@ D:\stocks\
 │   ├── DESIGN.md                   ← 设计系统(权威)
 │   ├── TODOS.md                    ← 待办
 │   ├── AGENTS.md                   ← Agent 工作流
-│   ├── ROADMAP.md                  ← 路线图
-│   ├── RUNBOOK.md                  ← 运行手册
+│   ├── V4-PLAN.md                  ← ✅ v4.0+v4.1 已发布 / v4.2 候选
+│   ├── RELEASE-NOTES-v4.0.md       ← v4.0 release notes
+│   └── RELEASE-NOTES-v4.1.md       ← v4.1 release notes
+│
+├── docs/                           ← 📦 历史归档 + 路线图(早期内容)
+│   ├── ROADMAP.md                  ← 路线图(v3.6 时代,历史)
+│   ├── RUNBOOK.md                  ← 运行手册(legacy)
 │   ├── ARCHIVE.md                  ← 归档说明
-│   ├── V4-PLAN.md                  ← 🆕 v4.0 大更新计划
-│   └── designs/ + superpowers/     ← 设计稿 + 旧 spec
+│   ├── README.md                   ← docs 目录入口
+│   ├── fees-audit.md               ← 手续费审计
+│   ├── designs/                    ← 设计稿
+│   └── superpowers/                ← 旧 spec
 │
 └── monitor-desktop-docs/           ← 🖥️ 后端监视器 MD
     ├── PLAN.md                     ← 监视器计划(技术栈/UI/10 决策)
@@ -66,11 +73,11 @@ D:\stocks\
 | English version | `stockai-project-docs/README.en.md` |
 | 完整变更历史 | `stockai-project-docs/CHANGELOG.md` |
 | 设计规范 | `stockai-project-docs/DESIGN.md` |
-| 项目路线图 | `stockai-project-docs/ROADMAP.md` |
+| 项目路线图 | `docs/ROADMAP.md` |
 | 运行手册 | `stockai-project-docs/RUNBOOK.md` |
 | 待办事项 | `stockai-project-docs/TODOS.md` |
 | Agent 工作流 | `stockai-project-docs/AGENTS.md` |
-| **🆕 v4.0 大更新计划** | **`stockai-project-docs/V4-PLAN.md`** |
+| **✅ v4.0+v4.1 已发布 / v4.2 候选** | **`stockai-project-docs/V4-PLAN.md`** |
 | 监视器计划 | `monitor-desktop-docs/PLAN.md` |
 | 监视器改动 | `monitor-desktop-docs/DAILY-LOG.md` |
 | 文档归档说明 | `stockai-project-docs/ARCHIVE.md` |
@@ -103,7 +110,7 @@ D:\stocks\
 | **新功能交付 / 大版本发布** | `README.md`(根)+ `stockai-project-docs/README.md` + `README.en.md` + `CHANGELOG.md` + `V4-PLAN.md`(状态更新) |
 | **设计变更(配色 / 字体 / 组件)** | `stockai-project-docs/DESIGN.md` |
 | **Bug 修复** | `stockai-project-docs/CHANGELOG.md` |
-| **路线图更新** | `stockai-project-docs/ROADMAP.md` |
+| **路线图更新** | `docs/ROADMAP.md` |
 | **监视器改动** | `monitor-desktop-docs/PLAN.md`(状态) + `DAILY-LOG.md` |
 | **启动 / 部署 / 故障排查** | `stockai-project-docs/RUNBOOK.md` |
 | **新建 MD 文件 / 重构目录** | `INDEX.md`(本文件) |

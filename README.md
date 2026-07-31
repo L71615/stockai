@@ -12,7 +12,7 @@
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.6-3178C6?style=flat-square&logo=typescript&logoColor=white)
 ![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)
 
-[English](stockai-project-docs/README.en.md) · [中文](#) · [文档导航](INDEX.md) · [v4.0 计划](stockai-project-docs/V4-PLAN.md)
+[English](stockai-project-docs/README.en.md) · [中文](#) · [文档导航](INDEX.md) · [v4.x 计划](stockai-project-docs/V4-PLAN.md)
 
 </div>
 
