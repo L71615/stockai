@@ -11,7 +11,7 @@ import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
 import { apiGet, apiPost } from "@/lib/auth"
 import { cn } from "@/lib/utils"
-import { IconChartBar, IconGridDots, IconChartScatter, IconFlask, IconPlayerPlay, IconCheck, IconBrain, IconActivity, IconTrophy, IconChartLine, IconBinaryTree, IconChartHistogram } from "@tabler/icons-react"
+import { IconChartBar, IconGridDots, IconChartScatter, IconFlask, IconPlayerPlay, IconCheck, IconBrain, IconActivity, IconTrophy, IconChartLine, IconBinaryTree, IconChartHistogram, IconArrowsHorizontal } from "@tabler/icons-react"
 import {
   ScatterChart, Scatter, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
 } from "recharts"
@@ -217,6 +217,32 @@ interface ContributionResult {
   contributions: FactorContribution[]
   summary: ContributionSummary
   lookback_days?: number
+  pool?: string
+  error?: string
+}
+
+// 平行坐标类型 (P2)
+interface ParallelStock {
+  code: string
+  values: Record<string, number>
+  composite: number
+}
+interface ParallelFactorRange {
+  min: number
+  max: number
+  mean: number
+  std: number
+}
+interface ParallelResult {
+  as_of_date: string
+  factors: string[]
+  ic_weights: Record<string, number>
+  stocks: ParallelStock[]
+  summary: {
+    n_stocks: number
+    n_factors: number
+    factor_ranges: Record<string, ParallelFactorRange>
+  }
   pool?: string
   error?: string
 }
@@ -1940,6 +1966,335 @@ function WaterfallChart({ contributions }: { contributions: FactorContribution[]
 }
 
 
+// ═══════════════════════════════════════════════════════════
+//  Tab 7 (新): 平行坐标 — 多因子选股可视化
+//  每只股票一条折线跨多因子轴,综合得分高=绿,低=红
+// ═══════════════════════════════════════════════════════════
+
+function ParallelCoordsTab({
+  factors, pool, setPool,
+}: {
+  factors: FactorInfo[]
+  pool: string; setPool: (v: string) => void
+}) {
+  const [selectedFactors, setSelectedFactors] = useState<string[]>(
+    ["ret_5d", "rsi_14", "macd_signal", "volatility", "ma5"]
+  )
+  const [lookbackDays, setLookbackDays] = useState(60)
+  const [topN, setTopN] = useState(50)
+  const [data, setData] = useState<ParallelResult | null>(null)
+  const [loading, setLoading] = useState(false)
+
+  const run = async () => {
+    setLoading(true)
+    try {
+      const params = new URLSearchParams({
+        factors: selectedFactors.join(","),
+        pool, lookback_days: String(lookbackDays),
+        top_n: String(topN),
+      })
+      const res = await apiPost<ParallelResult>(`/api/factor-lab/parallel-coordinates?${params}`)
+      setData(res)
+    } catch (e) {
+      console.error(e)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const toggleFactor = (name: string) => {
+    setSelectedFactors((prev) => {
+      if (prev.includes(name)) return prev.filter((n) => n !== name)
+      if (prev.length >= 8) return prev  // 限制最多 8 个
+      return [...prev, name]
+    })
+  }
+
+  return (
+    <div className="space-y-4">
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm flex items-center gap-2">
+            <IconArrowsHorizontal className="size-4" />
+            平行坐标 — 多因子选股可视化
+          </CardTitle>
+          <CardDescription className="text-xs">
+            每条线 = 1 只股票,跨多因子轴;颜色:综合得分高=绿,低=红
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="flex flex-wrap items-end gap-3">
+            <div className="space-y-1">
+              <label className="text-[10px] text-muted-foreground">股票池</label>
+              <Select value={pool} onValueChange={setPool}>
+                <SelectTrigger className="h-8 w-24 text-xs"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">全部</SelectItem>
+                  <SelectItem value="hs300">HS300</SelectItem>
+                  <SelectItem value="csi500">CSI500</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1">
+              <label className="text-[10px] text-muted-foreground">Top N</label>
+              <Select value={String(topN)} onValueChange={(v) => setTopN(parseInt(v))}>
+                <SelectTrigger className="h-8 w-20 text-xs"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {[20, 50, 100, 200, 500].map((n) => (
+                    <SelectItem key={n} value={String(n)}>{n}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1">
+              <label className="text-[10px] text-muted-foreground">IC 回看</label>
+              <Select value={String(lookbackDays)} onValueChange={(v) => setLookbackDays(parseInt(v))}>
+                <SelectTrigger className="h-8 w-20 text-xs"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {[60, 120, 180].map((n) => (
+                    <SelectItem key={n} value={String(n)}>{n}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <Button onClick={run} disabled={loading || selectedFactors.length < 2} size="sm">
+              {loading ? "计算中..." : "画平行坐标"}
+            </Button>
+          </div>
+
+          {/* 因子多选(最多 8 个) */}
+          <div className="border border-border p-2 max-h-24 overflow-y-auto">
+            <div className="text-[10px] text-muted-foreground mb-1">
+              因子轴({selectedFactors.length}/8):
+            </div>
+            <div className="flex flex-wrap gap-1">
+              {factors.slice(0, 26).map((f) => (
+                <button
+                  key={f.name}
+                  onClick={() => toggleFactor(f.name)}
+                  className={`px-1.5 py-0.5 text-[10px] border ${
+                    selectedFactors.includes(f.name)
+                      ? "bg-primary/15 border-primary text-foreground"
+                      : "border-border text-muted-foreground hover:border-primary/50"
+                  }`}
+                >
+                  {f.name}
+                </button>
+              ))}
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {loading ? (
+        <Card><CardContent className="py-8"><Skeleton className="h-96 w-full" /></CardContent></Card>
+      ) : data?.error ? (
+        <Card><CardContent className="py-8 text-xs text-destructive text-center">{data.error}</CardContent></Card>
+      ) : data ? (
+        <>
+          {/* 摘要 */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+            <MetricBox label="截面日" value={data.as_of_date} />
+            <MetricBox label="显示股票" value={`${data.summary.n_stocks}`} hint={`pool=${data.pool}`} />
+            <MetricBox label="因子轴数" value={String(data.summary.n_factors)} />
+            <MetricBox label="Top 综合" value={data.stocks[0]?.code || "—"} hint={`composite=${data.stocks[0]?.composite.toFixed(2)}`} />
+          </div>
+
+          {/* 主图 */}
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm">
+                平行坐标图 — {data.factors.length} 因子 × {data.stocks.length} 股票
+              </CardTitle>
+              <CardDescription className="text-xs">
+                折线 = 1 只股票;颜色:综合得分 ≥ +1SD 红,≤ -1SD 蓝,中间灰
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <ParallelChart data={data} />
+            </CardContent>
+          </Card>
+
+          {/* 排名表 */}
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm">Top {data.stocks.length} 综合得分排名</CardTitle>
+            </CardHeader>
+            <CardContent className="p-0">
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs tabular-nums">
+                  <thead>
+                    <tr className="border-b border-border">
+                      <th className="text-left p-2 text-[10px] text-muted-foreground">#</th>
+                      <th className="text-left p-2 text-[10px] text-muted-foreground">代码</th>
+                      <th className="text-right p-2 text-[10px] text-muted-foreground">综合</th>
+                      {data.factors.map((f) => (
+                        <th key={f} className="text-right p-2 text-[10px] text-muted-foreground">
+                          {f}
+                          {data.ic_weights[f] !== undefined && (
+                            <span className="block text-[8px] text-muted-foreground/60">
+                              IC={data.ic_weights[f].toFixed(4)}
+                            </span>
+                          )}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.stocks.slice(0, 30).map((s, i) => (
+                      <tr key={s.code} className="border-b border-border/30 hover:bg-muted/30">
+                        <td className="p-2 text-muted-foreground">{i + 1}</td>
+                        <td className="p-2 font-medium font-mono">{s.code}</td>
+                        <td className={`p-2 text-right font-mono ${s.composite > 0.5 ? "text-emerald-400" : s.composite < -0.5 ? "text-red-400" : ""}`}>
+                          {s.composite > 0 ? "+" : ""}{s.composite.toFixed(3)}
+                        </td>
+                        {data.factors.map((f) => {
+                          const v = s.values[f] ?? 0
+                          return (
+                            <td key={f} className={`p-2 text-right font-mono ${v > 1 ? "text-emerald-400" : v < -1 ? "text-red-400" : ""}`}>
+                              {v > 0 ? "+" : ""}{v.toFixed(2)}
+                            </td>
+                          )
+                        })}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </CardContent>
+          </Card>
+        </>
+      ) : null}
+    </div>
+  )
+}
+
+
+// 自渲染 Parallel Coordinates SVG
+function ParallelChart({ data }: { data: ParallelResult }) {
+  const padding = 24
+  const axisLabelHeight = 36
+  const width = Math.max(400, data.factors.length * 100)
+  const height = 400
+
+  const axisAreaHeight = height - padding * 2 - axisLabelHeight
+  const axisSpacing = (width - padding * 2) / Math.max(data.factors.length - 1, 1)
+
+  // 计算每个因子的 y 位置
+  // 后端返回的 z-score 通常在 [-3, 3] 之间,但实际范围可能更大
+  // 用 factor_ranges 或 [-3, 3] clamp
+  const getY = (factor: string, value: number): number => {
+    const range = data.summary.factor_ranges[factor]
+    let min = range?.min ?? -3
+    let max = range?.max ?? 3
+    // 限制在 [-3, 3] 防止极端值让大多数线挤在一起
+    min = Math.max(min, -3)
+    max = Math.min(max, 3)
+    // 归一化到 [0, 1]
+    const norm = (value - min) / Math.max(max - min, 1e-6)
+    const clamped = Math.max(0, Math.min(1, norm))
+    return padding + axisLabelHeight + (1 - clamped) * axisAreaHeight  // 倒置,值大在上
+  }
+
+  const getX = (i: number) => padding + i * axisSpacing
+
+  // 颜色:基于综合得分
+  const getColor = (composite: number): string => {
+    // composite 在 [-2, 2] 之间,clamp 后映射
+    const c = Math.max(-2, Math.min(2, composite))
+    if (c > 1) return "#22c55e"  // 强多
+    if (c > 0.5) return "#86efac"  // 弱多
+    if (c > -0.5) return "#94a3b8"  // 中性
+    if (c > -1) return "#fca5a5"  // 弱空
+    return "#ef4444"  // 强空
+  }
+
+  return (
+    <div className="overflow-x-auto">
+      <svg width={width} height={height}>
+        {/* 轴线 */}
+        {data.factors.map((f, i) => {
+          const x = getX(i)
+          return (
+            <g key={f}>
+              <line
+                x1={x} y1={padding + axisLabelHeight}
+                x2={x} y2={height - padding}
+                stroke="currentColor"
+                strokeWidth={1}
+                opacity={0.4}
+              />
+              {/* 因子名 (轴顶) */}
+              <text
+                x={x}
+                y={padding + 12}
+                fontSize={10}
+                fontWeight={600}
+                fill="currentColor"
+                textAnchor="middle"
+                fontFamily="monospace"
+              >
+                {f}
+              </text>
+              {/* IC 权重(轴底) */}
+              {data.ic_weights[f] !== undefined && (
+                <text
+                  x={x}
+                  y={height - padding + 12}
+                  fontSize={8}
+                  fill="currentColor"
+                  opacity={0.5}
+                  textAnchor="middle"
+                  fontFamily="monospace"
+                >
+                  IC={data.ic_weights[f].toFixed(4)}
+                </text>
+              )}
+              {/* 轴刻度:0 线 */}
+              <line
+                x1={x - 4} y1={padding + axisLabelHeight + axisAreaHeight / 2}
+                x2={x + 4} y2={padding + axisLabelHeight + axisAreaHeight / 2}
+                stroke="currentColor"
+                strokeWidth={0.5}
+                opacity={0.3}
+              />
+              <text
+                x={x + 6}
+                y={padding + axisLabelHeight + axisAreaHeight / 2 + 3}
+                fontSize={7}
+                fill="currentColor"
+                opacity={0.5}
+              >
+                0
+              </text>
+            </g>
+          )
+        })}
+
+        {/* 折线(每只股票) */}
+        {data.stocks.map((s) => {
+          const points = data.factors.map((f, i) => {
+            const v = s.values[f] ?? 0
+            return `${getX(i)},${getY(f, v)}`
+          }).join(" ")
+
+          return (
+            <polyline
+              key={s.code}
+              points={points}
+              fill="none"
+              stroke={getColor(s.composite)}
+              strokeWidth={0.8}
+              opacity={0.5}
+            />
+          )
+        })}
+      </svg>
+    </div>
+  )
+}
+
+
 function MetricBox({ label, value, highlight = false, positive, hint }: { label: string; value: string; highlight?: boolean; positive?: boolean; hint?: string }) {
   const valueColor = positive === undefined ? "" : positive ? "text-red-400" : "text-emerald-400"
   return (
@@ -2100,11 +2455,12 @@ export default function FactorLabPage() {
       <SiteHeader title="因子实验室" />
       <div className="flex flex-1 flex-col overflow-auto p-4 lg:p-6 space-y-4">
         <Tabs defaultValue="ic" className="space-y-4">
-          <TabsList className="grid w-full max-w-4xl grid-cols-8">
+          <TabsList className="grid w-full max-w-5xl grid-cols-9">
             <TabsTrigger value="ic" className="text-xs"><IconChartBar className="size-3.5 mr-1" />IC</TabsTrigger>
             <TabsTrigger value="leaderboard" className="text-xs"><IconTrophy className="size-3.5 mr-1" />排行</TabsTrigger>
             <TabsTrigger value="quantile" className="text-xs"><IconChartLine className="size-3.5 mr-1" />分位</TabsTrigger>
             <TabsTrigger value="clustering" className="text-xs"><IconBinaryTree className="size-3.5 mr-1" />聚类</TabsTrigger>
+            <TabsTrigger value="parallel" className="text-xs"><IconArrowsHorizontal className="size-3.5 mr-1" />平行</TabsTrigger>
             <TabsTrigger value="contribution" className="text-xs"><IconChartHistogram className="size-3.5 mr-1" />瀑布</TabsTrigger>
             <TabsTrigger value="correlation" className="text-xs"><IconGridDots className="size-3.5 mr-1" />相关</TabsTrigger>
             <TabsTrigger value="scatter" className="text-xs"><IconChartScatter className="size-3.5 mr-1" />散点</TabsTrigger>
@@ -2146,6 +2502,12 @@ export default function FactorLabPage() {
           </TabsContent>
           <TabsContent value="contribution">
             <ContributionTab
+              factors={factors}
+              pool={pool} setPool={setPool}
+            />
+          </TabsContent>
+          <TabsContent value="parallel">
+            <ParallelCoordsTab
               factors={factors}
               pool={pool} setPool={setPool}
             />

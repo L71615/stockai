@@ -1120,6 +1120,180 @@ def compute_factor_contribution(
     }
 
 
+# ═══════════════════════════════════════════════════════════════
+#  平行坐标 (P2) — 多因子选股可视化
+#
+#  用法: 给定截面日 + N 个因子 + 股票池,返回每只股票在各因子上的得分
+#  前端自渲染 SVG 平行坐标(每只股票一条折线,跨 N 个轴)
+#  颜色: 综合等权得分高=绿,低=红
+# ═══════════════════════════════════════════════════════════════
+
+
+def compute_parallel_coordinates(
+    factors: list[str],
+    stock_pool: str = "hs300",
+    as_of_date: Optional[str] = None,
+    lookback_days: int = 120,
+    top_n: int | None = None,
+) -> dict:
+    """平行坐标数据 — 给定截面日,每只股票的各因子 z-score
+
+    Args:
+        factors: 因子列表(2-8 个,太多会乱)
+        stock_pool: 股票池
+        as_of_date: 截面日(默认最新)
+        lookback_days: IC mean 回看窗口
+        top_n: 只返回综合得分 top N(默认全部)
+
+    Returns:
+        {
+            'as_of_date': '2026-07-31',
+            'factors': ['ret_5d', 'rsi_14', ...],
+            'ic_weights': {factor: ic_mean},  # 用于前端显示轴标题权重
+            'stocks': [
+                {
+                    'code': '000001',
+                    'values': {factor1: z1, factor2: z2, ...},
+                    'composite': 0.85,   # 等权 z-score 平均
+                },
+                ...
+            ],
+            'summary': {
+                'n_stocks': 300,
+                'n_factors': 4,
+                'factor_ranges': {factor: (min, max)},
+            }
+        }
+    """
+    if len(factors) < 2:
+        return {"error": "至少需要 2 个因子"}
+
+    # 默认截面日
+    if not as_of_date:
+        from database import query_one
+        r = query_one("SELECT MAX(trade_date) as d FROM historical_kline")
+        if not r or not r["d"]:
+            return {"error": "无 K 线数据"}
+        as_of_date = r["d"]
+
+    # 加载股票池 + K 线
+    pool_codes = get_stock_pool(stock_pool)
+    if not pool_codes:
+        return {"error": f"股票池 {stock_pool} 为空"}
+
+    end_dt = datetime.strptime(as_of_date, "%Y-%m-%d")
+    start_dt = end_dt - timedelta(days=int(lookback_days * 1.5))
+    start_date = start_dt.strftime("%Y-%m-%d")
+
+    panels = load_kline_panel(pool_codes, start_date, as_of_date)
+    if not panels:
+        return {"error": "K 线加载失败"}
+
+    # 计算各因子 panel
+    factor_panels: dict[str, pd.DataFrame] = {}
+    for fname in factors:
+        if fname not in FACTOR_REGISTRY:
+            continue
+        try:
+            fp = _build_factor_panel(panels, fname)
+            if not fp.empty:
+                factor_panels[fname] = fp
+        except Exception:
+            continue
+
+    if len(factor_panels) < 2:
+        return {"error": f"有效因子不足 2 个(只剩 {len(factor_panels)})"}
+
+    # 截面日提取
+    target_date = pd.Timestamp(as_of_date)
+    cross_section = pd.DataFrame({
+        fname: fp.loc[target_date] for fname, fp in factor_panels.items()
+        if target_date in fp.index
+    })
+    if cross_section.empty:
+        return {"error": f"截面日 {as_of_date} 无有效因子值"}
+
+    # 算 IC weights (lookback_days)
+    return_panel = pd.DataFrame({
+        code: df["close"].pct_change() for code, df in panels.items()
+    })
+    forward_return = return_panel.shift(-1)
+
+    ic_weights: dict[str, float] = {}
+    for fname, fp in factor_panels.items():
+        recent_dates = fp.index[fp.index <= target_date][-lookback_days:]
+        ic_vals = []
+        for d in recent_dates:
+            f_vals = fp.loc[d].dropna()
+            r_vals = forward_return.loc[d].dropna() if d in forward_return.index else pd.Series()
+            common = f_vals.index.intersection(r_vals.index)
+            if len(common) < 20:
+                continue
+            f_a = f_vals[common].values.astype(float)
+            r_a = r_vals[common].values.astype(float)
+            if np.std(f_a) < 1e-9 or np.std(r_a) < 1e-9:
+                continue
+            try:
+                c = np.corrcoef(f_a, r_a)[0, 1]
+                if not np.isnan(c):
+                    ic_vals.append(c)
+            except Exception:
+                continue
+        if len(ic_vals) >= 10:
+            ic_weights[fname] = round(float(np.mean(ic_vals)), 6)
+
+    # 截面 z-score 标准化(对每个因子)
+    z_scores = (cross_section - cross_section.mean()) / cross_section.std().replace(0, 1)
+
+    # 综合得分: 等权平均(后续可加 IC 加权)
+    composite = z_scores.mean(axis=1)
+
+    # 构建 stocks 列表
+    stocks = []
+    for code in z_scores.index:
+        row = z_scores.loc[code]
+        if row.isna().all():
+            continue
+        vals = {fname: (round(float(row[fname]), 4) if not pd.isna(row[fname]) else 0.0)
+                for fname in factor_panels.keys()}
+        c = float(composite[code]) if not pd.isna(composite[code]) else 0.0
+        stocks.append({
+            "code": code,
+            "values": vals,
+            "composite": round(c, 4),
+        })
+
+    # 按 composite 降序
+    stocks.sort(key=lambda s: s["composite"], reverse=True)
+    if top_n:
+        stocks = stocks[:top_n]
+
+    # 因子值范围(前端定标用)
+    factor_ranges = {}
+    for fname in factor_panels.keys():
+        col = z_scores[fname].dropna()
+        if len(col) > 0:
+            factor_ranges[fname] = {
+                "min": round(float(col.min()), 2),
+                "max": round(float(col.max()), 2),
+                "mean": round(float(col.mean()), 4),
+                "std": round(float(col.std()), 4),
+            }
+
+    return {
+        "as_of_date": as_of_date,
+        "factors": list(factor_panels.keys()),
+        "ic_weights": ic_weights,
+        "stocks": stocks,
+        "summary": {
+            "n_stocks": len(stocks),
+            "n_factors": len(factor_panels),
+            "factor_ranges": factor_ranges,
+        },
+        "pool": stock_pool,
+    }
+
+
 # ═══════════════════════════════════════════════════════════
 #  散点数据
 # ═══════════════════════════════════════════════════════════

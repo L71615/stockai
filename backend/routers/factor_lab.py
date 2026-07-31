@@ -7,6 +7,7 @@ from services.factor_lab import (
     compute_factor_leaderboard,
     compute_factor_clustering,
     compute_factor_contribution,
+    compute_parallel_coordinates,
     compute_quantile_returns,
     compute_correlation_matrix,
     compute_scatter_data,
@@ -103,6 +104,28 @@ def get_contribution(
     except Exception as e:
         logger.error("contribution failed: %s", str(e), exc_info=True)
         raise HTTPException(500, f"瀑布图计算失败: {str(e)[:200]}")
+
+
+@router.post("/parallel-coordinates")
+def get_parallel_coords(
+    factors: list[str] = Query(..., description="因子名列表(2-8 个)"),
+    pool: str = Query("hs300"),
+    as_of_date: str | None = Query(None, description="截面日 YYYY-MM-DD"),
+    lookback_days: int = Query(120, ge=30, le=365),
+    top_n: int | None = Query(200, description="最多返回多少只股票(默认 200)"),
+):
+    """平行坐标 — 多因子选股可视化(每只股票 1 条折线跨多因子轴)"""
+    try:
+        return compute_parallel_coordinates(
+            factors=factors,
+            stock_pool=pool,
+            as_of_date=as_of_date,
+            lookback_days=lookback_days,
+            top_n=top_n,
+        )
+    except Exception as e:
+        logger.error("parallel coordinates failed: %s", str(e), exc_info=True)
+        raise HTTPException(500, f"平行坐标计算失败: {str(e)[:200]}")
 
 
 @router.post("/quantile-returns")
