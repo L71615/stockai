@@ -761,6 +761,172 @@ def compute_correlation_matrix(factor_names: list[str], stock_pool: str = "all",
     }
 
 
+# ═══════════════════════════════════════════════════════════════
+#  层次聚类 (P1-1) — 把 N 个因子按相关性自动聚成树状图
+#
+#  算法 (scipy 标准):
+#    1. 算因子相关性矩阵
+#    2. 转距离矩阵: d = 1 - |corr| (避免 -1~1 映射到 0~2 不直观)
+#    3. linkage(method='average') — 平均连接(对噪声稳健)
+#    4. fcluster 切簇(或保留完整树给前端)
+#
+#  返回:
+#    - tree: 嵌套 dict 树状结构,前端可直接渲染 SVG
+#    - groups: 按 distance 阈值切出的扁平簇列表
+# ═══════════════════════════════════════════════════════════════
+
+
+def compute_factor_clustering(
+    factors: list[str],
+    stock_pool: str = "all",
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    distance_threshold: float = 0.3,
+) -> dict:
+    """层次聚类树 — 把相似因子归组,解决"55 因子一团乱麻"问题
+
+    Args:
+        factors: 因子列表
+        distance_threshold: 切簇阈值(0~1)
+          - 0.2: 严格聚类(只把强相关因子合一起,适合去重)
+          - 0.3: 默认(经验值)
+          - 0.5: 宽松聚类(把中等相关的也合一起,适合分类)
+
+    Returns:
+        {
+            'factors': [...],
+            'tree': {id, children: [{name, distance, cluster_id}, ...]},
+            'groups': [{id, factors: [...], avg_corr, distance}, ...],
+            'summary': {n_factors, n_clusters, method, threshold},
+            'period': {start, end},
+            'pool': ...,
+        }
+    """
+    if len(factors) < 2:
+        return {
+            "error": "至少需要 2 个因子才能聚类",
+            "factors": factors, "tree": {}, "groups": [],
+        }
+
+    # 1. 复用相关性计算
+    corr_result = compute_correlation_matrix(
+        factors, stock_pool, start_date, end_date,
+    )
+    factor_names: list[str] = corr_result.get("factors", [])
+    matrix: list[list[float]] = corr_result.get("matrix", [])
+
+    if len(factor_names) < 2 or not matrix:
+        return {
+            "error": "相关性矩阵为空(数据不足)",
+            "factors": factor_names, "tree": {}, "groups": [],
+        }
+
+    # 2. 转距离矩阵 (1 - |corr|): corr=1 → dist=0, corr=0 → dist=1, corr=-1 → dist=2
+    n = len(factor_names)
+    import numpy as np
+    corr_arr = np.array(matrix, dtype=float)
+    dist = 1.0 - np.abs(corr_arr)
+    np.fill_diagonal(dist, 0.0)
+
+    # 3. linkage + fcluster
+    try:
+        from scipy.cluster.hierarchy import linkage, fcluster
+        from scipy.spatial.distance import squareform
+    except ImportError:
+        return {
+            "error": "scipy 未安装,请 pip install scipy",
+            "factors": factor_names, "tree": {}, "groups": [],
+        }
+
+    # squareform 要求严格的下三角(对角为 0)
+    condensed = squareform(dist, checks=False)
+    Z = linkage(condensed, method="average")
+    cluster_labels = fcluster(Z, t=distance_threshold, criterion="distance")
+
+    # 4. 按簇号分组
+    groups_dict: dict[int, list[int]] = {}
+    for i, label in enumerate(cluster_labels):
+        groups_dict.setdefault(int(label), []).append(i)
+
+    # 5. 扁平簇列表(用于卡片展示)
+    groups_list = []
+    for cid, idxs in sorted(groups_dict.items(), key=lambda x: min(x[1])):
+        # 计算簇内平均相关性
+        if len(idxs) >= 2:
+            sub_corr = corr_arr[np.ix_(idxs, idxs)]
+            # 上三角均值(排除对角)
+            triu = sub_corr[np.triu_indices(len(idxs), k=1)]
+            avg_corr = float(np.mean(np.abs(triu)))
+        else:
+            avg_corr = 1.0  # 单因子簇
+
+        groups_list.append({
+            "id": int(cid),
+            "factors": [factor_names[i] for i in idxs],
+            "size": len(idxs),
+            "avg_corr": round(avg_corr, 4),
+            "distance": round(1.0 - avg_corr, 4),
+        })
+
+    # 6. 构建嵌套树结构(供前端 SVG 渲染)
+    # linkage 矩阵的 row i 合并 cluster i+n,连接 (Z[i,0], Z[i,1]) at Z[i,2]
+    # 我们用 cluster_id = i + n 表示非叶节点
+    tree = _build_cluster_tree(factor_names, Z)
+
+    return {
+        "factors": factor_names,
+        "tree": tree,
+        "groups": groups_list,
+        "summary": {
+            "n_factors": n,
+            "n_clusters": len(groups_list),
+            "method": "average",
+            "threshold": distance_threshold,
+        },
+        "period": corr_result.get("start_date") or start_date,
+        "end_date": corr_result.get("end_date"),
+        "pool": stock_pool,
+        "stock_count": corr_result.get("stock_count", 0),
+    }
+
+
+def _build_cluster_tree(factor_names: list[str], Z) -> dict:
+    """从 scipy linkage 矩阵构建嵌套 dict 树
+
+    叶子节点: {"name": factor_name, "cluster_id": -i-1}
+    内部节点: {"cluster_id": i, "distance": float, "children": [...]}
+    根节点: {"cluster_id": "root", "children": [...]}
+    """
+    n = len(factor_names)
+    # 创建所有节点
+    nodes: dict[int, dict] = {}
+    for i, name in enumerate(factor_names):
+        nodes[i] = {
+            "name": name,
+            "cluster_id": -(i + 1),  # 负数表示叶
+            "distance": 0.0,
+            "is_leaf": True,
+        }
+
+    # 自底向上合并
+    for i, (left, right, dist, size) in enumerate(Z):
+        left = int(left)
+        right = int(right)
+        new_id = n + i
+        nodes[new_id] = {
+            "cluster_id": new_id,
+            "distance": round(float(dist), 4),
+            "size": int(size),
+            "is_leaf": False,
+            "children": [nodes[left], nodes[right]],
+        }
+
+    root_id = n + len(Z) - 1
+    root = nodes[root_id]
+    root["cluster_id"] = "root"
+    return root
+
+
 # ═══════════════════════════════════════════════════════════
 #  散点数据
 # ═══════════════════════════════════════════════════════════

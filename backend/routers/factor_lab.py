@@ -5,6 +5,7 @@ from fastapi import APIRouter, HTTPException, Query
 from services.factor_lab import (
     compute_factor_metrics,
     compute_factor_leaderboard,
+    compute_factor_clustering,
     compute_quantile_returns,
     compute_correlation_matrix,
     compute_scatter_data,
@@ -101,6 +102,28 @@ def get_quantile_returns(
     except Exception as e:
         logger.error("quantile returns failed: %s", str(e), exc_info=True)
         raise HTTPException(500, f"分位数收益计算失败: {str(e)[:200]}")
+
+
+@router.post("/clustering")
+def get_clustering(
+    factors: list[str] = Query(..., description="因子名列表"),
+    pool: str = Query("all"),
+    start_date: str | None = Query(None),
+    end_date: str | None = Query(None),
+    distance_threshold: float = Query(0.3, ge=0.1, le=0.9, description="聚类距离阈值"),
+):
+    """层次聚类树 — 把相似因子自动归组"""
+    try:
+        return compute_factor_clustering(
+            factors=factors,
+            stock_pool=pool,
+            start_date=start_date,
+            end_date=end_date,
+            distance_threshold=distance_threshold,
+        )
+    except Exception as e:
+        logger.error("clustering failed: %s", str(e), exc_info=True)
+        raise HTTPException(500, f"聚类失败: {str(e)[:200]}")
 
 
 @router.post("/correlation")

@@ -11,7 +11,7 @@ import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
 import { apiGet, apiPost } from "@/lib/auth"
 import { cn } from "@/lib/utils"
-import { IconChartBar, IconGridDots, IconChartScatter, IconFlask, IconPlayerPlay, IconCheck, IconBrain, IconActivity, IconTrophy, IconChartLine } from "@tabler/icons-react"
+import { IconChartBar, IconGridDots, IconChartScatter, IconFlask, IconPlayerPlay, IconCheck, IconBrain, IconActivity, IconTrophy, IconChartLine, IconBinaryTree } from "@tabler/icons-react"
 import {
   ScatterChart, Scatter, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
 } from "recharts"
@@ -158,6 +158,39 @@ interface QuantileResult {
   groups: QuantileGroup[]
   long_short: { daily_ret: number[]; cumret: number[] }
   summary: QuantileSummary
+  error?: string
+}
+
+// 层次聚类类型 (P1-1)
+interface ClusterTreeNode {
+  name?: string
+  cluster_id: number | string
+  distance: number
+  size?: number
+  is_leaf?: boolean
+  children?: ClusterTreeNode[]
+}
+interface ClusterGroup {
+  id: number
+  factors: string[]
+  size: number
+  avg_corr: number
+  distance: number
+}
+interface ClusteringResult {
+  factors: string[]
+  tree: ClusterTreeNode
+  groups: ClusterGroup[]
+  summary: {
+    n_factors: number
+    n_clusters: number
+    method: string
+    threshold: number
+  }
+  period?: string
+  end_date?: string
+  pool: string
+  stock_count: number
   error?: string
 }
 
@@ -1312,6 +1345,307 @@ function QuantileReturnsTab({
 }
 
 
+// ═══════════════════════════════════════════════════════════
+//  Tab 5 (新): 层次聚类树 — 自渲染 SVG 树状图 + 簇卡片
+// ═══════════════════════════════════════════════════════════
+
+function ClusteringTab({
+  factors, pool, setPool, startDate, setStartDate, endDate, setEndDate,
+}: {
+  factors: FactorInfo[]
+  pool: string; setPool: (v: string) => void
+  startDate: string; setStartDate: (v: string) => void
+  endDate: string; setEndDate: (v: string) => void
+}) {
+  const [selectedFactors, setSelectedFactors] = useState<string[]>(
+    ["ret_5d", "ret_10d", "ret_20d", "rsi_14", "macd_signal", "volatility_20", "std20", "std5"]
+  )
+  const [threshold, setThreshold] = useState(0.3)
+  const [data, setData] = useState<ClusteringResult | null>(null)
+  const [loading, setLoading] = useState(false)
+
+  const run = async () => {
+    setLoading(true)
+    try {
+      const params = new URLSearchParams({
+        factors: selectedFactors.join(","),
+        pool, start_date: startDate, end_date: endDate,
+        distance_threshold: String(threshold),
+      })
+      const res = await apiPost<ClusteringResult>(`/api/factor-lab/clustering?${params}`)
+      setData(res)
+    } catch (e) {
+      console.error(e)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const toggleFactor = (name: string) => {
+    setSelectedFactors((prev) =>
+      prev.includes(name) ? prev.filter((n) => n !== name) : [...prev, name]
+    )
+  }
+
+  return (
+    <div className="space-y-4">
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm flex items-center gap-2">
+            <IconBinaryTree className="size-4" />
+            层次聚类 — 把相似因子自动归组
+          </CardTitle>
+          <CardDescription className="text-xs">
+            基于因子相关性 + scipy average linkage,距离阈值越小聚类越严格
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="flex flex-wrap items-end gap-3">
+            <div className="space-y-1">
+              <label className="text-[10px] text-muted-foreground">股票池</label>
+              <Select value={pool} onValueChange={setPool}>
+                <SelectTrigger className="h-8 w-24 text-xs"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">全部</SelectItem>
+                  <SelectItem value="hs300">HS300</SelectItem>
+                  <SelectItem value="csi500">CSI500</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1">
+              <label className="text-[10px] text-muted-foreground">起始</label>
+              <Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="h-8 w-32 text-xs" />
+            </div>
+            <div className="space-y-1">
+              <label className="text-[10px] text-muted-foreground">结束</label>
+              <Input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="h-8 w-32 text-xs" />
+            </div>
+            <div className="space-y-1">
+              <label className="text-[10px] text-muted-foreground">距离阈值</label>
+              <Select value={String(threshold)} onValueChange={(v) => setThreshold(parseFloat(v))}>
+                <SelectTrigger className="h-8 w-24 text-xs"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="0.2">0.2 严格</SelectItem>
+                  <SelectItem value="0.3">0.3 默认</SelectItem>
+                  <SelectItem value="0.5">0.5 宽松</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <Button onClick={run} disabled={loading || selectedFactors.length < 2} size="sm">
+              {loading ? "聚类中..." : "跑聚类"}
+            </Button>
+          </div>
+
+          {/* 因子多选 */}
+          <div className="border border-border p-2 max-h-32 overflow-y-auto">
+            <div className="text-[10px] text-muted-foreground mb-1">
+              选因子({selectedFactors.length}/{factors.length}):
+            </div>
+            <div className="flex flex-wrap gap-1">
+              {factors.map((f) => (
+                <button
+                  key={f.name}
+                  onClick={() => toggleFactor(f.name)}
+                  className={`px-1.5 py-0.5 text-[10px] border ${
+                    selectedFactors.includes(f.name)
+                      ? "bg-primary/15 border-primary text-foreground"
+                      : "border-border text-muted-foreground hover:border-primary/50"
+                  }`}
+                >
+                  {f.name}
+                </button>
+              ))}
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {loading ? (
+        <Card><CardContent className="py-8"><Skeleton className="h-64 w-full" /></CardContent></Card>
+      ) : data?.error ? (
+        <Card><CardContent className="py-8 text-xs text-destructive text-center">{data.error}</CardContent></Card>
+      ) : data && data.tree && data.tree.children ? (
+        <>
+          {/* 摘要 */}
+          <div className="grid grid-cols-3 gap-2">
+            <MetricBox label="有效因子" value={String(data.summary.n_factors)} />
+            <MetricBox label="聚类簇数" value={String(data.summary.n_clusters)} />
+            <MetricBox label="阈值 (distance)" value={String(data.summary.threshold)} hint="越小越严格" />
+          </div>
+
+          {/* 簇卡片 + Dendrogram 并排 */}
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+            {/* 簇列表 */}
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm">聚类簇列表</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-2 max-h-[500px] overflow-y-auto">
+                {data.groups.map((g) => (
+                  <div key={g.id} className="border border-border p-2 text-xs">
+                    <div className="flex items-center justify-between">
+                      <span className="font-medium">簇 #{g.id}</span>
+                      <span className="text-[10px] text-muted-foreground">
+                        {g.size} 因子 · |corr|={g.avg_corr.toFixed(2)}
+                      </span>
+                    </div>
+                    <div className="flex flex-wrap gap-1 mt-1">
+                      {g.factors.map((f) => (
+                        <span key={f} className="px-1 py-0.5 text-[9px] bg-muted border border-border">
+                          {f}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+
+            {/* Dendrogram SVG */}
+            <Card className="lg:col-span-2">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm">聚类树 (Dendrogram)</CardTitle>
+                <CardDescription className="text-xs">
+                  越早合并 = 相关性越强;叶节点 = 因子,横线高度 = 距离
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <Dendrogram tree={data.tree} factors={data.factors} />
+              </CardContent>
+            </Card>
+          </div>
+        </>
+      ) : null}
+    </div>
+  )
+}
+
+
+// 自渲染 Dendrogram SVG — 走树结构 + 计算每个节点的 x/y
+function Dendrogram({ tree, factors }: { tree: ClusterTreeNode; factors: string[] }) {
+  // 1. 给每个叶节点分配 x 坐标(0..n-1)
+  const leafOrder: string[] = []
+  function collectLeaves(node: ClusterTreeNode) {
+    if (node.is_leaf && node.name) {
+      leafOrder.push(node.name)
+    } else if (node.children) {
+      node.children.forEach(collectLeaves)
+    }
+  }
+  collectLeaves(tree)
+
+  const nLeaves = Math.max(leafOrder.length, 1)
+  const leafIndex = new Map(leafOrder.map((n, i) => [n, i]))
+
+  // 2. 后序遍历计算每个节点的 x/y
+  // x: 叶子 = leafIndex, 内部 = 子节点 x 平均
+  // y: 叶子 = 0, 内部 = max(子节点 y) + 子节点的距离差
+  type Pos = { x: number; y: number; node: ClusterTreeNode }
+  const positions = new Map<string | number, Pos>()
+  function assignPos(node: ClusterTreeNode): { x: number; y: number } {
+    if (node.is_leaf && node.name) {
+      const x = leafIndex.get(node.name) ?? 0
+      const y = 0
+      positions.set(node.cluster_id, { x, y, node })
+      return { x, y }
+    }
+    if (!node.children) return { x: 0, y: 0 }
+
+    const childPositions = node.children.map((c) => {
+      const p = assignPos(c)
+      return { ...p, node: c }
+    })
+    const x = childPositions.reduce((s, c) => s + c.x, 0) / childPositions.length
+    const maxChildY = Math.max(...childPositions.map((c) => c.y))
+    const y = maxChildY + (node.distance || 0.05) * 5  // 缩放距离为视觉间距
+    positions.set(node.cluster_id, { x, y, node })
+    return { x, y }
+  }
+  assignPos(tree)
+
+  // 3. 画 SVG
+  const padding = 16
+  const labelWidth = 100
+  const width = 600
+  const height = Math.max(120, nLeaves * 28)
+  const xScale = (width - labelWidth - padding) / Math.max(nLeaves - 1, 1)
+  const yScale = (height - padding * 2) / Math.max(tree.distance * 6, 1)
+
+  const toX = (x: number) => padding + x * xScale
+  const toY = (y: number) => height - padding - y * yScale
+
+  // 4. 收集所有 edges (父子连线) + leaf labels
+  const edges: { x1: number; y1: number; x2: number; y2: number; key: string }[] = []
+  function drawEdges(node: ClusterTreeNode) {
+    if (!node.children || node.children.length === 0) return
+    const parentPos = positions.get(node.cluster_id)!
+    for (const child of node.children) {
+      const cp = positions.get(child.cluster_id)!
+      // L 形连线: 父 -> 父的 y -> 子的 y -> 子
+      const px = toX(parentPos.x)
+      const py = toY(parentPos.y)
+      const cx = toX(cp.x)
+      const cy = toY(cp.y)
+      // 父节点横线
+      edges.push({ x1: cx, y1: py, x2: px, y2: py, key: `h-${String(node.cluster_id)}-${String(child.cluster_id)}` })
+      // 子节点竖线
+      edges.push({ x1: cx, y1: py, x2: cx, y2: cy, key: `v-${String(node.cluster_id)}-${String(child.cluster_id)}` })
+      drawEdges(child)
+    }
+  }
+  drawEdges(tree)
+
+  return (
+    <div className="overflow-x-auto">
+      <svg width={width} height={height} className="text-foreground">
+        {/* edges */}
+        {edges.map((e) => (
+          <line
+            key={e.key}
+            x1={e.x1} y1={e.y1} x2={e.x2} y2={e.y2}
+            stroke="currentColor"
+            strokeWidth={1}
+            opacity={0.4}
+          />
+        ))}
+        {/* 叶节点 labels */}
+        {leafOrder.map((name, i) => {
+          const x = toX(i)
+          const y = toY(0)
+          return (
+            <g key={name}>
+              <circle cx={x} cy={y} r={3} fill="currentColor" />
+              <text
+                x={x + 6}
+                y={y + 3}
+                fontSize={10}
+                fill="currentColor"
+                fontFamily="monospace"
+              >
+                {name}
+              </text>
+            </g>
+          )
+        })}
+        {/* 根节点标尺 */}
+        <line
+          x1={padding}
+          y1={height - padding}
+          x2={padding + xScale * (nLeaves - 1)}
+          y2={height - padding}
+          stroke="currentColor"
+          strokeWidth={0.5}
+          opacity={0.2}
+        />
+        <text x={padding} y={height - 4} fontSize={9} fill="currentColor" opacity={0.5}>
+          distance →
+        </text>
+      </svg>
+    </div>
+  )
+}
+
+
 function MetricBox({ label, value, highlight = false, positive, hint }: { label: string; value: string; highlight?: boolean; positive?: boolean; hint?: string }) {
   const valueColor = positive === undefined ? "" : positive ? "text-red-400" : "text-emerald-400"
   return (
@@ -1472,14 +1806,15 @@ export default function FactorLabPage() {
       <SiteHeader title="因子实验室" />
       <div className="flex flex-1 flex-col overflow-auto p-4 lg:p-6 space-y-4">
         <Tabs defaultValue="ic" className="space-y-4">
-          <TabsList className="grid w-full max-w-3xl grid-cols-7">
-            <TabsTrigger value="ic" className="text-xs"><IconChartBar className="size-3.5 mr-1" />IC 分析</TabsTrigger>
+          <TabsList className="grid w-full max-w-4xl grid-cols-8">
+            <TabsTrigger value="ic" className="text-xs"><IconChartBar className="size-3.5 mr-1" />IC</TabsTrigger>
             <TabsTrigger value="leaderboard" className="text-xs"><IconTrophy className="size-3.5 mr-1" />排行</TabsTrigger>
             <TabsTrigger value="quantile" className="text-xs"><IconChartLine className="size-3.5 mr-1" />分位数</TabsTrigger>
+            <TabsTrigger value="clustering" className="text-xs"><IconBinaryTree className="size-3.5 mr-1" />聚类</TabsTrigger>
             <TabsTrigger value="correlation" className="text-xs"><IconGridDots className="size-3.5 mr-1" />相关性</TabsTrigger>
-            <TabsTrigger value="scatter" className="text-xs"><IconChartScatter className="size-3.5 mr-1" />散点图</TabsTrigger>
-            <TabsTrigger value="mining" className="text-xs"><IconFlask className="size-3.5 mr-1" />GP 挖掘</TabsTrigger>
-            <TabsTrigger value="ml" className="text-xs"><IconBrain className="size-3.5 mr-1" />ML 挖掘</TabsTrigger>
+            <TabsTrigger value="scatter" className="text-xs"><IconChartScatter className="size-3.5 mr-1" />散点</TabsTrigger>
+            <TabsTrigger value="mining" className="text-xs"><IconFlask className="size-3.5 mr-1" />GP</TabsTrigger>
+            <TabsTrigger value="ml" className="text-xs"><IconBrain className="size-3.5 mr-1" />ML</TabsTrigger>
           </TabsList>
           <TabsContent value="ic">
             <ICTab
@@ -1506,6 +1841,14 @@ export default function FactorLabPage() {
           </TabsContent>
           <TabsContent value="correlation">
             <CorrelationTab factors={factors} pool={pool} />
+          </TabsContent>
+          <TabsContent value="clustering">
+            <ClusteringTab
+              factors={factors}
+              pool={pool} setPool={setPool}
+              startDate={startDate} setStartDate={setStartDate}
+              endDate={endDate} setEndDate={setEndDate}
+            />
           </TabsContent>
           <TabsContent value="scatter">
             <ScatterTab factors={factors} pool={pool} />
