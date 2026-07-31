@@ -613,8 +613,11 @@ def _load_strategy_conditions(strategy_ids: list[str], param_overrides: dict | N
             info = registry.get(sid)
             if info is not None:
                 yaml_path = info.yaml_path
+            else:
+                # validate 通过但 get() 找不到(罕见 race)→ 走同一目录,保持路径一致
+                yaml_path = os.path.join(registry.strategies_dir, f"{sid}.yaml")
 
-        # Fallback: registry 不可用时,本地拼接路径
+        # Fallback: registry 不可用时(测试 mock 等),用 caller file 路径
         if yaml_path is None:
             strategies_dir = os.path.join(os.path.dirname(__file__), "..", "strategies")
             yaml_path = os.path.join(strategies_dir, f"{sid}.yaml")
@@ -1398,8 +1401,12 @@ def optimize_strategy_params(
     import itertools
     import random
 
-    # 1. 加载策略
-    strategies_dir = os.path.join(os.path.dirname(__file__), "..", "strategies")
+    # 1. 加载策略(v4.1.1: 走 registry 目录,与 loader 路径一致,支持测试 monkeypatch)
+    try:
+        from services.strategy_registry import get_registry
+        strategies_dir = get_registry().strategies_dir
+    except Exception:
+        strategies_dir = os.path.join(os.path.dirname(__file__), "..", "strategies")
     yaml_path = os.path.join(strategies_dir, f"{strategy_id}.yaml")
     if not os.path.exists(yaml_path):
         return {"error": f"策略文件不存在: {strategy_id}.yaml"}
@@ -1533,7 +1540,12 @@ def compare_strategies(
     if stock_codes is None or len(stock_codes) == 0:
         stock_codes = list(_DEFAULT_POOL)
 
-    strategies_dir = os.path.join(os.path.dirname(__file__), "..", "strategies")
+    # v4.1.1: 走 registry 目录,与 loader 路径一致
+    try:
+        from services.strategy_registry import get_registry
+        strategies_dir = get_registry().strategies_dir
+    except Exception:
+        strategies_dir = os.path.join(os.path.dirname(__file__), "..", "strategies")
     results = []
 
     for sid in strategy_ids:

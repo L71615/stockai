@@ -277,4 +277,64 @@ class TestBacktestIntegration:
         # 混合场景:turtle_s1 是真实存在的(不在 tmp dir 里),registry 校验时被视为 invalid。
         # 这暴露了 registry 与 loader 路径不一致,需要在更上层解决。
         # 这里只验证"至少 invalid_ids 被记 warning"。
-        # (真正的端到端测试用 monkeypatch 让 registry 和 loader 走同一目录)
+
+    def test_load_strategy_conditions_uses_registry_path(self, tmp_strategies_dir):
+        """端到端:loader 必须走 registry 的目录,而不是硬编码 backend/strategies/
+
+        修好路径一致后,应该能从 monkeypatch 后的 tmp dir 真正加载策略
+        (返回非 None 的条件树),而不是 fallback 到真实目录。
+        """
+        from services.strategy_backtest_service import _load_strategy_conditions
+
+        # 加载 tmp dir 里的 turtle (VALID_YAML 写的 id 就是 'turtle')
+        result = _load_strategy_conditions(["turtle"])
+        assert result is not None, (
+            "loader 应走 registry 的 tmp dir,实际 fallback 到真实 backend/strategies/ "
+            "导致 tmp dir 里的 'turtle' 找不到 → 返回 None"
+        )
+        # 验证条件被正确解析
+        assert result["logic"] == "AND"
+        assert len(result["conditions"]) == 1
+        assert result["conditions"][0]["field"] == "close"
+
+    def test_optimize_strategy_params_uses_registry_path(self, tmp_strategies_dir, monkeypatch):
+        """端到端:optimize_strategy_params 应走 registry 的目录(只验路径,不动真回测)"""
+        from services import strategy_backtest_service as svc
+
+        # mock 掉回测引擎,避免依赖 DB
+        monkeypatch.setattr(
+            svc, "run_strategy_backtest",
+            lambda **kwargs: {
+                "sharpe_ratio": 1.5, "max_drawdown": 0.1,
+                "win_rate": 0.55, "profit_factor": 1.8,
+                "total_return": 0.2, "trade_count": 10,
+            },
+        )
+
+        result = svc.optimize_strategy_params(strategy_id="turtle", top_n=2)
+        assert "error" not in result, (
+            f"应能从 tmp dir 加载 turtle,实际: {result.get('error')}"
+        )
+        assert result["strategy_id"] == "turtle"
+        assert result["total_combinations"] >= 1
+
+    def test_compare_strategies_uses_registry_path(self, tmp_strategies_dir, monkeypatch):
+        """端到端:compare_strategies 应走 registry 的目录(只验路径,不动真回测)"""
+        from services import strategy_backtest_service as svc
+
+        # mock 掉回测引擎,避免依赖 DB
+        monkeypatch.setattr(
+            svc, "run_strategy_backtest",
+            lambda **kwargs: {
+                "sharpe_ratio": 1.0, "max_drawdown": 0.15,
+                "total_return": 0.1, "trade_count": 5,
+                "strategy_name": kwargs.get("strategy_ids", ["?"])[0],
+            },
+        )
+
+        result = svc.compare_strategies(strategy_ids=["turtle", "momentum"])
+        assert "error" not in result, (
+            f"应能从 tmp dir 加载多个策略,实际: {result.get('error')}"
+        )
+        assert "strategies" in result
+        assert len(result["strategies"]) == 2

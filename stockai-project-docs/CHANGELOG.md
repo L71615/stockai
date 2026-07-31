@@ -5,6 +5,20 @@
 
 ---
 
+## 2026-07-31 — v4.1.1 patch2 (路径一致 + dev DB seed)
+
+### 🐛 fix: 策略加载路径与 registry 一致
+- **问题**: `optimize_strategy_params` / `compare_strategies` 硬编码 `os.path.dirname(__file__)/../strategies`,测试 monkeypatch `registry.strategies_dir` 后两边路径不一致 → 无法端到端测试
+- **修复**: 3 处(`_load_strategy_conditions` fallback / `optimize_strategy_params` / `compare_strategies`)统一走 `registry.strategies_dir`,保留 caller file 路径 fallback
+- **测试**: 新增 3 个端到端用例(`test_strategy_registry.py` 18/18 passed)
+
+### 📊 dev DB 5 年一次性 seed
+- `index_sync_service.run_full_seed()` 6/6 指数成功 — `index_kline` 1250 行/指数 (2021-06-04 ~ 2026-07-30)
+- v4.1 真实基准(沪深300/中证500/创业板等)从 fallback 切到真实 series
+- ETF seed 因东方财富限频 7/11 失败,稍后重试(关键 Index 表已就位)
+
+---
+
 ## 2026-07-30 — v4.1.1 patch (策略注册 + 冲击成本修复)
 
 ### 🆕 YAML 策略注册中心 (移植自 OSS quant-trading-system)
