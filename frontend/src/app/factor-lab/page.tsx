@@ -11,9 +11,9 @@ import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
 import { apiGet, apiPost } from "@/lib/auth"
 import { cn } from "@/lib/utils"
-import { IconChartBar, IconGridDots, IconChartScatter, IconFlask, IconPlayerPlay, IconCheck, IconBrain, IconActivity } from "@tabler/icons-react"
+import { IconChartBar, IconGridDots, IconChartScatter, IconFlask, IconPlayerPlay, IconCheck, IconBrain, IconActivity, IconTrophy, IconChartLine } from "@tabler/icons-react"
 import {
-  ScatterChart, Scatter, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+  ScatterChart, Scatter, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
 } from "recharts"
 
 // ═══════════════════════════════════════════════════════════
@@ -110,6 +110,55 @@ interface LifecycleStatus {
   count: number
   summary: { active: number; warning: number; retired: number }
   factors: LifecycleFactor[]
+}
+
+// 排行榜类型 (P0-1)
+interface LeaderboardRow {
+  name: string
+  ic_mean: number
+  ic_std: number
+  ir: number
+  win_rate: number
+  turnover: number
+  decay_score: number | null
+  decay_status: string
+  decay_color: "green" | "yellow" | "red" | "gray"
+  decay_label: string
+  decay_pct: number | null
+  valid_days: number
+}
+interface LeaderboardResult {
+  period: { start: string; end: string }
+  pool: string
+  stock_count: number
+  total: number
+  rows: LeaderboardRow[]
+}
+
+// 分位数收益类型 (P0-2)
+interface QuantileGroup {
+  group: number
+  label: string
+  daily_ret: number[]
+  cumret: number[]
+}
+interface QuantileSummary {
+  q1_cumret: number
+  q5_cumret: number
+  long_short_cumret: number
+  monotonic: boolean
+  long_short_sharpe: number
+}
+interface QuantileResult {
+  factor: string
+  period: { start: string; end: string }
+  pool: string
+  n_groups: number
+  dates: string[]
+  groups: QuantileGroup[]
+  long_short: { daily_ret: number[]; cumret: number[] }
+  summary: QuantileSummary
+  error?: string
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -913,6 +962,356 @@ function MlMiningTab({ pool }: { pool: string }) {
   )
 }
 
+// ═══════════════════════════════════════════════════════════
+//  Tab 7 (新): 全因子排行榜 — 一张可排序表 + 🟢🟡🔴 状态徽章
+// ═══════════════════════════════════════════════════════════
+
+function LeaderboardTab({
+  pool, setPool, startDate, setStartDate, endDate, setEndDate,
+}: {
+  pool: string; setPool: (v: string) => void
+  startDate: string; setStartDate: (v: string) => void
+  endDate: string; setEndDate: (v: string) => void
+}) {
+  const [data, setData] = useState<LeaderboardResult | null>(null)
+  const [loading, setLoading] = useState(false)
+  // 列排序状态: 默认按 |ir| desc
+  const [sortKey, setSortKey] = useState<"ir" | "ic_mean" | "win_rate" | "turnover" | "decay_score">("ir")
+  const [sortDesc, setSortDesc] = useState(true)
+
+  const run = async () => {
+    setLoading(true)
+    try {
+      const params = new URLSearchParams({
+        pool, start_date: startDate, end_date: endDate,
+      })
+      const res = await apiGet<LeaderboardResult>(`/api/factor-lab/leaderboard?${params}`)
+      setData(res)
+    } catch (e) {
+      console.error(e)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const sorted = useMemo(() => {
+    if (!data) return []
+    const rows = [...data.rows]
+    rows.sort((a, b) => {
+      const va = sortKey === "ir" ? Math.abs(a.ir) : (a as any)[sortKey]
+      const vb = sortKey === "ir" ? Math.abs(b.ir) : (b as any)[sortKey]
+      const v = (va ?? -Infinity) - (vb ?? -Infinity)
+      return sortDesc ? -v : v
+    })
+    return rows
+  }, [data, sortKey, sortDesc])
+
+  const headerCell = (key: typeof sortKey, label: string, hint?: string) => (
+    <th
+      className="text-[10px] text-muted-foreground cursor-pointer hover:text-foreground"
+      onClick={() => {
+        if (sortKey === key) setSortDesc(!sortDesc)
+        else { setSortKey(key); setSortDesc(true) }
+      }}
+    >
+      {label} {sortKey === key && (sortDesc ? "↓" : "↑")}
+      {hint && <span className="block text-[8px] text-muted-foreground/60">{hint}</span>}
+    </th>
+  )
+
+  const decayBadge = (row: LeaderboardRow) => {
+    const colorMap = {
+      green: "bg-emerald-500/15 text-emerald-400 border-emerald-500/30",
+      yellow: "bg-yellow-500/15 text-yellow-400 border-yellow-500/30",
+      red: "bg-red-500/15 text-red-400 border-red-500/30",
+      gray: "bg-muted text-muted-foreground border-border",
+    } as const
+    const cls = colorMap[row.decay_color] ?? colorMap.gray
+    return (
+      <span className={`px-1.5 py-0.5 text-[9px] border ${cls}`}>
+        {row.decay_label || row.decay_status}
+      </span>
+    )
+  }
+
+  return (
+    <div className="space-y-4">
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm flex items-center gap-2">
+            <IconTrophy className="size-4" />
+            全因子排行榜 — IC / IR / Turnover / Decay
+          </CardTitle>
+          <CardDescription className="text-xs">
+            一张表看全部因子强度,按列点击排序
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="flex flex-wrap items-end gap-3">
+            <div className="space-y-1">
+              <label className="text-[10px] text-muted-foreground">股票池</label>
+              <Select value={pool} onValueChange={setPool}>
+                <SelectTrigger className="h-8 w-24 text-xs"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">全部</SelectItem>
+                  <SelectItem value="hs300">HS300</SelectItem>
+                  <SelectItem value="csi500">CSI500</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1">
+              <label className="text-[10px] text-muted-foreground">起始</label>
+              <Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="h-8 w-32 text-xs" />
+            </div>
+            <div className="space-y-1">
+              <label className="text-[10px] text-muted-foreground">结束</label>
+              <Input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="h-8 w-32 text-xs" />
+            </div>
+            <Button onClick={run} disabled={loading} size="sm">
+              {loading ? "计算中..." : "刷新排行榜"}
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      {loading ? (
+        <Card><CardContent className="py-8">
+          <Skeleton className="h-64 w-full" />
+        </CardContent></Card>
+      ) : data && data.total > 0 ? (
+        <Card>
+          <CardContent className="p-0">
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs tabular-nums">
+                <thead>
+                  <tr className="border-b border-border">
+                    <th className="text-left p-2 text-[10px] text-muted-foreground">#</th>
+                    <th className="text-left p-2 text-[10px] text-muted-foreground">因子</th>
+                    {headerCell("ir", "IR", "信息比率")}
+                    {headerCell("ic_mean", "IC Mean", "截面相关均值")}
+                    {headerCell("win_rate", "胜率", "IC>0 占比")}
+                    {headerCell("turnover", "换手", "IC 自相关倒数")}
+                    {headerCell("decay_score", "Decay", "衰减评分 0-1")}
+                    <th className="text-[10px] text-muted-foreground">状态</th>
+                    <th className="text-[10px] text-muted-foreground">有效天数</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {sorted.map((row, i) => (
+                    <tr key={row.name} className="border-b border-border/30 hover:bg-muted/30">
+                      <td className="p-2 text-muted-foreground">{i + 1}</td>
+                      <td className="p-2 font-medium">{row.name}</td>
+                      <td className={`p-2 ${Math.abs(row.ir) > 0.5 ? "text-emerald-400" : Math.abs(row.ir) > 0.3 ? "text-yellow-400" : "text-muted-foreground"}`}>
+                        {row.ir.toFixed(3)}
+                      </td>
+                      <td className="p-2">{row.ic_mean.toFixed(4)}</td>
+                      <td className="p-2">{(row.win_rate * 100).toFixed(1)}%</td>
+                      <td className="p-2">{(row.turnover * 100).toFixed(0)}%</td>
+                      <td className="p-2">{row.decay_score !== null ? row.decay_score.toFixed(2) : "—"}</td>
+                      <td className="p-2">{decayBadge(row)}</td>
+                      <td className="p-2 text-muted-foreground">{row.valid_days}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="p-2 text-[10px] text-muted-foreground border-t border-border">
+              共 {data.total} 个因子 · {data.stock_count} 只股票 · {data.period.start} ~ {data.period.end}
+            </div>
+          </CardContent>
+        </Card>
+      ) : data?.total === 0 ? (
+        <Card><CardContent className="py-8 text-xs text-muted-foreground text-center">
+          无有效因子(全部数据不足 30 天) — 拉长日期窗口重试
+        </CardContent></Card>
+      ) : null}
+    </div>
+  )
+}
+
+
+// ═══════════════════════════════════════════════════════════
+//  Tab 8 (新): 分位数收益 — alphalens 风格 5 等分累计收益图
+// ═══════════════════════════════════════════════════════════
+
+function QuantileReturnsTab({
+  factors, pool, setPool, startDate, setStartDate, endDate, setEndDate,
+}: {
+  factors: FactorInfo[]
+  pool: string; setPool: (v: string) => void
+  startDate: string; setStartDate: (v: string) => void
+  endDate: string; setEndDate: (v: string) => void
+}) {
+  const [factor, setFactor] = useState("ret_5d")
+  const [nGroups, setNGroups] = useState(5)
+  const [data, setData] = useState<QuantileResult | null>(null)
+  const [loading, setLoading] = useState(false)
+
+  const run = async () => {
+    setLoading(true)
+    try {
+      const params = new URLSearchParams({
+        factor, pool,
+        start_date: startDate, end_date: endDate,
+        n_groups: String(nGroups),
+      })
+      const res = await apiPost<QuantileResult>(`/api/factor-lab/quantile-returns?${params}`)
+      setData(res)
+    } catch (e) {
+      console.error(e)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  // 把 5 组 cumret + 多空对冲压成 wide format 给 Recharts
+  const chartData = useMemo(() => {
+    if (!data || data.error || !data.dates || !data.groups || !data.long_short) return []
+    return data.dates.map((d, i) => {
+      const row: Record<string, number | string> = { date: d }
+      for (const g of data.groups!) {
+        row[`Q${g.group}`] = g.cumret[i]
+      }
+      row["L/S"] = data.long_short.cumret[i]
+      return row
+    })
+  }, [data])
+
+  // 5 组颜色:Q1 红(最差) → Q5 绿(最好),中间过渡
+  const lineColors = ["#ef4444", "#f97316", "#eab308", "#84cc16", "#22c55e", "#3b82f6"]
+
+  return (
+    <div className="space-y-4">
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm flex items-center gap-2">
+            <IconChartLine className="size-4" />
+            分位数收益 — alphalens 风格 5 等分累计曲线
+          </CardTitle>
+          <CardDescription className="text-xs">
+            按因子值分组(Q1 最差 ~ Q5 最好),每日等权,次日卖出;L/S = Q5 - Q1 多空对冲
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="flex flex-wrap items-end gap-3">
+            <div className="space-y-1">
+              <label className="text-[10px] text-muted-foreground">因子</label>
+              <Select value={factor} onValueChange={setFactor}>
+                <SelectTrigger className="h-8 w-32 text-xs"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {factors.map((f) => (
+                    <SelectItem key={f.name} value={f.name}>{f.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1">
+              <label className="text-[10px] text-muted-foreground">分组数</label>
+              <Select value={String(nGroups)} onValueChange={(v) => setNGroups(parseInt(v))}>
+                <SelectTrigger className="h-8 w-16 text-xs"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {[2, 3, 5, 10].map((n) => (
+                    <SelectItem key={n} value={String(n)}>{n}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1">
+              <label className="text-[10px] text-muted-foreground">股票池</label>
+              <Select value={pool} onValueChange={setPool}>
+                <SelectTrigger className="h-8 w-24 text-xs"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">全部</SelectItem>
+                  <SelectItem value="hs300">HS300</SelectItem>
+                  <SelectItem value="csi500">CSI500</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1">
+              <label className="text-[10px] text-muted-foreground">起始</label>
+              <Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="h-8 w-32 text-xs" />
+            </div>
+            <div className="space-y-1">
+              <label className="text-[10px] text-muted-foreground">结束</label>
+              <Input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="h-8 w-32 text-xs" />
+            </div>
+            <Button onClick={run} disabled={loading} size="sm">
+              {loading ? "计算中..." : "跑分位数"}
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      {loading ? (
+        <Card><CardContent className="py-8">
+          <Skeleton className="h-80 w-full" />
+        </CardContent></Card>
+      ) : data?.error ? (
+        <Card><CardContent className="py-8 text-xs text-destructive text-center">
+          {data.error}
+        </CardContent></Card>
+      ) : data && !data.error && data.summary ? (
+        <>
+          {/* 摘要卡片 */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+            <MetricBox label="Q1 (最差组) 累计" value={`${(data.summary.q1_cumret * 100).toFixed(2)}%`} positive={data.summary.q1_cumret > 0} />
+            <MetricBox label="Q5 (最好组) 累计" value={`${(data.summary.q5_cumret * 100).toFixed(2)}%`} positive={data.summary.q5_cumret > 0} />
+            <MetricBox label="L/S 多空对冲" value={`${(data.summary.long_short_cumret * 100).toFixed(2)}%`} positive={data.summary.long_short_cumret > 0} highlight />
+            <MetricBox label="L/S Sharpe (年化)" value={data.summary.long_short_sharpe.toFixed(2)} positive={data.summary.long_short_sharpe > 0} />
+          </div>
+
+          {/* 主图 */}
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm">累计收益曲线 {data.summary.monotonic ? "🟢 单调上升" : "🟡 非单调"}</CardTitle>
+              <CardDescription className="text-xs">
+                {data.summary.monotonic
+                  ? "5 组期末收益严格递增 → 因子区分度优秀,可作为 alpha 信号"
+                  : "5 组收益非严格递增 → 因子区分度有限,需配合其他信号"}
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <ResponsiveContainer width="100%" height={360}>
+                <LineChart data={chartData}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#333" opacity={0.3} />
+                  <XAxis dataKey="date" tick={{ fontSize: 10 }} />
+                  <YAxis tick={{ fontSize: 10 }} tickFormatter={(v) => `${(v * 100).toFixed(0)}%`} />
+                  <Tooltip
+                    contentStyle={{ background: "#1a1a1a", border: "1px solid #333", fontSize: 11 }}
+                    formatter={(v: any) => `${(Number(v) * 100).toFixed(2)}%`}
+                  />
+                  <Legend wrapperStyle={{ fontSize: 11 }} />
+                  {data.groups.map((g, i) => (
+                    <Line
+                      key={g.group}
+                      type="monotone"
+                      dataKey={`Q${g.group}`}
+                      name={g.label}
+                      stroke={lineColors[i]}
+                      strokeWidth={1.5}
+                      dot={false}
+                    />
+                  ))}
+                  <Line
+                    type="monotone"
+                    dataKey="L/S"
+                    name="L/S 多空对冲"
+                    stroke={lineColors[5]}
+                    strokeWidth={2}
+                    strokeDasharray="4 2"
+                    dot={false}
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            </CardContent>
+          </Card>
+        </>
+      ) : null}
+    </div>
+  )
+}
+
+
 function MetricBox({ label, value, highlight = false, positive, hint }: { label: string; value: string; highlight?: boolean; positive?: boolean; hint?: string }) {
   const valueColor = positive === undefined ? "" : positive ? "text-red-400" : "text-emerald-400"
   return (
@@ -1073,8 +1472,10 @@ export default function FactorLabPage() {
       <SiteHeader title="因子实验室" />
       <div className="flex flex-1 flex-col overflow-auto p-4 lg:p-6 space-y-4">
         <Tabs defaultValue="ic" className="space-y-4">
-          <TabsList className="grid w-full max-w-2xl grid-cols-5">
+          <TabsList className="grid w-full max-w-3xl grid-cols-7">
             <TabsTrigger value="ic" className="text-xs"><IconChartBar className="size-3.5 mr-1" />IC 分析</TabsTrigger>
+            <TabsTrigger value="leaderboard" className="text-xs"><IconTrophy className="size-3.5 mr-1" />排行</TabsTrigger>
+            <TabsTrigger value="quantile" className="text-xs"><IconChartLine className="size-3.5 mr-1" />分位数</TabsTrigger>
             <TabsTrigger value="correlation" className="text-xs"><IconGridDots className="size-3.5 mr-1" />相关性</TabsTrigger>
             <TabsTrigger value="scatter" className="text-xs"><IconChartScatter className="size-3.5 mr-1" />散点图</TabsTrigger>
             <TabsTrigger value="mining" className="text-xs"><IconFlask className="size-3.5 mr-1" />GP 挖掘</TabsTrigger>
@@ -1082,6 +1483,21 @@ export default function FactorLabPage() {
           </TabsList>
           <TabsContent value="ic">
             <ICTab
+              factors={factors}
+              pool={pool} setPool={setPool}
+              startDate={startDate} setStartDate={setStartDate}
+              endDate={endDate} setEndDate={setEndDate}
+            />
+          </TabsContent>
+          <TabsContent value="leaderboard">
+            <LeaderboardTab
+              pool={pool} setPool={setPool}
+              startDate={startDate} setStartDate={setStartDate}
+              endDate={endDate} setEndDate={setEndDate}
+            />
+          </TabsContent>
+          <TabsContent value="quantile">
+            <QuantileReturnsTab
               factors={factors}
               pool={pool} setPool={setPool}
               startDate={startDate} setStartDate={setStartDate}

@@ -4,6 +4,8 @@ from fastapi import APIRouter, HTTPException, Query
 
 from services.factor_lab import (
     compute_factor_metrics,
+    compute_factor_leaderboard,
+    compute_quantile_returns,
     compute_correlation_matrix,
     compute_scatter_data,
     list_available_factors,
@@ -58,6 +60,47 @@ def get_ic_analysis(
     except Exception as e:
         logger.error("ic analysis failed: %s", str(e), exc_info=True)
         raise HTTPException(500, f"IC 计算失败: {str(e)[:200]}")
+
+
+@router.get("/leaderboard")
+def get_leaderboard(
+    pool: str = Query("all", description="股票池"),
+    start_date: str | None = Query(None),
+    end_date: str | None = Query(None),
+):
+    """全因子排行榜 — 一张表聚合 IC / IR / Turnover / Decay Score"""
+    try:
+        return compute_factor_leaderboard(
+            factors=None,  # 全因子
+            stock_pool=pool,
+            start_date=start_date,
+            end_date=end_date,
+        )
+    except Exception as e:
+        logger.error("leaderboard failed: %s", str(e), exc_info=True)
+        raise HTTPException(500, f"排行榜计算失败: {str(e)[:200]}")
+
+
+@router.post("/quantile-returns")
+def get_quantile_returns(
+    factor: str = Query(..., description="因子名"),
+    pool: str = Query("all"),
+    start_date: str | None = Query(None),
+    end_date: str | None = Query(None),
+    n_groups: int = Query(5, ge=2, le=10, description="分组数"),
+):
+    """分位数收益 — 教科书 quant 图:5 等分累计收益 + 多空对冲曲线"""
+    try:
+        return compute_quantile_returns(
+            factor_name=factor,
+            stock_pool=pool,
+            start_date=start_date,
+            end_date=end_date,
+            n_groups=n_groups,
+        )
+    except Exception as e:
+        logger.error("quantile returns failed: %s", str(e), exc_info=True)
+        raise HTTPException(500, f"分位数收益计算失败: {str(e)[:200]}")
 
 
 @router.post("/correlation")

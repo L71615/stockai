@@ -465,6 +465,236 @@ def compute_factor_metrics(factor_names: list[str], stock_pool: str = "all",
 #  相关性矩阵
 # ═══════════════════════════════════════════════════════════
 
+# ═══════════════════════════════════════════════════════════════
+#  因子排行榜 (P0-1) — 一张可排序表,聚合 IC / IR / Turnover / Decay
+#  复用 compute_factor_metrics 计算结果,按 |IR| 排序
+# ═══════════════════════════════════════════════════════════════
+
+
+def compute_factor_leaderboard(
+    factors: list[str] | None = None,
+    stock_pool: str = "all",
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+) -> dict:
+    """全因子排行榜 — 给前端做可排序表格
+
+    返回扁平列表,每行一个因子:
+      [{name, ic_mean, ic_std, ir, win_rate, turnover,
+        decay_score, decay_status, decay_color, valid_days}, ...]
+
+    前端按 ir / abs_ic / win_rate 排序,加 🟢🟡🔴 状态徽章。
+    """
+    if not factors:
+        factors = list(FACTOR_REGISTRY.keys())
+
+    logger.info(
+        "leaderboard: pool=%s, dates=%s..%s, factors=%d",
+        stock_pool, start_date, end_date, len(factors),
+    )
+
+    # 复用现有 IC 计算(已含 turnover / decay_score)
+    metrics = compute_factor_metrics(
+        factors, stock_pool, start_date, end_date,
+    )
+
+    rows = []
+    for name, m in metrics.get("factors", {}).items():
+        if "error" in m or m.get("valid_days", 0) < 30:
+            continue
+        decay = m.get("decay_score") or {}
+        rows.append({
+            "name": name,
+            "ic_mean": m.get("ic_mean", 0),
+            "ic_std": m.get("ic_std", 0),
+            "ir": m.get("ir", 0),
+            "win_rate": m.get("win_rate", 0),
+            "turnover": m.get("turnover", 0),
+            "decay_score": decay.get("score"),
+            "decay_status": decay.get("status", "unknown"),
+            "decay_color": decay.get("color", "gray"),
+            "decay_label": decay.get("label", ""),
+            "decay_pct": decay.get("decay_pct"),
+            "valid_days": m.get("valid_days", 0),
+        })
+
+    # 默认按 |IR| 降序(最强因子在前)
+    rows.sort(key=lambda r: abs(r["ir"]), reverse=True)
+
+    return {
+        "period": metrics.get("period", {}),
+        "pool": stock_pool,
+        "stock_count": metrics.get("stock_count", 0),
+        "total": len(rows),
+        "rows": rows,
+    }
+
+
+# ═══════════════════════════════════════════════════════════════
+#  分位数收益 (P0-2) — 教科书级 quant 图:5 等分累计收益 + 多空对冲
+#
+#  算法 (alphalens 风格):
+#    1. 对每个交易日,按因子值对股票排序
+#    2. 分成 N 组(Q1=最差 ~ QN=最好)
+#    3. 每组等权持有,次日 close-to-close 收益
+#    4. 累计收益 = cumprod(1 + daily_ret)
+#    5. 多空对冲 = QN - Q1 每日收益 → cumprod
+#
+#  这是验证因子"区分度"的金标准:一条单调上升的 5 条线 = 好因子
+# ═══════════════════════════════════════════════════════════════
+
+
+def compute_quantile_returns(
+    factor_name: str,
+    stock_pool: str = "all",
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    n_groups: int = 5,
+) -> dict:
+    """分位数收益图数据
+
+    Args:
+        factor_name: 因子名
+        n_groups: 分组数(默认 5)
+
+    Returns:
+        {
+            'factor': factor_name,
+            'period': {...},
+            'pool': ...,
+            'n_groups': 5,
+            'dates': [...],
+            'groups': [{'group': 1, 'label': ..., 'daily_ret': [...], 'cumret': [...]}, ...],
+            'long_short': {'daily_ret': [...], 'cumret': [...]},
+            'summary': {
+                'q1_cumret': ..., 'q5_cumret': ..., 'long_short_cumret': ...,
+                'monotonic': bool, 'long_short_sharpe': ...,
+            },
+        }
+    """
+    if not end_date:
+        end_date = datetime.now().strftime("%Y-%m-%d")
+    if not start_date:
+        start_date = (datetime.now() - timedelta(days=365)).strftime("%Y-%m-%d")
+
+    if factor_name not in FACTOR_REGISTRY:
+        return {"error": f"未知因子: {factor_name}"}
+
+    stock_codes = get_stock_pool(stock_pool)
+    if not stock_codes:
+        return {"error": "股票池为空", "groups": []}
+
+    panels = load_kline_panel(stock_codes, start_date, end_date)
+    if not panels:
+        return {"error": "K 线数据为空", "groups": []}
+
+    # 因子 panel (date × stock)
+    factor_panel = _build_factor_panel(panels, factor_name)
+    if factor_panel.empty:
+        return {"error": f"因子 {factor_name} 数据为空", "groups": []}
+
+    # 收益 panel (t 日因子 → t+1 日 close-to-close return)
+    return_panel = pd.DataFrame({
+        code: df["close"].pct_change() for code, df in panels.items()
+    })
+    fwd_ret = return_panel.shift(-1)
+
+    # 对每个交易日,把股票按因子值排序,分组成 N 等分
+    common_dates = factor_panel.index.intersection(fwd_ret.index)
+    if len(common_dates) < 30:
+        return {"error": f"有效日期不足: {len(common_dates)}", "groups": []}
+
+    daily_group_ret: dict[int, list[float]] = {g: [] for g in range(1, n_groups + 1)}
+    daily_dates: list[str] = []
+
+    for date in common_dates:
+        f_vals = factor_panel.loc[date].dropna()
+        r_vals = fwd_ret.loc[date].dropna() if date in fwd_ret.index else pd.Series()
+        common = f_vals.index.intersection(r_vals.index)
+        if len(common) < n_groups * 2:  # 每组至少 2 只
+            continue
+        f_aligned = f_vals[common]
+        r_aligned = r_vals[common]
+
+        try:
+            groups = pd.qcut(
+                f_aligned.rank(method="first"),
+                q=n_groups,
+                labels=False,
+            ) + 1  # 1-indexed
+        except ValueError:
+            continue  # qcut 失败(太多重复值)
+
+        for g in range(1, n_groups + 1):
+            mask = (groups == g)
+            if mask.sum() == 0:
+                continue
+            group_ret = float(r_aligned[mask].mean())
+            daily_group_ret[g].append(group_ret)
+
+        daily_dates.append(date.strftime("%Y-%m-%d"))
+
+    if not daily_dates:
+        return {"error": "无有效分组数据", "groups": []}
+
+    # 累计收益 (cumprod)
+    groups_result = []
+    for g in range(1, n_groups + 1):
+        rets = daily_group_ret[g]
+        cumret = np.cumprod(1 + np.array(rets)) - 1
+        groups_result.append({
+            "group": g,
+            "label": f"Q{g} ({'最差' if g == 1 else '最好' if g == n_groups else '中位'})",
+            "daily_ret": [round(float(r), 6) for r in rets],
+            "cumret": [round(float(c), 6) for c in cumret],
+        })
+
+    # 多空对冲: QN - Q1
+    long = np.array(daily_group_ret[n_groups])
+    short = np.array(daily_group_ret[1])
+    ls_daily = long - short
+    ls_cumret = np.cumprod(1 + ls_daily) - 1
+    long_short = {
+        "daily_ret": [round(float(r), 6) for r in ls_daily],
+        "cumret": [round(float(c), 6) for c in ls_cumret],
+    }
+
+    # 摘要 + 单调性检查
+    q1_final = groups_result[0]["cumret"][-1]
+    q5_final = groups_result[-1]["cumret"][-1]
+    ls_final = ls_cumret[-1]
+
+    # 单调: 5 组期末累计收益递增
+    final_cumrets = [g["cumret"][-1] for g in groups_result]
+    monotonic = all(
+        final_cumrets[i] <= final_cumrets[i + 1]
+        for i in range(n_groups - 1)
+    )
+
+    summary = {
+        "q1_cumret": round(float(q1_final), 4),
+        "q5_cumret": round(float(q5_final), 4),
+        "long_short_cumret": round(float(ls_final), 4),
+        "monotonic": bool(monotonic),
+        "long_short_sharpe": round(
+            float(np.mean(ls_daily) / np.std(ls_daily) * np.sqrt(252))
+            if np.std(ls_daily) > 1e-9 else 0.0,
+            3,
+        ),
+    }
+
+    return {
+        "factor": factor_name,
+        "period": {"start": start_date, "end": end_date},
+        "pool": stock_pool,
+        "n_groups": n_groups,
+        "dates": daily_dates,
+        "groups": groups_result,
+        "long_short": long_short,
+        "summary": summary,
+    }
+
+
 def compute_correlation_matrix(factor_names: list[str], stock_pool: str = "all",
                                 start_date: Optional[str] = None,
                                 end_date: Optional[str] = None) -> dict:
