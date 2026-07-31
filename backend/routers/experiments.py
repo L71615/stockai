@@ -43,6 +43,29 @@ def list_my_experiments(
     return {"experiments": rows, "count": len(rows)}
 
 
+@router.get("/champion-dryrun")
+def get_champion_dryrun(
+    pool: str = Query("hs300"),
+    lookback_days: int = Query(60, ge=30, le=365),
+    replace_threshold: float = Query(1.5, ge=1.0, le=5.0),
+):
+    """v4.2 候选 — Auto Champion Replacement DRY-RUN ONLY
+
+    列出所有未 promoted 的 factor_candidates,计算每个相对 champion 的 IR 比,
+    标记 would_replace。实际替换仍需人工审批,永不自动。
+    """
+    try:
+        from services.experiment_service import compute_champion_dry_run
+        return compute_champion_dry_run(
+            stock_pool=pool,
+            lookback_days=lookback_days,
+            replace_threshold=replace_threshold,
+        )
+    except Exception as e:
+        logger.error("champion dry-run failed: %s", str(e), exc_info=True)
+        raise HTTPException(500, f"Champion dry-run 失败: {str(e)[:200]}")
+
+
 @router.get("/{experiment_id}")
 def get_experiment_detail(experiment_id: str):
     user_id = get_current_user_id()

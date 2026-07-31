@@ -12,7 +12,7 @@ import { cn } from "@/lib/utils"
 import {
   IconPlayerPlay, IconRefresh, IconCircleCheck, IconAlertTriangle,
   IconCircleX, IconClock, IconInbox, IconHistory, IconScale,
-  IconTrendingUp,
+  IconTrendingUp, IconTrophy,
 } from "@tabler/icons-react"
 
 import { useProposals } from "@/hooks/use-pipeline"
@@ -50,6 +50,10 @@ export default function PipelinePage() {
                 <IconTrendingUp className="size-3.5 mr-1" />
                 影子组合
               </TabsTrigger>
+              <TabsTrigger value="champion">
+                <IconTrophy className="size-3.5 mr-1" />
+                Champion 干跑
+              </TabsTrigger>
             </TabsList>
 
             <TabsContent value="inbox" className="mt-4">
@@ -66,6 +70,9 @@ export default function PipelinePage() {
 
             <TabsContent value="shadow" className="mt-4">
               <ShadowView />
+            </TabsContent>
+            <TabsContent value="champion" className="mt-4">
+              <ChampionDryRunView />
             </TabsContent>
           </Tabs>
         </div>
@@ -793,6 +800,219 @@ function ShadowView() {
       </Card>
 
       <ShadowEquityChart portfolioId={activePortfolio?.portfolio_id ?? null} days={30} />
+    </div>
+  )
+}
+
+
+// ════════════════════════════════════════════════════════════
+//  v4.2 候选 — Auto Champion Replacement DRY-RUN ONLY
+//  永远 dry-run, 绝不自动替换。UI 显示 "would auto-replace" 标签
+// ════════════════════════════════════════════════════════════
+
+interface ChampionDryRunCandidate {
+  candidate_id: number
+  expr_text: string
+  ir: number | null
+  ic_mean: number | null
+  win_rate: number | null
+  valid_days: number
+  would_replace: boolean
+  rank: number | null
+  reason: string
+  created_at: string
+  run_id: string | null
+}
+
+function ChampionDryRunView() {
+  const [threshold, setThreshold] = useState(1.5)
+  const [data, setData] = useState<any>(null)
+  const [loading, setLoading] = useState(false)
+  const [topN, setTopN] = useState(20)
+
+  const run = async () => {
+    setLoading(true)
+    try {
+      const params = new URLSearchParams({ replace_threshold: String(threshold) })
+      const res = await apiGet<any>(`/api/pipeline/experiments/champion-dryrun?${params}`)
+      setData(res)
+    } catch (e) {
+      console.error(e)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <div className="space-y-4">
+      {/* 安全警示 */}
+      <Card className="border-yellow-500/30 bg-yellow-500/5">
+        <CardContent className="py-3 text-xs flex items-start gap-2">
+          <IconAlertTriangle className="size-4 text-yellow-500 flex-shrink-0 mt-0.5" />
+          <div>
+            <div className="font-medium text-yellow-500 mb-1">DRY-RUN ONLY — 永不自动替换</div>
+            <div className="text-muted-foreground">
+              v4.2 候选功能(TODOS.md #6)。实际替换仍需走现有审批流,本视图仅展示
+              &quot;if enabled would auto-replace&quot; 评估,不执行任何动作。
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base flex items-center gap-2">
+            <IconTrophy className="size-4" />
+            Champion vs 候选因子 — 替换价值评估
+          </CardTitle>
+          <CardDescription>
+            列出所有未 promoted 的 factor_candidates,计算 IR 比值,标记 would_replace
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="flex flex-wrap items-end gap-3">
+            <div className="space-y-1">
+              <label className="text-[10px] text-muted-foreground">替换阈值 (challenger IR ≥ champion IR × ?)</label>
+              <input
+                type="number"
+                value={threshold}
+                step="0.1"
+                min="1.0"
+                max="5.0"
+                onChange={(e) => setThreshold(parseFloat(e.target.value) || 1.5)}
+                className="h-8 w-20 text-xs border border-border bg-background px-2 tabular-nums"
+              />
+            </div>
+            <Button onClick={run} disabled={loading} size="sm">
+              {loading ? "评估中..." : "跑 dry-run"}
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      {loading ? (
+        <Card><CardContent className="py-8"><Skeleton className="h-64 w-full" /></CardContent></Card>
+      ) : data?.error ? (
+        <Card><CardContent className="py-8 text-xs text-destructive text-center">{data.error}</CardContent></Card>
+      ) : data ? (
+        <>
+          {/* Champion 摘要 */}
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm">当前 Champion</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
+                <div>
+                  <div className="text-[10px] text-muted-foreground">Experiment ID</div>
+                  <div className="font-mono">{data.champion.experiment_id}</div>
+                </div>
+                <div>
+                  <div className="text-[10px] text-muted-foreground">代表 IR</div>
+                  <div className="font-mono tabular-nums">{data.champion.representative_ir}</div>
+                </div>
+                <div>
+                  <div className="text-[10px] text-muted-foreground">生命周期</div>
+                  <div>{data.champion.lifecycle_status || "—"}</div>
+                </div>
+                <div>
+                  <div className="text-[10px] text-muted-foreground">创建时间</div>
+                  <div className="text-[10px] text-muted-foreground font-mono">{data.champion.created_at}</div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* 摘要 */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+            <div className="border border-border p-3">
+              <div className="text-[10px] text-muted-foreground">总候选数</div>
+              <div className="text-lg font-mono tabular-nums">{data.summary.n_candidates}</div>
+            </div>
+            <div className="border border-border p-3">
+              <div className="text-[10px] text-muted-foreground">有效评估 (≥30天)</div>
+              <div className="text-lg font-mono tabular-nums">{data.summary.n_evaluated}</div>
+            </div>
+            <div className="border border-emerald-500/30 bg-emerald-500/5 p-3">
+              <div className="text-[10px] text-emerald-400">would replace</div>
+              <div className="text-lg font-mono tabular-nums text-emerald-400">{data.summary.n_would_replace}</div>
+            </div>
+            <div className="border border-border p-3">
+              <div className="text-[10px] text-muted-foreground">阈值</div>
+              <div className="text-lg font-mono tabular-nums">{data.summary.threshold}x</div>
+            </div>
+          </div>
+
+          {/* 候选列表 */}
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm">
+                候选因子排名 (Top {topN}) — 只看前 {topN}
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="p-0">
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs tabular-nums">
+                  <thead>
+                    <tr className="border-b border-border">
+                      <th className="text-left p-2 text-[10px] text-muted-foreground">#</th>
+                      <th className="text-left p-2 text-[10px] text-muted-foreground">表达式</th>
+                      <th className="text-right p-2 text-[10px] text-muted-foreground">IR</th>
+                      <th className="text-right p-2 text-[10px] text-muted-foreground">IC Mean</th>
+                      <th className="text-right p-2 text-[10px] text-muted-foreground">胜率</th>
+                      <th className="text-right p-2 text-[10px] text-muted-foreground">有效天</th>
+                      <th className="text-center p-2 text-[10px] text-muted-foreground">would_replace</th>
+                      <th className="text-left p-2 text-[10px] text-muted-foreground">原因</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.candidates.slice(0, topN).map((c: ChampionDryRunCandidate) => (
+                      <tr key={c.candidate_id} className="border-b border-border/30 hover:bg-muted/30">
+                        <td className="p-2 text-muted-foreground">{c.rank ?? "—"}</td>
+                        <td className="p-2 font-mono text-[10px] max-w-xs truncate">{c.expr_text}</td>
+                        <td className="p-2 text-right">{c.ir !== null ? c.ir.toFixed(4) : "—"}</td>
+                        <td className="p-2 text-right">{c.ic_mean !== null ? c.ic_mean.toFixed(5) : "—"}</td>
+                        <td className="p-2 text-right">
+                          {c.win_rate !== null ? `${(c.win_rate * 100).toFixed(1)}%` : "—"}
+                        </td>
+                        <td className="p-2 text-right text-muted-foreground">{c.valid_days}</td>
+                        <td className="p-2 text-center">
+                          {c.would_replace ? (
+                            <span className="px-1.5 py-0.5 text-[9px] bg-emerald-500/15 border border-emerald-500/30 text-emerald-400">
+                              YES
+                            </span>
+                          ) : c.ir !== null ? (
+                            <span className="px-1.5 py-0.5 text-[9px] bg-muted border border-border text-muted-foreground">
+                              no
+                            </span>
+                          ) : (
+                            <span className="px-1.5 py-0.5 text-[9px] bg-yellow-500/10 border border-yellow-500/30 text-yellow-400">
+                              待评估
+                            </span>
+                          )}
+                        </td>
+                        <td className="p-2 text-[10px] text-muted-foreground max-w-md truncate" title={c.reason}>
+                          {c.reason}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {data.candidates.length > topN && (
+                <div className="p-2 text-[10px] text-muted-foreground border-t border-border">
+                  显示前 {topN} 个 / 共 {data.candidates.length} 个候选。
+                  {data.candidates.length > 20 && (
+                    <button onClick={() => setTopN(Math.min(topN + 20, 100))} className="ml-3 underline">
+                      展开更多
+                    </button>
+                  )}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </>
+      ) : null}
     </div>
   )
 }

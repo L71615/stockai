@@ -119,6 +119,207 @@ def _now_compact() -> str:
 
 
 # ════════════════════════════════════════════════════════════
+#  v4.2 候选 — Auto Champion Replacement (DRY-RUN ONLY)
+#
+#  设计原则 (per TODOS.md):
+#    - 永远 dry-run, 绝不自动替换
+#    - UI 显示"would auto-replace if enabled" 标签
+#    - 实际替换仍需 human approval (existing flow)
+#
+#  输入: factor_candidates 表里的所有 promoted=0 候选
+#  算法: 复用 compute_factor_metrics 算每个候选的 IR
+#        与当前 champion (baseline pipeline) 的 IR 比较
+#  输出: 排序 + would_replace 标记
+# ════════════════════════════════════════════════════════════
+
+
+def compute_champion_dry_run(
+    *,
+    owner_user_id: Optional[int] = None,
+    stock_pool: str = "hs300",
+    lookback_days: int = 60,
+    replace_threshold: float = 1.5,
+) -> dict:
+    """Auto Champion Replacement 干跑分析
+
+    Args:
+        owner_user_id: 限定用户(默认 None = 全部)
+        stock_pool: 计算 IR 用的股票池
+        lookback_days: IC 回看窗口
+        replace_threshold: challenger IR >= champion IR × threshold 才"would replace"
+
+    Returns:
+        {
+            'champion': {
+                'experiment_id': ...,
+                'representative_ir': 0.038,  # 当前 champion 的代表 IR
+                'expr_text': '__pipeline_daily__',
+                'created_at': ...,
+            },
+            'candidates': [
+                {
+                    'candidate_id': 42,
+                    'expr_text': 'rank(close/ma20)',
+                    'ir': 0.062,
+                    'ic_mean': 0.0085,
+                    'sharpe_proxy': 0.9,
+                    'would_replace': True,  # IR > champion × 1.5
+                    'rank': 1,
+                    'reason': 'IR 1.63x champion',
+                    'created_at': ...,
+                },
+                ...
+            ],
+            'summary': {
+                'n_candidates': 264,
+                'n_evaluated': 30,         # IR 数据足够 (>=30 天)
+                'n_would_replace': 5,
+                'threshold': 1.5,
+            },
+            'dry_run': True,  # 重要: 永不自动执行
+        }
+    """
+    from services.factor_lab import compute_factor_metrics
+    from database import query_all, query_one
+
+    # 1. 找当前 champion
+    champion_row = query_one(
+        "SELECT experiment_id, expr_text, lifecycle_status, portfolio_role, created_at "
+        "FROM experiments "
+        "WHERE lifecycle_status = 'champion' "
+        "ORDER BY created_at DESC LIMIT 1"
+    )
+    if not champion_row:
+        # fallback: 用最新 done 的 run
+        champion_row = query_one(
+            "SELECT experiment_id, expr_text, lifecycle_status, portfolio_role, created_at "
+            "FROM experiments ORDER BY created_at DESC LIMIT 1"
+        )
+
+    if not champion_row:
+        return {"error": "无 champion 实验记录", "dry_run": True}
+
+    # 2. 取所有候选(未 promoted 的)
+    where = "WHERE promoted = 0 AND expr_text IS NOT NULL AND expr_text != ''"
+    params: list[Any] = []
+    if owner_user_id is not None:
+        where += " AND run_owner = ?"
+        # 注意:factor_candidates 表里没有 owner 字段,暂时跳过 owner 过滤
+    candidate_rows = query_all(
+        f"SELECT id, expr_text, ir, ic_mean, win_rate, valid_days, "
+        f"       created_at, run_id "
+        f"FROM factor_candidates {where} "
+        f"ORDER BY created_at DESC LIMIT 100"
+    )
+
+    if not candidate_rows:
+        return {
+            "champion": champion_row,
+            "candidates": [],
+            "summary": {"n_candidates": 0, "n_evaluated": 0, "n_would_replace": 0, "threshold": replace_threshold},
+            "dry_run": True,
+            "message": "factor_candidates 表为空,先跑 GP/ML 挖掘生成候选",
+        }
+
+    # 3. 算 champion 的代表 IR(用 best factor in registry 作代理)
+    # 因为 champion 是 pipeline baseline (整个组合),无法直接 IR 对比
+    # 我们用 FACTOR_REGISTRY 中最强因子作为参照
+    # 简化: 直接从 done run 的最近 snapshot 拿,或固定为 0.05 经验值
+    champion_ir = 0.05  # pipeline baseline 经验 IR 阈值
+    # 找最新 done run 的 metric(如果有 experiment_runs 表的 metrics)
+    latest_done = query_one(
+        "SELECT run_id, finished_at FROM experiment_runs "
+        "WHERE status='done' AND experiment_id = ? "
+        "ORDER BY finished_at DESC LIMIT 1",
+        (champion_row["experiment_id"],)
+    )
+    if latest_done:
+        # 看 drift_events 表有没有最近的 metric_value
+        champion_metric = query_one(
+            "SELECT value FROM drift_events "
+            "WHERE factor_name = 'champion_ir' "
+            "ORDER BY created_at DESC LIMIT 1"
+        )
+        if champion_metric:
+            try:
+                champion_ir = float(champion_metric["value"])
+            except (ValueError, TypeError):
+                pass
+
+    # 4. 评估每个候选(用 candidates 表里已存的 IR,避免重算)
+    candidates = []
+    for row in candidate_rows:
+        c_ir = row.get("ir")
+        c_ic = row.get("ic_mean")
+        c_wr = row.get("win_rate")
+        c_days = row.get("valid_days") or 0
+
+        # 没 IR 的候选: 数据可能不足,标 unknown
+        if c_ir is None or c_days < 30:
+            candidates.append({
+                "candidate_id": row["id"],
+                "expr_text": row["expr_text"],
+                "ir": None,
+                "ic_mean": c_ic,
+                "win_rate": c_wr,
+                "valid_days": c_days,
+                "would_replace": False,
+                "rank": None,
+                "reason": f"数据不足 ({c_days} 天,需 ≥30)",
+                "created_at": row["created_at"],
+                "run_id": row.get("run_id"),
+            })
+            continue
+
+        ir_ratio = c_ir / champion_ir if champion_ir > 1e-9 else 0
+        would_replace = ir_ratio >= replace_threshold
+
+        candidates.append({
+            "candidate_id": row["id"],
+            "expr_text": row["expr_text"],
+            "ir": round(float(c_ir), 4),
+            "ic_mean": round(float(c_ic), 5) if c_ic is not None else None,
+            "win_rate": round(float(c_wr), 3) if c_wr is not None else None,
+            "valid_days": c_days,
+            "would_replace": bool(would_replace),
+            "rank": None,  # 后面填
+            "reason": f"IR ratio {ir_ratio:.2f}x champion (阈值 {replace_threshold}x)" if would_replace
+                      else f"IR ratio {ir_ratio:.2f}x < {replace_threshold}x",
+            "created_at": row["created_at"],
+            "run_id": row.get("run_id"),
+        })
+
+    # 5. 按 |IR| 降序排序,只对有 IR 的 rank
+    eval_candidates = [c for c in candidates if c["ir"] is not None]
+    eval_candidates.sort(key=lambda c: abs(c["ir"]), reverse=True)
+    for i, c in enumerate(eval_candidates, 1):
+        c["rank"] = i
+
+    # 6. 重组:有 IR 的在前,无 IR 的在后
+    candidates = eval_candidates + [c for c in candidates if c["ir"] is None]
+
+    n_would_replace = sum(1 for c in candidates if c["would_replace"])
+
+    return {
+        "champion": {
+            **champion_row,
+            "representative_ir": champion_ir,
+        },
+        "candidates": candidates,
+        "summary": {
+            "n_candidates": len(candidates),
+            "n_evaluated": len(eval_candidates),
+            "n_would_replace": n_would_replace,
+            "threshold": replace_threshold,
+            "pool": stock_pool,
+            "lookback_days": lookback_days,
+        },
+        "dry_run": True,  # 永不自动
+        "safety_note": "DRY-RUN ONLY — 实际替换仍需人工审批(existing approval flow)",
+    }
+
+
+# ════════════════════════════════════════════════════════════
 #  实验 CRUD
 # ════════════════════════════════════════════════════════════
 
