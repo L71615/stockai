@@ -11,7 +11,7 @@ import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
 import { apiGet, apiPost } from "@/lib/auth"
 import { cn } from "@/lib/utils"
-import { IconChartBar, IconGridDots, IconChartScatter, IconFlask, IconPlayerPlay, IconCheck, IconBrain, IconActivity, IconTrophy, IconChartLine, IconBinaryTree } from "@tabler/icons-react"
+import { IconChartBar, IconGridDots, IconChartScatter, IconFlask, IconPlayerPlay, IconCheck, IconBrain, IconActivity, IconTrophy, IconChartLine, IconBinaryTree, IconChartHistogram } from "@tabler/icons-react"
 import {
   ScatterChart, Scatter, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
 } from "recharts"
@@ -191,6 +191,33 @@ interface ClusteringResult {
   end_date?: string
   pool: string
   stock_count: number
+  error?: string
+}
+
+// 因子瀑布图类型 (P1-2)
+interface FactorContribution {
+  factor: string
+  z_score: number
+  raw_value: number
+  ic_weight: number
+  contribution: number
+  direction: "long" | "short"
+}
+interface ContributionSummary {
+  n_long: number
+  n_short: number
+  top_contributor: string | null
+  bottom_contributor: string | null
+  factor_count: number
+}
+interface ContributionResult {
+  stock: string
+  as_of_date: string
+  total_alpha: number
+  contributions: FactorContribution[]
+  summary: ContributionSummary
+  lookback_days?: number
+  pool?: string
   error?: string
 }
 
@@ -1646,6 +1673,273 @@ function Dendrogram({ tree, factors }: { tree: ClusterTreeNode; factors: string[
 }
 
 
+// ═══════════════════════════════════════════════════════════
+//  Tab 6 (新): 因子瀑布图 — 单只股票的 alpha 因子归因
+//  教科书方法: contribution = z_score × IC_mean
+// ═══════════════════════════════════════════════════════════
+
+function ContributionTab({
+  factors, pool, setPool,
+}: {
+  factors: FactorInfo[]
+  pool: string; setPool: (v: string) => void
+}) {
+  const [stockCode, setStockCode] = useState("000001")
+  const [selectedFactors, setSelectedFactors] = useState<string[]>(
+    ["ret_5d", "ret_10d", "rsi_14", "macd_signal", "volatility_20", "std20", "ma_disp_5"]
+  )
+  const [lookbackDays, setLookbackDays] = useState(60)
+  const [data, setData] = useState<ContributionResult | null>(null)
+  const [loading, setLoading] = useState(false)
+
+  const run = async () => {
+    setLoading(true)
+    try {
+      const params = new URLSearchParams({
+        stock_code: stockCode,
+        factors: selectedFactors.join(","),
+        pool, lookback_days: String(lookbackDays),
+      })
+      const res = await apiPost<ContributionResult>(`/api/factor-lab/contribution?${params}`)
+      setData(res)
+    } catch (e) {
+      console.error(e)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const toggleFactor = (name: string) => {
+    setSelectedFactors((prev) =>
+      prev.includes(name) ? prev.filter((n) => n !== name) : [...prev, name]
+    )
+  }
+
+  return (
+    <div className="space-y-4">
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm flex items-center gap-2">
+            <IconChartHistogram className="size-4" />
+            因子瀑布图 — 单只股票 alpha 归因
+          </CardTitle>
+          <CardDescription className="text-xs">
+            截面日因子 z-score × IC mean → 各因子对预测 alpha 的贡献
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="flex flex-wrap items-end gap-3">
+            <div className="space-y-1">
+              <label className="text-[10px] text-muted-foreground">股票代码</label>
+              <Input value={stockCode} onChange={(e) => setStockCode(e.target.value)} className="h-8 w-24 text-xs font-mono" />
+            </div>
+            <div className="space-y-1">
+              <label className="text-[10px] text-muted-foreground">股票池</label>
+              <Select value={pool} onValueChange={setPool}>
+                <SelectTrigger className="h-8 w-24 text-xs"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">全部</SelectItem>
+                  <SelectItem value="hs300">HS300</SelectItem>
+                  <SelectItem value="csi500">CSI500</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1">
+              <label className="text-[10px] text-muted-foreground">IC 回看天数</label>
+              <Select value={String(lookbackDays)} onValueChange={(v) => setLookbackDays(parseInt(v))}>
+                <SelectTrigger className="h-8 w-20 text-xs"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {[60, 120, 180, 252].map((n) => (
+                    <SelectItem key={n} value={String(n)}>{n}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <Button onClick={run} disabled={loading || selectedFactors.length === 0} size="sm">
+              {loading ? "计算中..." : "算归因"}
+            </Button>
+          </div>
+
+          {/* 因子多选 */}
+          <div className="border border-border p-2 max-h-28 overflow-y-auto">
+            <div className="text-[10px] text-muted-foreground mb-1">
+              因子({selectedFactors.length}/{factors.length}):
+            </div>
+            <div className="flex flex-wrap gap-1">
+              {factors.slice(0, 30).map((f) => (
+                <button
+                  key={f.name}
+                  onClick={() => toggleFactor(f.name)}
+                  className={`px-1.5 py-0.5 text-[10px] border ${
+                    selectedFactors.includes(f.name)
+                      ? "bg-primary/15 border-primary text-foreground"
+                      : "border-border text-muted-foreground hover:border-primary/50"
+                  }`}
+                >
+                  {f.name}
+                </button>
+              ))}
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {loading ? (
+        <Card><CardContent className="py-8"><Skeleton className="h-64 w-full" /></CardContent></Card>
+      ) : data?.error ? (
+        <Card><CardContent className="py-8 text-xs text-destructive text-center">{data.error}</CardContent></Card>
+      ) : data ? (
+        <>
+          {/* 摘要 */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+            <MetricBox label="总预测 alpha" value={`${(data.total_alpha * 100).toFixed(3)}%`} positive={data.total_alpha > 0} highlight />
+            <MetricBox label="看多因子" value={String(data.summary.n_long)} />
+            <MetricBox label="看空因子" value={String(data.summary.n_short)} />
+            <MetricBox label="截面日" value={data.as_of_date} />
+          </div>
+
+          {/* 瀑布图 */}
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm">
+                {data.stock} 因子贡献瀑布 — 最强:{data.summary.top_contributor} / 最弱:{data.summary.bottom_contributor}
+              </CardTitle>
+              <CardDescription className="text-xs">
+                绿色 = 看多贡献,红色 = 看空贡献;总高 = 预测次日 alpha
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <WaterfallChart contributions={data.contributions} />
+            </CardContent>
+          </Card>
+
+          {/* 明细表 */}
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm">因子贡献明细</CardTitle>
+            </CardHeader>
+            <CardContent className="p-0">
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs tabular-nums">
+                  <thead>
+                    <tr className="border-b border-border">
+                      <th className="text-left p-2 text-[10px] text-muted-foreground">因子</th>
+                      <th className="text-right p-2 text-[10px] text-muted-foreground">原始值</th>
+                      <th className="text-right p-2 text-[10px] text-muted-foreground">z-score</th>
+                      <th className="text-right p-2 text-[10px] text-muted-foreground">IC 权重</th>
+                      <th className="text-right p-2 text-[10px] text-muted-foreground">贡献</th>
+                      <th className="text-center p-2 text-[10px] text-muted-foreground">方向</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.contributions.map((c) => (
+                      <tr key={c.factor} className="border-b border-border/30">
+                        <td className="p-2 font-medium">{c.factor}</td>
+                        <td className="p-2 text-right font-mono">{c.raw_value.toFixed(4)}</td>
+                        <td className={`p-2 text-right font-mono ${c.z_score > 0 ? "text-emerald-400" : "text-red-400"}`}>
+                          {c.z_score > 0 ? "+" : ""}{c.z_score.toFixed(3)}
+                        </td>
+                        <td className="p-2 text-right font-mono">{c.ic_weight.toFixed(5)}</td>
+                        <td className={`p-2 text-right font-mono ${c.contribution > 0 ? "text-emerald-400" : "text-red-400"}`}>
+                          {c.contribution > 0 ? "+" : ""}{(c.contribution * 100).toFixed(3)}%
+                        </td>
+                        <td className="p-2 text-center">
+                          <span className={`px-1.5 py-0.5 text-[9px] border ${
+                            c.direction === "long"
+                              ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400"
+                              : "bg-red-500/10 border-red-500/30 text-red-400"
+                          }`}>
+                            {c.direction === "long" ? "多" : "空"}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </CardContent>
+          </Card>
+        </>
+      ) : null}
+    </div>
+  )
+}
+
+
+// 自渲染 Waterfall SVG — 横向条形图
+function WaterfallChart({ contributions }: { contributions: FactorContribution[] }) {
+  const padding = 16
+  const labelWidth = 100
+  const height = Math.max(80, contributions.length * 28 + padding * 2)
+  const width = 600
+  const barAreaWidth = width - labelWidth - padding * 2
+  const maxAbs = Math.max(...contributions.map((c) => Math.abs(c.contribution)), 1e-6)
+  const barHeight = 18
+  const barGap = 8
+
+  return (
+    <div className="overflow-x-auto">
+      <svg width={width} height={height}>
+        {/* 零线 */}
+        <line
+          x1={padding + labelWidth + barAreaWidth / 2}
+          y1={padding}
+          x2={padding + labelWidth + barAreaWidth / 2}
+          y2={height - padding}
+          stroke="currentColor"
+          strokeWidth={0.5}
+          opacity={0.3}
+        />
+
+        {contributions.map((c, i) => {
+          const y = padding + i * (barHeight + barGap)
+          const barW = (Math.abs(c.contribution) / maxAbs) * (barAreaWidth / 2 - 4)
+          const centerX = padding + labelWidth + barAreaWidth / 2
+          const x = c.contribution >= 0 ? centerX : centerX - barW
+          const color = c.contribution >= 0 ? "#22c55e" : "#ef4444"
+
+          return (
+            <g key={c.factor}>
+              {/* 因子名 */}
+              <text
+                x={padding + labelWidth - 6}
+                y={y + barHeight / 2 + 3}
+                fontSize={10}
+                fill="currentColor"
+                textAnchor="end"
+                fontFamily="monospace"
+              >
+                {c.factor}
+              </text>
+              {/* bar */}
+              <rect
+                x={x}
+                y={y}
+                width={barW}
+                height={barHeight}
+                fill={color}
+                opacity={0.8}
+              />
+              {/* 数值 */}
+              <text
+                x={c.contribution >= 0 ? x + barW + 4 : x - 4}
+                y={y + barHeight / 2 + 3}
+                fontSize={9}
+                fill={color}
+                textAnchor={c.contribution >= 0 ? "start" : "end"}
+                fontFamily="monospace"
+              >
+                {c.contribution >= 0 ? "+" : ""}{(c.contribution * 100).toFixed(3)}%
+              </text>
+            </g>
+          )
+        })}
+      </svg>
+    </div>
+  )
+}
+
+
 function MetricBox({ label, value, highlight = false, positive, hint }: { label: string; value: string; highlight?: boolean; positive?: boolean; hint?: string }) {
   const valueColor = positive === undefined ? "" : positive ? "text-red-400" : "text-emerald-400"
   return (
@@ -1809,12 +2103,12 @@ export default function FactorLabPage() {
           <TabsList className="grid w-full max-w-4xl grid-cols-8">
             <TabsTrigger value="ic" className="text-xs"><IconChartBar className="size-3.5 mr-1" />IC</TabsTrigger>
             <TabsTrigger value="leaderboard" className="text-xs"><IconTrophy className="size-3.5 mr-1" />排行</TabsTrigger>
-            <TabsTrigger value="quantile" className="text-xs"><IconChartLine className="size-3.5 mr-1" />分位数</TabsTrigger>
+            <TabsTrigger value="quantile" className="text-xs"><IconChartLine className="size-3.5 mr-1" />分位</TabsTrigger>
             <TabsTrigger value="clustering" className="text-xs"><IconBinaryTree className="size-3.5 mr-1" />聚类</TabsTrigger>
-            <TabsTrigger value="correlation" className="text-xs"><IconGridDots className="size-3.5 mr-1" />相关性</TabsTrigger>
+            <TabsTrigger value="contribution" className="text-xs"><IconChartHistogram className="size-3.5 mr-1" />瀑布</TabsTrigger>
+            <TabsTrigger value="correlation" className="text-xs"><IconGridDots className="size-3.5 mr-1" />相关</TabsTrigger>
             <TabsTrigger value="scatter" className="text-xs"><IconChartScatter className="size-3.5 mr-1" />散点</TabsTrigger>
-            <TabsTrigger value="mining" className="text-xs"><IconFlask className="size-3.5 mr-1" />GP</TabsTrigger>
-            <TabsTrigger value="ml" className="text-xs"><IconBrain className="size-3.5 mr-1" />ML</TabsTrigger>
+            <TabsTrigger value="mining" className="text-xs"><IconFlask className="size-3.5 mr-1" />GP/ML</TabsTrigger>
           </TabsList>
           <TabsContent value="ic">
             <ICTab
@@ -1848,6 +2142,12 @@ export default function FactorLabPage() {
               pool={pool} setPool={setPool}
               startDate={startDate} setStartDate={setStartDate}
               endDate={endDate} setEndDate={setEndDate}
+            />
+          </TabsContent>
+          <TabsContent value="contribution">
+            <ContributionTab
+              factors={factors}
+              pool={pool} setPool={setPool}
             />
           </TabsContent>
           <TabsContent value="scatter">

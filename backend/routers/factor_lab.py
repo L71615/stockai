@@ -6,6 +6,7 @@ from services.factor_lab import (
     compute_factor_metrics,
     compute_factor_leaderboard,
     compute_factor_clustering,
+    compute_factor_contribution,
     compute_quantile_returns,
     compute_correlation_matrix,
     compute_scatter_data,
@@ -80,6 +81,28 @@ def get_leaderboard(
     except Exception as e:
         logger.error("leaderboard failed: %s", str(e), exc_info=True)
         raise HTTPException(500, f"排行榜计算失败: {str(e)[:200]}")
+
+
+@router.post("/contribution")
+def get_contribution(
+    stock_code: str = Query(..., description="股票代码 (e.g. 600519)"),
+    factors: list[str] = Query(..., description="因子名列表"),
+    pool: str = Query("hs300"),
+    as_of_date: str | None = Query(None, description="截面日 YYYY-MM-DD"),
+    lookback_days: int = Query(120, ge=30, le=365, description="IC mean 回看天数"),
+):
+    """因子瀑布图 — 单只股票的 alpha 因子归因(为什么 AI 选了这只)"""
+    try:
+        return compute_factor_contribution(
+            stock_code=stock_code,
+            factors=factors,
+            stock_pool=pool,
+            as_of_date=as_of_date,
+            lookback_days=lookback_days,
+        )
+    except Exception as e:
+        logger.error("contribution failed: %s", str(e), exc_info=True)
+        raise HTTPException(500, f"瀑布图计算失败: {str(e)[:200]}")
 
 
 @router.post("/quantile-returns")

@@ -927,6 +927,199 @@ def _build_cluster_tree(factor_names: list[str], Z) -> dict:
     return root
 
 
+# ═══════════════════════════════════════════════════════════════
+#  因子瀑布图 (P1-2) — 某只股票的 alpha 因子归因
+#
+#  算法 (教科书 factor contribution decomposition):
+#    1. 选定截面日(默认最新交易日)
+#    2. 对每只股票算每个因子的截面 z-score(标准化)
+#    3. weight = 该因子的 IC mean(过去 N 日)
+#    4. contribution = z_score × weight
+#    5. 总 alpha = sum(contributions)  →  预测次日收益
+#
+#  这是"为什么 AI 选了这只股票"的可解释归因
+# ═══════════════════════════════════════════════════════════════
+
+
+def compute_factor_contribution(
+    stock_code: str,
+    factors: list[str],
+    stock_pool: str = "hs300",
+    as_of_date: Optional[str] = None,
+    lookback_days: int = 120,
+) -> dict:
+    """因子瀑布图 — 单只股票的 alpha 因子归因
+
+    Args:
+        stock_code: 股票代码 (e.g. "600519")
+        factors: 因子名列表
+        stock_pool: 对比股票池(用于截面 z-score 标准化)
+        as_of_date: 截面日(默认最新交易日)
+        lookback_days: IC mean 估算回看窗口(默认 120 日)
+
+    Returns:
+        {
+            'stock': '600519',
+            'as_of_date': '2026-07-30',
+            'total_alpha': 0.025,         # 预测次日收益 (sum of contributions)
+            'contributions': [            # 按 |contribution| 降序
+                {
+                    'factor': 'ret_5d',
+                    'z_score': 1.85,        # 标准化后的因子值
+                    'raw_value': 0.12,      # 原始因子值
+                    'ic_weight': 0.0085,    # 该因子的 IC mean
+                    'contribution': 0.0157, # = z_score × ic_weight
+                    'direction': 'long',    # 正 = 看多,负 = 看空
+                },
+                ...
+            ],
+            'summary': {
+                'n_long': 5,
+                'n_short': 3,
+                'top_contributor': 'ret_5d',
+                'bottom_contributor': 'volatility_20',
+            }
+        }
+    """
+    if not factors:
+        factors = list(FACTOR_REGISTRY.keys())[:10]  # 默认 10 因子
+
+    # 默认截面日 = 最新可用交易日
+    if not as_of_date:
+        from database import query_one
+        r = query_one("SELECT MAX(trade_date) as d FROM historical_kline WHERE stock_code = ?", (stock_code,))
+        if not r or not r["d"]:
+            return {"error": f"股票 {stock_code} 无 K 线数据"}
+        as_of_date = r["d"]
+
+    # 计算 lookback 日期范围
+    end_dt = datetime.strptime(as_of_date, "%Y-%m-%d")
+    start_dt = end_dt - timedelta(days=int(lookback_days * 1.5))  # 多取一些以防数据缺口
+    start_date = start_dt.strftime("%Y-%m-%d")
+
+    # 1. 加载股票池 + 目标股票 K 线
+    pool_codes = get_stock_pool(stock_pool)
+    if not pool_codes:
+        return {"error": f"股票池 {stock_pool} 为空"}
+
+    # 目标股票必须在池里(否则截面标准化不公平)
+    if stock_code not in pool_codes:
+        return {"error": f"股票 {stock_code} 不在 {stock_pool} 池内"}
+
+    panels = load_kline_panel(pool_codes, start_date, as_of_date)
+    if not panels or stock_code not in panels:
+        return {"error": f"加载 K 线失败: {stock_code}"}
+
+    # 2. 截面日:每只股票每因子取当日因子值
+    factor_panels: dict[str, pd.DataFrame] = {}
+    for fname in factors:
+        if fname not in FACTOR_REGISTRY:
+            continue
+        try:
+            fp = _build_factor_panel(panels, fname)
+            factor_panels[fname] = fp
+        except Exception:
+            continue
+
+    if not factor_panels:
+        return {"error": "无有效因子"}
+
+    # 检查截面日是否在因子 panel 里
+    target_date = pd.Timestamp(as_of_date)
+    for fname, fp in factor_panels.items():
+        if target_date not in fp.index:
+            return {"error": f"截面日 {as_of_date} 无 {fname} 因子值"}
+
+    # 3. 算截面 z-score
+    cross_section = pd.DataFrame({
+        fname: fp.loc[target_date] for fname, fp in factor_panels.items()
+    })
+
+    # 标准化: z = (x - mean) / std
+    z_scores = (cross_section - cross_section.mean()) / cross_section.std().replace(0, 1)
+
+    # 4. 算每个因子的 IC mean (lookback_days)
+    # 用 shift(-1) 让 return_t 对应 t+1 日的收益(避免 look-ahead)
+    return_panel = pd.DataFrame({
+        code: df["close"].pct_change() for code, df in panels.items()
+    })
+    forward_return_panel = return_panel.shift(-1)
+
+    contributions = []
+    for fname in factors:
+        if fname not in factor_panels:
+            continue
+        fp = factor_panels[fname]
+        # IC mean over lookback_days
+        recent_dates = fp.index[fp.index <= target_date][-lookback_days:]
+        ic_values = []
+        for d in recent_dates:
+            f_vals = fp.loc[d].dropna()
+            r_vals = forward_return_panel.loc[d].dropna() if d in forward_return_panel.index else pd.Series()
+            common = f_vals.index.intersection(r_vals.index)
+            if len(common) < 20:
+                continue
+            f_a = f_vals[common].values.astype(float)
+            r_a = r_vals[common].values.astype(float)
+            if np.std(f_a) < 1e-9 or np.std(r_a) < 1e-9:
+                continue
+            try:
+                c = np.corrcoef(f_a, r_a)[0, 1]
+                if not np.isnan(c):
+                    ic_values.append(c)
+            except Exception:
+                continue
+
+        if len(ic_values) < 10:
+            continue
+
+        ic_weight = float(np.mean(ic_values))
+
+        # 该股票在截面日的因子值
+        if stock_code not in cross_section.index or pd.isna(z_scores.loc[stock_code, fname]):
+            continue
+        z = float(z_scores.loc[stock_code, fname])
+        raw = float(cross_section.loc[stock_code, fname])
+
+        contrib = z * ic_weight
+        contributions.append({
+            "factor": fname,
+            "z_score": round(z, 4),
+            "raw_value": round(raw, 6),
+            "ic_weight": round(ic_weight, 6),
+            "contribution": round(contrib, 6),
+            "direction": "long" if contrib > 0 else "short",
+        })
+
+    if not contributions:
+        return {"error": "无有效贡献(可能因子 IC 数据不足)"}
+
+    # 按 |contribution| 降序
+    contributions.sort(key=lambda c: abs(c["contribution"]), reverse=True)
+
+    total_alpha = sum(c["contribution"] for c in contributions)
+    n_long = sum(1 for c in contributions if c["contribution"] > 0)
+    n_short = sum(1 for c in contributions if c["contribution"] < 0)
+
+    summary = {
+        "n_long": n_long,
+        "n_short": n_short,
+        "top_contributor": contributions[0]["factor"] if contributions else None,
+        "bottom_contributor": contributions[-1]["factor"] if contributions else None,
+        "factor_count": len(contributions),
+    }
+
+    return {
+        "stock": stock_code,
+        "as_of_date": as_of_date,
+        "total_alpha": round(total_alpha, 6),
+        "contributions": contributions,
+        "summary": summary,
+        "lookback_days": lookback_days,
+        "pool": stock_pool,
+    }
+
+
 # ═══════════════════════════════════════════════════════════
 #  散点数据
 # ═══════════════════════════════════════════════════════════
