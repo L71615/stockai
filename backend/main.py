@@ -135,6 +135,7 @@ def startup():
         start_index_sync_thread,               # v4.1 Phase 2A
         start_etf_sync_thread,                 # v4.1 Phase 2A
         start_drift_monitor_thread,            # v4.1 Phase 2A
+        start_monthly_report_thread,           # 7 月计划: 月末自动月报
     )
     start_dca_reminder_thread()
     start_stop_loss_thread()
@@ -147,6 +148,7 @@ def startup():
     start_index_sync_thread()                # v4.1 Phase 2A: 17:00 nightly 指数 K 线
     start_etf_sync_thread()                  # v4.1 Phase 2A: 17:10 nightly ETF K 线
     start_drift_monitor_thread()             # v4.1 Phase 2A: 23:30 PSI/KL 漂移监测
+    start_monthly_report_thread()            # 7 月计划: 月末 1 号 00:30 自动月报
 
 
 # ── 认证中间件：保护所有 /api/ 路由（登录接口除外）──

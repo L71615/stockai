@@ -516,3 +516,56 @@ def start_drift_monitor_thread(run_hour: int = 23, run_minute: int = 30):
     t = threading.Thread(target=_loop, daemon=True, name="drift-monitor")
     t.start()
     return t
+
+
+# ═══════════════════════════════════════════════════════════
+#  v4.1+: 月末自动月报 — 7 月核心计划 P0 全自动月报
+#  每月 1 号 00:30 触发上个月月报生成 + 缓存
+#  (生成逻辑在 services/review_service.generate_monthly_report)
+# ═══════════════════════════════════════════════════════════
+
+
+def _monthly_report_cycle():
+    """月末自动月报 — 每月 1 号 00:30 跑一次"""
+    import time as _time
+    from datetime import datetime
+    from services.review_service import generate_monthly_report
+
+    logger.info("[monthly-report] daemon started")
+    last_month_processed: str | None = None
+
+    while True:
+        try:
+            now = datetime.now()
+            # 每月 1 号 00:30
+            if now.day == 1 and now.hour == 0 and 30 <= now.minute < 35:
+                # 上个月
+                if now.month == 1:
+                    year_month = f"{now.year - 1}-12"
+                else:
+                    year_month = f"{now.year}-{now.month - 1:02d}"
+
+                if year_month != last_month_processed:
+                    logger.info("[monthly-report] 触发月报生成: %s", year_month)
+                    try:
+                        result = generate_monthly_report(year_month)
+                        n_trades = result.get("summary", {}).get("total_trades", 0)
+                        logger.info(
+                            "[monthly-report] %s 月报生成完成 — 交易 %d 笔",
+                            year_month, n_trades,
+                        )
+                        last_month_processed = year_month
+                    except Exception as e:
+                        logger.error("[monthly-report] %s 生成失败: %s", year_month, str(e)[:200])
+        except Exception as e:
+            logger.error("[monthly-report] cycle error: %s", str(e)[:200])
+
+        # 每 5 分钟检查一次
+        _time.sleep(300)
+
+
+def start_monthly_report_thread():
+    """启动月末自动月报线程"""
+    t = threading.Thread(target=_monthly_report_cycle, daemon=True, name="monthly-report")
+    t.start()
+    return t
