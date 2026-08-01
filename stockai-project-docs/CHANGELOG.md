@@ -1,7 +1,49 @@
 # StockAI 项目日志
 
 > StockAI 从 0 到 v4.1 的完整演进记录。按时间倒序。
-> **当前版本: v5.0-alpha M2** · 下一阶段: v5.0-alpha M3(信号触发 + 手动确认)+ v5.0 战略见 `2026-08-01-v5.0-strategy.md`
+> **当前版本: v5.0-alpha M3** · 下一阶段: v5.0-alpha M4(`/live` 仪表板前端)+ v5.0 战略见 `2026-08-01-v5.0-strategy.md`
+
+---
+
+## 2026-08-01 — v5.0-alpha M3 (盘中信号扫描 + 手动确认下单)
+
+### 🆕 feat: 盘中信号扫描服务
+- **新文件** `backend/services/realtime_signal.py`
+- `RealtimeSignal` dataclass(strategy_id/name/stock_code/direction/score/triggered_at/reason/snapshot)
+- `scan_signals(enabled_strategies, candidate_codes)` — 对每只股票跑启用策略,命中返回 Signal
+- `_evaluate_code(code, window)` — 拉日级 K 线 + 复用 M2 `compute_factors_with_cache` + 补算 `avg_amount_20d` / `close_vs_high_Nd` / `atr_pct` 等 YAML 策略需要字段
+- 复用 `condition_engine.evaluate` + `strategy_registry.get_registry` + `strategy_backtest_service._load_strategy_conditions`
+
+### 🆕 feat: 信号持久化(轻量)
+- **新文件** `backend/services/realtime_signal_log.py`
+- `log_signal / mark_accepted(signal_id, order_id) / recent_signals(limit) / get_signal(id)`
+- 复用 M2 已建表 `realtime_signal_log`(M2 milestone 已预埋)
+
+### 🆕 feat: 手动确认下单 REST API
+- **新文件** `backend/routers/realtime_signal.py`
+- `GET /api/realtime/signal/recent?limit=50` — 最近 N 条信号
+- `GET /api/realtime/signal/{id}` — 单条详情
+- `POST /api/realtime/signal/{id}/accept` — 调 `t1_watcher.create_pending_order` 创建 T+1 模拟下单(默认 100 股, 10bps 滑点, 按当前价 planned_entry_price),关联 order_id 写回 signal_log
+- alpha 简化: 用户 ID 取 admin 单用户;已接受 → 409;未知 ID → 404
+
+### 🆕 feat: 后台扫描守护线程
+- **新文件** `backend/services/realtime_signal_scanner.py`
+- `RealtimeSignalScanner` 单例 + daemon thread(5s/轮)
+- `_loop` / `_tick` / `_candidate_codes` — 候选 = `holdings.quantity>0 ∪ watchlist`
+- 仅 `is_trading_hours()` 期间扫描;盘后不扫描;单轮异常不影响下一轮
+- `services/scheduler.py` 新增 `start_realtime_signal_scanner_thread()` 顶层入口
+- `main.startup()` 中启动
+
+### ✅ 测试验收
+- 20 个新测试(`tests/test_realtime_signal.py`):
+  - `scan_signals` 5 个(空候选/空策略/未知策略/数据不足/构造 stock_data)
+  - `signal_log` 4 个(log+recent 往返/倒序/mark_accepted/未知 ID)
+  - REST 6 个(recent 列表/详情/404/accept 创建订单/409/404)
+  - Scanner 5 个(单例/非交易时段跳过/盘中触发/log_signal/_candidate_codes)
+- M3 单独跑: **20 passed / 0 failed**
+
+### 📌 下一步
+- M4: `/live` 仪表板前端(组合卡片 + 信号列表 + 手动确认按钮 + 推送状态)
 
 ---
 
