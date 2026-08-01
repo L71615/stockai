@@ -92,10 +92,12 @@ app.include_router(pipeline.router)
 from routers import approvals as approvals_router
 from routers import experiments as experiments_router
 from routers import shadow as shadow_router
+from routers import realtime as realtime_router
 app.include_router(approvals_router.router)
 app.include_router(experiments_router.router)
 app.include_router(counterfactual.router)
 app.include_router(shadow_router.router)
+app.include_router(realtime_router.router)
 
 # 健康检查
 @app.get("/api/health")
