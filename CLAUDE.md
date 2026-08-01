@@ -2,9 +2,9 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-> **当前版本: v4.1.1 patch3**(2026-08-01 发布)
-> **量化方向**: T+1/T+2 短线预测主线 + AI 选股智能化(8 角色 + 工具调用) + 决策闭环(Phase 1A/1B) + 真实基准 + Drift PSI/KL 监控(Phase 2A/2B)
-> **最新改动**: v4.1.1 patch3 — 5 项 bug 修复 + v4.1 测试套件 168/168 全过(v4.1 收尾);**v5.0 战略已锁定**:准实盘量化交易系统(详见 `2026-08-01-v5.0-strategy.md`),先跑完 v4.1 再启动
+> **当前版本: v5.0-alpha M1**(2026-08-01 发布)
+> **量化方向**: 准实盘量化交易系统(D1 战略锁定) — 实时行情 + 盘中因子 + 信号手动确认 + 模拟成交
+> **最新改动**: v5.0-alpha M1 — 实时行情接入(腾讯 API 统一盘中/盘后)+ REST/WebSocket + 前端 5s 轮询 hook + 21 测试;**v5.0 战略**:盘中量化分析功能(alpha 用户可见优先),详见 `2026-08-01-v5.0-strategy.md` + `2026-08-01-v5.0-alpha-plan.md`
 > **详细记录**: 看 `stockai-project-docs/CHANGELOG.md` 和 `stockai-project-docs/V4-PLAN.md`
 > **文档结构**: 根目录 `INDEX.md` 是入口,所有 MD 已分类到 `stockai-project-docs/` 与 `monitor-desktop-docs/`
 

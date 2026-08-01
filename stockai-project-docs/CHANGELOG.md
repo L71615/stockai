@@ -1,7 +1,42 @@
 # StockAI 项目日志
 
 > StockAI 从 0 到 v4.1 的完整演进记录。按时间倒序。
-> **当前版本: v4.1.1 patch3** · 下一阶段: v4.2 → v5.0 准实盘量化交易系统(战略已锁定,见 `2026-08-01-v5.0-strategy.md`)
+> **当前版本: v5.0-alpha M1** · 下一阶段: v5.0-alpha M2(盘中分钟级因子)+ v5.0 战略见 `2026-08-01-v5.0-strategy.md`
+
+---
+
+## 2026-08-01 — v5.0-alpha M1 (实时行情接入 — 盘中 + 盘后统一腾讯 API)
+
+### 🆕 feat: RealtimeQuoteService 单例
+- **新文件** `backend/services/realtime_quote.py`
+- `Quote` dataclass 标准化腾讯 API 返回(price/yesterday_close/open/high/low/volume/amount/change/change_pct)
+- `is_trading_hours()` / `is_trading_day()` 时段判断(9:30-11:30 + 13:00-15:00)
+- `subscribe()` / `get_snapshot()` / `_poll_once()` 行情接口
+- 后台 5s polling(daemon thread + asyncio),拉持仓 + 自选股的 quote
+
+### 🆕 feat: REST + WebSocket API
+- **新文件** `backend/routers/realtime.py`
+- `GET /api/realtime/watchlist?codes=000725,600519` — 一次性 snapshot
+- `GET /api/realtime/trading-status` — 时段状态(前端判断"实时"徽章)
+- `GET /api/realtime/all` — 当前 cache 全量(调试用)
+- `WS /api/realtime/ws` — alpha 简化版(只推送 status),beta 切真实推送
+
+### 🆕 feat: 前端 useRealtimeQuote hook
+- **新文件** `frontend/src/hooks/use-realtime-quote.ts`
+- SWR 5s 高频轮询 / 自动 join codes / 返回 Map<code, Quote> / lastUpdate + isTradingHours
+
+### ✅ 测试验收
+- 21 个新测试(`tests/test_realtime_quote.py`):
+  - 时段判断 8 个(工作日早/午/晚/开盘/收盘边界 + 周末)
+  - 服务类 5 个(单例/subscribe/get_snapshot/更新推送/subscriber 异常隔离)
+  - `_poll_once` 3 个(空 codes / akshare 批量 / 异常兜底)
+  - REST API 4 个(watchlist / 空 codes / trading-status / all)
+- 全套件:189 passed / 0 failed(v4.1 168 + v5.0 M1 21),14.08s
+
+### 📌 下一步
+- M2: 盘中分钟级因子 + 5m TTL 缓存
+- M3: 信号触发扫描 + 手动确认下单
+- M4: `/live` 仪表板前端
 
 ---
 
