@@ -1,7 +1,52 @@
 # StockAI 项目日志
 
 > StockAI 从 0 到 v4.1 的完整演进记录。按时间倒序。
-> **当前版本: v5.0-alpha M3** · 下一阶段: v5.0-alpha M4(`/live` 仪表板前端)+ v5.0 战略见 `2026-08-01-v5.0-strategy.md`
+> **当前版本: v5.0-alpha M4** · 下一阶段: v5.0-alpha M5(盘中 WebSocket 推送)+ v5.0 战略见 `2026-08-01-v5.0-strategy.md`
+
+---
+
+## 2026-08-01 — v5.0-alpha M4 (/live 仪表板前端)
+
+### 🆕 feat: 盘中量化分析仪表板
+- **新文件** `frontend/src/app/live/page.tsx` (~440 行)
+- **5 个 section**:
+  1. **顶部 PnL 总览** — 持仓实时盈亏汇总 + 成本对比 + 盘中/盘后状态徽章
+  2. **实时 watchlist 行情** — 5s 刷新,点击选中展示因子卡片
+  3. **盘中信号触发列表** — 含待确认数 Badge,逐行"接受"/"拒绝"按钮
+  4. **实时持仓表** — 现价 × 数量 实时计算 pnl/pnl_pct
+  5. **选中股票因子卡片** — 复用 M2 `RealtimeFactorCard`
+- 复用 M1-M3 已有 API/hook:
+  - `useRealtimeQuote` (M1) — SWR 5s 拉 `/api/realtime/watchlist`
+  - `useRealtimeFactor` (M2) — `RealtimeFactorCard` 组件
+  - `apiPost /api/realtime/signal/{id}/accept` (M3) — 手动接受下单
+
+### 🆕 feat: sidebar 入口
+- **改动** `frontend/src/components/app-sidebar.tsx`
+- "投资"组加 `盘中量化` 入口(`/live`,IconWaveSine 波形图标)
+- 紧跟 watchlist / browse / market 之后,符合"实时 → 浏览 → 大盘"使用频率
+
+### ✅ 测试验收
+- 11 个 smoke 测试(`tests/test_live_page_smoke.py`):
+  - 文件存在 + default export
+  - 5 个 section 标识齐全
+  - accept + reject API 调用
+  - Tabler Icons / rounded-none / tabular-nums 规范符合
+  - 中国色惯例(涨红跌绿, `text-red-400` + `text-emerald-400`)
+  - 无 emoji 作为功能图标
+  - sidebar 含 `/live` 入口 + 中文 label + Tabler Icon
+- **11 passed / 0 failed**
+- TypeScript 类型检查: live page + sidebar 无错(全工程其他文件 error 与本 milestone 无关,系历史 Playwright 类型缺失等)
+
+### 📌 设计规范符合性
+- ✅ 暗色主题(.dark)+ `rounded-none`(DESIGN.md §3)
+- ✅ Tabler Icons 全功能图标(无 emoji)— `IconCheck/X/Refresh/Bolt/AlertTriangle/Clock/CircleDot/WaveSine`
+- ✅ 数字列 `tabular-nums` (价格/涨跌幅/PnL/百分比)
+- ✅ 中国 A 股色惯例(红涨绿跌)
+- ✅ 状态徽章区分盘中/盘后(`IconCircleDot animate-pulse`)
+
+### 📌 下一步
+- M5: WebSocket 推送(替换 5s 轮询) — alpha 阶段轮询够用,M5 优化延迟
+- M6: 分钟级 K 线接入(M11 阶段切 futu_raw_kline)
 
 ---
 
