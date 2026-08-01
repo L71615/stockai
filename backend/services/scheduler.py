@@ -569,3 +569,12 @@ def start_monthly_report_thread():
     t = threading.Thread(target=_monthly_report_cycle, daemon=True, name="monthly-report")
     t.start()
     return t
+
+
+def start_realtime_signal_scanner_thread():
+    """启动盘中实时信号扫描线程 — v5.0-alpha M3
+
+    委托给 realtime_signal_scanner 单例, 5s/轮, 仅盘中(is_trading_hours)扫描。
+    """
+    from services.realtime_signal_scanner import start_realtime_signal_scanner_thread as _start
+    _start()

@@ -94,12 +94,14 @@ from routers import experiments as experiments_router
 from routers import shadow as shadow_router
 from routers import realtime as realtime_router
 from routers import realtime_factor as realtime_factor_router
+from routers import realtime_signal as realtime_signal_router
 app.include_router(approvals_router.router)
 app.include_router(experiments_router.router)
 app.include_router(counterfactual.router)
 app.include_router(shadow_router.router)
 app.include_router(realtime_router.router)
 app.include_router(realtime_factor_router.router)
+app.include_router(realtime_signal_router.router)
 
 # 健康检查
 @app.get("/api/health")
@@ -140,6 +142,7 @@ def startup():
         start_etf_sync_thread,                 # v4.1 Phase 2A
         start_drift_monitor_thread,            # v4.1 Phase 2A
         start_monthly_report_thread,           # 7 月计划: 月末自动月报
+        start_realtime_signal_scanner_thread,  # v5.0-alpha M3: 盘中信号扫描守护
     )
     start_dca_reminder_thread()
     start_stop_loss_thread()
@@ -153,6 +156,7 @@ def startup():
     start_etf_sync_thread()                  # v4.1 Phase 2A: 17:10 nightly ETF K 线
     start_drift_monitor_thread()             # v4.1 Phase 2A: 23:30 PSI/KL 漂移监测
     start_monthly_report_thread()            # 7 月计划: 月末 1 号 00:30 自动月报
+    start_realtime_signal_scanner_thread()   # v5.0-alpha M3: 盘中信号扫描(5s/轮)
 
 
 # ── 认证中间件：保护所有 /api/ 路由（登录接口除外）──
