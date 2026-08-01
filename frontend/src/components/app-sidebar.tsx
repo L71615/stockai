@@ -35,6 +35,7 @@ import {
   IconFlask,
   IconBuildingBank,
   IconPlayerPlay,
+  IconWaveSine,
 } from "@tabler/icons-react"
 
 const navGroups = [
@@ -48,6 +49,7 @@ const navGroups = [
       { id: "watchlist", label: "自选股", icon: IconStar, url: "/watchlist" },
       { id: "browse", label: "股票浏览", icon: IconBuildingBank, url: "/browse" },
       { id: "market", label: "大盘指数", icon: IconChartBar, url: "/market" },
+      { id: "live", label: "盘中量化", icon: IconWaveSine, url: "/live" },
     ],
   },
   {
