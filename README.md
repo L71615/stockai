@@ -2,6 +2,9 @@
 
 # StockAI
 
+> ⚠️ **当前正在开发 v5.0-alpha M3** — 准实盘量化战略启动(实时行情 + 盘中因子 + 信号手动确认 + 模拟成交)
+> 详见 [`stockai-project-docs/CHANGELOG.md`](stockai-project-docs/CHANGELOG.md) v5.0-alpha 系列
+
 ### A 股 AI 量化选股 · T+1 短线预测 + 研究→决策证据闭环
 
 **64 因子 · 13 策略 · 8 角色多 Agent + Agent 工具调用 · 自动量化 Pipeline · T+1 模拟成交 · 反事实报告 · 多策略组合**
