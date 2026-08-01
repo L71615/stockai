@@ -1,7 +1,46 @@
 # StockAI 项目日志
 
 > StockAI 从 0 到 v4.1 的完整演进记录。按时间倒序。
-> **当前版本: v5.0-alpha M1** · 下一阶段: v5.0-alpha M2(盘中分钟级因子)+ v5.0 战略见 `2026-08-01-v5.0-strategy.md`
+> **当前版本: v5.0-alpha M2** · 下一阶段: v5.0-alpha M3(信号触发 + 手动确认)+ v5.0 战略见 `2026-08-01-v5.0-strategy.md`
+
+---
+
+## 2026-08-01 — v5.0-alpha M2 (盘中分钟级因子 + 5m TTL 缓存 + REST + 前端卡片)
+
+### 🆕 feat: RealtimeFactorCache 盘中因子缓存(5m TTL)
+- **新文件** `backend/services/realtime_factor_cache.py`
+- `compute_realtime_factors()` 复用 `services/factor_lab.FACTOR_REGISTRY`(30 个因子)
+- `compute_factors_with_cache()` 自动 cache 命中 / miss 走重算
+- `_extract_scalar()` ndarray/float/None/NaN/inf → 标量或 None 兜底
+- `set/get_cached_factor / get_all_cached / invalidate / fetch_recent_bars`
+- 性能目标: 单只 × 30 因子 < 100ms(命中)/ < 500ms(重算)
+
+### 🆕 feat: REST API
+- **新文件** `backend/routers/realtime_factor.py`
+- `GET /api/realtime/factor/{code}[?names=ma5,ma10,...]` — 返回 `{factors, cached_count, fresh_count, bar_count}`
+- `POST /api/realtime/factor/{code}/invalidate` — 清缓存(alpha 测试用)
+- 复用 `historical_kline` 日级 fallback(M11 阶段切 futu_raw_kline 分钟级)
+
+### 🆕 feat: 前端 useRealtimeFactor + RealtimeFactorCard
+- **新文件** `frontend/src/hooks/use-realtime-factor.ts` — SWR 30s 轮询
+- **新文件** `frontend/src/components/realtime-factor-card.tsx` — 趋势(MA5/10/20/60)+ 技术(RSI/MACD/BOLL)+ 动量(RET_5D/20D) 三组展示
+- 数字 `tabular-nums`,Loading/Empty/Error/Success 四态处理,符合 DESIGN.md 暗色 + `rounded-none`
+
+### 🆕 feat: 数据库 schema
+- `realtime_factor_cache`(PK: stock_code+factor_name, value REAL, ts REAL) — M2 因子缓存
+- `realtime_signal_log`(M3 用,本 milestone 暂未启用) — 策略信号日志 + 手动确认状态
+
+### ✅ 测试验收
+- 17 个新测试(`tests/test_realtime_factor.py`):
+  - `compute_realtime_factors` 7 个(序列不足/全部算/未知因子/单因子失败兜底/extract_scalar ndarray/None/NaN/inf)
+  - 缓存层 5 个(set+get/None 跳过/TTL 过期/get_all_cached 跳过过期/invalidate)
+  - `compute_factors_with_cache` 2 个(首次算并缓存/二次命中)
+  - REST API 3 个(factor 返回/no-data 404/invalidate)
+- 与 M1 一起跑: **38 passed / 0 failed**
+
+### 📌 下一步
+- M3: 实时信号扫描 (复用 13 YAML + compute_factors_with_cache) + 手动确认 UI
+- M4: `/live` 仪表板前端(组合卡片 + 信号列表 + 推送状态)
 
 ---
 
