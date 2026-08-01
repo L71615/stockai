@@ -994,6 +994,32 @@ def init_db():
             created_at      TEXT NOT NULL
         )""")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_drift_policy_effective ON drift_policies(effective_from)")
+
+        # ── v5.0-alpha M2: 盘中因子缓存(5m TTL) ──
+        # 单只股票 × 单因子为唯一键, value 是最近一次计算的标量, ts 用于 TTL 过期判断
+        conn.execute("""CREATE TABLE IF NOT EXISTS realtime_factor_cache (
+            stock_code    TEXT NOT NULL,
+            factor_name   TEXT NOT NULL,
+            value         REAL,
+            ts            REAL NOT NULL,         -- unix timestamp, 写入时刻
+            PRIMARY KEY (stock_code, factor_name)
+        )""")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_rfc_ts ON realtime_factor_cache(ts)")
+
+        # ── v5.0-alpha M3: 盘中信号日志(手动确认) ──
+        conn.execute("""CREATE TABLE IF NOT EXISTS realtime_signal_log (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            strategy_id   TEXT NOT NULL,
+            stock_code    TEXT NOT NULL,
+            direction     TEXT NOT NULL,         -- 'buy' / 'sell'
+            score         REAL NOT NULL DEFAULT 0.7,
+            triggered_at  REAL NOT NULL,
+            accepted      INTEGER NOT NULL DEFAULT 0,   -- 1=已接受
+            order_id      INTEGER,               -- accepted 后填 t1_pending_orders.id
+            snapshot_json TEXT NOT NULL DEFAULT '{}'
+        )""")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_rsl_triggered ON realtime_signal_log(triggered_at DESC)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_rsl_accepted ON realtime_signal_log(accepted)")
         # 默认政策 — v4.1 Phase 2B 启动时插入一次 (幂等: UNIQUE 冲突则跳过)
         # 关键: effective_from 用纯日期 'YYYY-MM-DD', load_active_policy 比较才能稳定命中
         _today_date = _dt.now().strftime("%Y-%m-%d")
