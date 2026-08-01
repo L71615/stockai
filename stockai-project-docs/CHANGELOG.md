@@ -1,7 +1,40 @@
 # StockAI 项目日志
 
 > StockAI 从 0 到 v4.1 的完整演进记录。按时间倒序。
-> **当前版本: v4.1 完成** · 下一阶段: v4.2 (Full order/fill sim + Auto Champion)
+> **当前版本: v4.1.1 patch3** · 下一阶段: v4.2 → v5.0 准实盘量化交易系统(战略已锁定,见 `2026-08-01-v5.0-strategy.md`)
+
+---
+
+## 2026-08-01 — v4.1.1 patch3 (5 项 bug 修复 + v4.1 收尾测试验收)
+
+### 🐛 fix(quant): 股票代码 input 框"修改不了"
+- **问题**: `/quant?code=000725` 页用户改 input 框 → 输入被立即覆盖回 `000725`
+- **根因**: `page.tsx` useEffect 依赖列表包含 `code`,输入触发 state 更新 → effect 重跑 → 读到 URL 旧 code → 强制 setCode 把输入改回
+- **修复**: 同步方向改为**单向 URL → state**,从依赖列表移除 `code`。添加防御性分支(URL 清空时 state 也清)
+- **回归测试**: 覆盖 3 个场景(直接进入/外部跳转/快速选择器)
+
+### 🐛 fix(shadow): `get_shadow_equity_curve` cutoff off-by-one
+- **问题**: `shadow_portfolio_service.py:577` 算 cutoff = `today - days` → "过去 N 天"丢了边界日
+- **触发**: 今天 2026-08-01, `days=30` → cutoff=2026-07-02 → 把 2026-07-01 滤掉
+- **修复**: `cutoff = today - timedelta(days=days + 1)`,业务语义"过去 30 天"包含边界日
+
+### 🐛 fix(test): Phase 2A orchestrator 测试撞 Phase 2B pipeline gate
+- **问题**: `test_drift_policy.py` 2 个测试(Phase 2A 时代)直接调 `run_drift_check()` → 撞 Phase 2B 加的 `experiment_runs.last_status='done'` gate → `events_written=0`
+- **修复**: 给两个测试加 `skip_pipeline_gate=True` 旁路参数(保留 PSI/KL 写表覆盖)
+- **不影响**: `test_drift_policy_phase2b.py` 的新测试已正确处理 gate
+
+### 🐛 fix(test): Phase 2B fixture 删 users 表污染后续测试
+- **问题**: `test_drift_policy_phase2b.py:27` autouse fixture `DELETE FROM users` 把 admin 用户也删了 → 后续 18 个 approval 测试 + 3 个 e2e + 3 个 integration 全部失败(都依赖 admin user_id)
+- **修复**: fixture 不清 users 表(init_db 自动建的 admin 是基础设施)。`_seed_experiment_run` 在 user 不存在时会重建
+
+### 🐛 fix(test): v4.1.1 risk_guard 集成回归 test_t1_watcher
+- **问题**: `test_t1_watcher.py::TestSimulateBuy` 2 个测试 admin 用户无初始 NAV,单次 buy 100% 占仓违反 30% 单票上限 → BLOCKED
+- **修复**: TestSimulateBuy 加 autouse fixture `monkeypatch` `_evaluate_buy_risk` 旁路。风险测试由 `test_t1_watcher_risk.py` + `test_risk_guard.py` 单独覆盖
+
+### ✅ v4.1 收尾测试验收
+- 跑了 **19 个 v4.1 相关测试文件**,**168 个测试 0 失败**(17.43s)
+- 包括: scheduler / pipeline_source_field / shadow_equity / retrospective_writer / bulk_approve / portfolio_vs_shadow / index_sync / etf_sync / drift_policy (×2) / t1_watcher (×2) / risk_guard / pipeline_persist / retrospective / counterfactual_api / approval_double_submit / e2e / integration
+- 5 个修复全部在 main,代码无需 revert
 
 ---
 

@@ -6,7 +6,7 @@
 
 **64 因子 · 13 策略 · 8 角色多 Agent + Agent 工具调用 · 自动量化 Pipeline · T+1 模拟成交 · 反事实报告 · 多策略组合**
 
-![Version](https://img.shields.io/badge/version-v4.1.1-success?style=flat-square)
+![Version](https://img.shields.io/badge/version-v4.1.1--patch3-success?style=flat-square)
 ![Python](https://img.shields.io/badge/python-3.11+-blue?style=flat-square&logo=python&logoColor=white)
 ![Next.js](https://img.shields.io/badge/Next.js-16-black?style=flat-square&logo=next.js&logoColor=white)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.6-3178C6?style=flat-square&logo=typescript&logoColor=white)
@@ -27,6 +27,8 @@ StockAI v4.1 是一个**纯本地化**的 A 股量化工具箱,主线场景为 *
 - **真实基准** — index_kline (6 指数) + etf_kline (11 ETF) + 4 段 fallback (真实指数 → ETF → 历史代理 → 全市场等权)
 - **漂移监控** — PSI/KL 阈值版本化 + experiment_runs gate + baseline_value 真实填值 + 严重通知
 - **v4.1.1 patch** — YAML 策略自动注册 + RSRS 因子 + 4 种仓位算法 + 4 规则风控拦截 + 因子退役通知 + impact cost look-ahead 修复
+- **v4.1.1 patch2** — 策略加载路径与 registry 一致 + dev DB 5 年一次性 seed (沪深300 等 6 指数 1250 行/指数)
+- **v4.1.1 patch3** — 5 项 bug 修复: 量化页 input 同步方向 + shadow 净值曲线 cutoff off-by-one + drift_policy Phase 2A/2B fixture 隔离 + risk_guard 集成 test 回归 + v4.1 测试套件 168/168 全过
 
 **核心能力**:
 - **8 角色多 Agent + CoT 推理** + Agent 工具调用(Claude tool_use / OpenAI function_calling)
