@@ -141,6 +141,20 @@ class TestCancelOrder:
 
 
 class TestSimulateBuy:
+    """v4.1.1 后:risk_guard 集成会拦截超额买入。
+    本 class 测的是买入业务逻辑(状态机/写表/合并持仓),不测风控(那是 test_risk_guard.py + test_t1_watcher_risk.py 的范围)。
+    用 autouse fixture 旁路 _evaluate_buy_risk 让业务测试能跑通。
+    """
+
+    @pytest.fixture(autouse=True)
+    def _bypass_risk_guard(self, monkeypatch):
+        monkeypatch.setattr(
+            t1_watcher, "_evaluate_buy_risk",
+            lambda user_id, stock_code, proposed_value: {
+                "action": "allow", "reason": "test_bypass",
+            },
+        )
+
     def test_buy_writes_holdings_and_transactions(self, db):
         from database import query_one
         admin = query_one("SELECT id FROM users LIMIT 1")

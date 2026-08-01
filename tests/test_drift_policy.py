@@ -121,7 +121,8 @@ def test_run_drift_check_writes_events_for_watch_factors(monkeypatch):
         raising=False,
     )
 
-    result = drift_monitor.run_drift_check()
+    # Phase 2B 加了 pipeline_status='done' gate — 测试单元不依赖 pipeline 状态, 旁路
+    result = drift_monitor.run_drift_check(skip_pipeline_gate=True)
 
     # Phase 2A trivial: baseline == current 同一组 → PSI ≈ 0, severity='none'
     assert result["events_written"] >= 4, f"unexpected writes: {result}"
@@ -146,7 +147,8 @@ def test_run_drift_check_skips_insufficient_factors(monkeypatch):
         lambda f: insufficient.get(f, []),
     )
 
-    result = drift_monitor.run_drift_check()
+    # Phase 2B 加了 pipeline_status='done' gate — 测试单元不依赖 pipeline 状态, 旁路
+    result = drift_monitor.run_drift_check(skip_pipeline_gate=True)
     skipped = result.get("skipped_factors", [])
     assert drift_monitor.WATCH_FACTORS[0] in skipped
     # 其余 3 因子 × 2 metric = 6 行

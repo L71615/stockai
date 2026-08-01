@@ -22,9 +22,11 @@ def _clean_tables(_test_db_session):
     """清理运行时表 + 清理非 default 的 drift_policies, 避免 cross-test 污染.
 
     v1.0-default 是 init_db 自动插入的 baseline, 保留; 其它测试自己插入的 override 删除.
+    users 不清 — init_db 自动建的 admin 用户(id=1)需要保留给后续测试复用。
+    _seed_experiment_run() 会在 user 不存在时自动重建,这里无需预先清理。
     """
     from database import execute
-    for tbl in ("drift_events", "experiment_runs", "users", "experiments"):
+    for tbl in ("drift_events", "experiment_runs", "experiments"):
         try:
             execute(f"DELETE FROM {tbl}")
         except Exception:

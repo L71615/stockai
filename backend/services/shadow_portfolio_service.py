@@ -574,7 +574,10 @@ def get_shadow_equity_curve(
     注: 1h / 4h 当前只对当日 1d bucket 做线性 roll-up (近似), 后续可改为真实高频采样.
     """
     from datetime import datetime, timedelta
-    cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+    # cutoff 用 days+1: 业务语义"过去 N 天"包含边界日
+    # 例: 今天 2026-08-01, days=30 → cutoff = 2026-07-02 (inclusive),
+    #     2026-07-01 才被排除
+    cutoff = (datetime.now() - timedelta(days=days + 1)).strftime("%Y-%m-%d")
 
     rows = query_all(
         """SELECT observation_date, nav, drawdown, turnover, costs

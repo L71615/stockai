@@ -431,6 +431,11 @@ function QuantPageInner() {
   const lastFetchedCodeRef = useRef<string | null>(null)
 
   // URL 参数变化时自动恢复状态 + 保存到 sessionStorage（切页回来不丢失）
+  // 重要: 这个 effect 的同步方向是 URL → state,单向。
+  //   - 用户在 input 框输入新 code → 只触发 state 变化,不应触发 effect,
+  //     否则 effect 会读到 URL 里的旧 code 把它写回 state,导致输入框"修改不了"。
+  //   - 只在 URL 变化(初始进入/外部跳转/router.replace 完成)时同步 state。
+  //   - `code` 不放在依赖列表里 — 它是 effect 的写入目标,不是触发条件。
   const isMounted = useIsMounted()
   useEffect(() => {
     const urlStr = params.toString()
@@ -440,9 +445,13 @@ function QuantPageInner() {
     const urlCode = params.get("code")
     const urlTab = params.get("tab")
     if (urlTab) setTabState(urlTab)
-    // 同步 state.code 与 URL(只在不等时同步,避免无谓渲染)
-    if (urlCode !== code) {
-      setCode(urlCode || "")
+    // 单向同步: 只在 URL 有 code 且与 state 不一致时,把 URL 写到 state。
+    // 不再用 `code` 作依赖,避免输入时反向覆盖。
+    if (urlCode && urlCode !== code) {
+      setCode(urlCode)
+    } else if (!urlCode && code) {
+      // URL 清掉了 code,保持 state 也清空(用户主动从 URL 移除的场景)
+      setCode("")
     }
     // 当 URL 携带 code 且该股尚未拉过数据时,触发 insight 加载
     // 覆盖三种场景:
@@ -464,8 +473,8 @@ function QuantPageInner() {
         .catch((err) => { if (isMounted.current) setError(err instanceof Error ? err.message : "加载失败") })
         .finally(() => { if (isMounted.current) setLoading(false) })
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- isMounted=ref, setters=stable; we list all real deps (url/key/days) honestly
-  }, [params.toString(), code, days])
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- isMounted=ref, setters=stable; `code` 故意不放依赖(单向 URL→state 同步)
+  }, [params.toString(), days])
 
   const fetchInsight = async () => {
     if (!code.trim()) return
