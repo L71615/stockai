@@ -1,7 +1,34 @@
 # StockAI 项目日志
 
 > StockAI 从 0 到 v4.1 的完整演进记录。按时间倒序。
-> **当前版本: v5.0-alpha M4** · 下一阶段: v5.0-alpha M5(盘中 WebSocket 推送)+ v5.0 战略见 `2026-08-01-v5.0-strategy.md`
+> **当前版本: v5.0**(2026-08-01 tag) — alpha 阶段完成(M1-M4,69 测试),下一阶段 v5.0-beta 见 `2026-08-01-v5.0-strategy.md`
+
+---
+
+## 2026-08-01 — v5.0 stable (alpha 阶段完成)
+
+### 🏁 tag v5.0 — alpha 阶段完整收尾
+
+**Release Notes**: [`RELEASE-NOTES-v5.0.md`](RELEASE-NOTES-v5.0.md)
+
+v5.0 alpha 阶段 4 个 milestone 全部完成,共交付:
+
+| Milestone | 主题 | 测试 | 核心交付 |
+|-----------|------|------|---------|
+| M1 | 实时行情接入 | 21 | RealtimeQuoteService + WS + 5s 轮询 |
+| M2 | 盘中因子缓存 | 17 | factor_lab 30 因子 + 5m TTL + 因子卡片 |
+| M3 | 信号扫描 + 手动确认 | 20 | scan_signals + accept REST + scanner 守护 |
+| M4 | /live 仪表板前端 | 11 | 5 个 section + sidebar + DESIGN 规范 |
+| **合计** | | **69** | **准实盘量化全链路** |
+
+**关键战略决策**(D1 锁定): 准实盘 — 实时行情 + 手动确认 + 模拟成交,**不下实单**
+
+### 📌 v5.0-beta 候选
+- M5: WebSocket 推送(替换 5s 轮询)
+- M6: 分钟级 K 线接入(`futu_raw_kline`)
+- M7: 55 因子全部接入(`factor_service` 完整版)
+- M8: 多用户 + 权限分层
+- M9: 通知集成(信号 → 邮件/微信/Telegram)
 
 ---
 
