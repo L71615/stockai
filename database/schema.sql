@@ -364,6 +364,24 @@ CREATE TABLE IF NOT EXISTS approval_attempts (
 CREATE INDEX IF NOT EXISTS idx_appr_att_prop ON approval_attempts(proposal_id);
 CREATE INDEX IF NOT EXISTS idx_appr_att_lease ON approval_attempts(lease_id);
 
+-- v4.2 M1: T+1 watcher 事件溯源 (append-only 审计)
+CREATE TABLE IF NOT EXISTS t1_order_events (
+    event_id       BIGSERIAL PRIMARY KEY,
+    order_id       BIGINT  NOT NULL REFERENCES t1_pending_orders(id) ON DELETE CASCADE,
+    actor          TEXT    NOT NULL DEFAULT 'system',
+    event_type     TEXT    NOT NULL,
+    from_status    TEXT,
+    to_status      TEXT,
+    filled_shares  INTEGER,
+    pending_shares INTEGER,
+    reason         TEXT    NOT NULL DEFAULT '',
+    metadata_json  TEXT    NOT NULL DEFAULT '{}',
+    created_at     TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_t1_ev_order ON t1_order_events(order_id);
+CREATE INDEX IF NOT EXISTS idx_t1_ev_time  ON t1_order_events(created_at);
+CREATE INDEX IF NOT EXISTS idx_t1_ev_type  ON t1_order_events(event_type);
+
 -- v3.11 (T8): 灰度开关 (feature flags)
 CREATE TABLE IF NOT EXISTS feature_flags (
     flag_key     TEXT PRIMARY KEY,

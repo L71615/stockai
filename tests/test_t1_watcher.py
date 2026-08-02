@@ -24,11 +24,15 @@ from services.t1_watcher import (
     process_pending_buys,
     process_pending_sells,
     summarize_user_pnl,
-    STATUS_PENDING_BUY,
-    STATUS_BOUGHT,
-    STATUS_PENDING_SELL,
-    STATUS_SOLD,
+    STATUS_PENDING_BUY,     # deprecated alias for "pending_buy"
+    STATUS_BOUGHT,          # deprecated alias for "bought"
+    STATUS_PENDING_SELL,    # deprecated alias for "pending_sell"
+    STATUS_SOLD,            # deprecated alias for "sold"
     STATUS_CANCELLED,
+    # v4.2 M1 N 态机新名字
+    STATUS_OPEN,
+    STATUS_FILLED,
+    STATUS_CLOSED,
 )
 
 
@@ -68,7 +72,7 @@ class TestCreatePendingOrder:
             hold_days=1,
         )
         assert result["id"] is not None
-        assert result["status"] == STATUS_PENDING_BUY
+        assert result["status"] == STATUS_OPEN  # v4.2 M1: 默认新字面量 "open"
         assert result["stock_code"] == "000001"
         assert result["entry_date"] is not None
         assert result["exit_date"] is not None
@@ -175,9 +179,9 @@ class TestSimulateBuy:
 
         assert any(r["order_id"] == order["id"] and r["filled"] for r in result)
 
-        # 验证订单状态
+        # 验证订单状态(v4.2 M1: filled 取代 bought)
         after = get_order_by_id(order["id"], user_id)
-        assert after["status"] == STATUS_BOUGHT
+        assert after["status"] == STATUS_FILLED
         # 100 × (1 + 0.001) = 100.10
         assert abs(after["executed_entry_price"] - 100.10) < 0.01
 
@@ -215,9 +219,9 @@ class TestSimulateBuy:
         with patch.object(t1_watcher, "_get_open_price", return_value=None):
             result = process_pending_buys()
 
-        # 订单状态未变
+        # 订单状态未变(v4.2 M1: 默认字面量是 STATUS_OPEN)
         after = get_order_by_id(order["id"], user_id)
-        assert after["status"] == STATUS_PENDING_BUY  # 未成交
+        assert after["status"] == STATUS_OPEN  # 未成交
 
     def test_buy_appends_to_existing_holdings(self, db):
         """已有持仓的股票,新买入应合并"""
@@ -299,9 +303,9 @@ class TestSimulateSell:
 
         assert any(r["order_id"] == order["id"] and r["filled"] for r in result)
 
-        # 验证订单状态
+        # 验证订单状态(v4.2 M1: closed 取代 sold)
         after = get_order_by_id(order["id"], user_id)
-        assert after["status"] == STATUS_SOLD
+        assert after["status"] == STATUS_CLOSED
         # 卖出价 = 110 × (1 - 0.001) = 109.89
         assert abs(after["executed_exit_price"] - 109.89) < 0.01
         # 净收益应 > 0(110→109.89 涨 9.89%,扣费略小)
@@ -385,8 +389,11 @@ class TestSummarizeUserPnl:
 
         summary = summarize_user_pnl(user_id, days=30)
         # 增加 2 个 sold(用相对值断言,避免其他测试干扰)
+        # v4.2 M1: sold 字面量归一化到 closed, sold_orders count 也按 closed 算
         assert summary["sold_orders"] == before + 2
-        assert "sold" in summary["by_status"]
+        assert "closed" in summary["by_status"]
+        # 老字面量 sold 不应独立成 key
+        assert "sold" not in summary["by_status"]
 
 
 # ═══════════════════════════════════════════════════════════════

@@ -1,7 +1,113 @@
 # StockAI 项目日志
 
-> StockAI 从 0 到 v4.1 的完整演进记录。按时间倒序。
-> **当前版本: v5.0**(2026-08-01 tag) — alpha 阶段完成(M1-M4,69 测试),下一阶段 v5.0-beta 见 `2026-08-01-v5.0-strategy.md`
+> StockAI 从 0 到 v4.2 的完整演进记录。按时间倒序。
+> **当前版本: v4.2**(2026-08-02) — T+1 watcher N 态(M1)。v5.0-alpha 已完成,详见 `2026-08-01-v5.0-strategy.md`
+
+---
+
+## 2026-08-02 — v4.2 M1 (T+1 watcher N 态 + 事件溯源)
+
+### 🆕 feat: T+1 订单状态机升级 — 6 态 + 白名单 + 审计
+
+**触发条件**: `v5.0-strategy.md §3.2`「T+1 watcher N 态」+「因子分钟级」各 ≥ 1 周,先开 v4.2。
+
+#### 6 状态(OSS OMS 风格)
+
+| 新字面量 | 替代老字面量 | 含义 |
+|---|---|---|
+| `open` | `pending_buy` / `pending_sell` | 未成交(含买/卖挂单) |
+| `partial_filled` | (新增) | 部分成交 |
+| `filled` | `bought` | 已成交(持仓中) |
+| `closed` | `sold` | 已卖出结算完成 |
+| `cancelled` | (不变) | 用户取消 |
+| `rejected` | (新增) | broker/系统拒绝 |
+
+#### 状态转换白名单
+- `open` → partial_filled / filled / cancelled / rejected
+- `partial_filled` → filled / open (撤单重挂) / cancelled / rejected
+- `filled` → closed / cancelled (极端平仓)
+- **closed / cancelled / rejected 均为终态**,不能转出
+
+#### 新增 API
+- `t1_watcher.transition(*, order_id, target, actor, event_type, reason, ...)` — 统一状态转换入口
+  - CAS 校验 expected_status (防并发覆盖)
+  - 写入 `t1_order_events` 审计行(append-only)
+  - 同一事务内执行(支持 caller 提供 `cur`)
+- `_ALLOWED_TRANSITIONS` 字典 — 白名单
+- `LEGACY_STATUS_MAP` — 老字面量 → 新名字映射
+- `_expand_legacy_status(status)` — 查询层把新名字展开为 [新, 老...] 兼容集合
+- `_legacy_status_to_new(status)` — 任意字面量归一化为新名字
+
+#### 新表 `t1_order_events`(事件溯源)
+
+```sql
+CREATE TABLE t1_order_events (
+    event_id       INTEGER PRIMARY KEY AUTOINCREMENT,
+    order_id       INTEGER NOT NULL REFERENCES t1_pending_orders(id) ON DELETE CASCADE,
+    actor          TEXT    NOT NULL DEFAULT 'system',   -- 'user:1' / 'scheduler' / 'risk_guard' / 'realtime_signal' / 'bulk_approve'
+    event_type     TEXT    NOT NULL,                    -- 'transition' / 'risk_blocked' / 'cancel' / 'filled' / 'closed' / 'partial_filled'
+    from_status    TEXT,                                 -- 原样记录老字面量(可追溯)
+    to_status      TEXT,
+    filled_shares  INTEGER,
+    pending_shares INTEGER,
+    reason         TEXT    NOT NULL DEFAULT '',
+    metadata_json  TEXT    NOT NULL DEFAULT '{}',       -- risk_blocked 存 risk_result
+    created_at     TEXT    NOT NULL DEFAULT (datetime('now','localtime'))
+);
+CREATE INDEX idx_t1_ev_order ON t1_order_events(order_id);
+CREATE INDEX idx_t1_ev_time  ON t1_order_events(created_at);
+CREATE INDEX idx_t1_ev_type  ON t1_order_events(event_type);
+```
+
+#### `t1_pending_orders` 加 2 列(partial_filled 用)
+- `filled_shares INTEGER NOT NULL DEFAULT 0`
+- `pending_shares INTEGER`
+
+#### 4 处状态变更点改造
+| 函数 | 改造 |
+|---|---|
+| `cancel_order` | 走 `transition(target=cancelled, actor='user:{id}')` |
+| `_simulate_buy` | 事务内 `transition(target=filled, actor='scheduler')` + 同步 `executed_entry_price` 等字段 |
+| `_simulate_sell` | 事务内 `transition(target=closed, actor='scheduler')` + 同步 `executed_exit_price` / pnl 等字段 |
+| `_cancel_blocked_order` | 走 `transition(target=cancelled, actor='risk_guard', event_type='risk_blocked', metadata=risk_result)` |
+
+#### 查询层双谓词兼容
+8 处 `t1_pending_orders` 查询改成兼容新旧字面量:
+- `process_pending_buys` / `process_pending_sells` 双谓词查询
+- `get_user_orders(status=...)` 自动展开同义老字面量
+- `summarize_user_pnl` by_status 按新名字聚合 + 重新算 avg_return_pct
+
+**老记录字面量保留**,新代码双谓词兼容 — **0 数据迁移、跨 deployment 期间不丢数据**。
+
+### ✅ 测试验收
+
+| 测试套件 | 通过 | 备注 |
+|---------|------|------|
+| `tests/test_t1_watcher_n_state.py` (新) | **30/30** | N 态机核心 + 审计 + 双谓词兼容 |
+| `tests/test_t1_watcher.py` (现有回归) | 16/16 | 老字面量 alias + 测试更新到新字面量 |
+| `tests/test_t1_watcher_risk.py` (现有回归) | 10/10 | 风控集成零回归 |
+| `tests/test_pipeline_source_field.py` (现有回归) | 4/4 | source/proposal_id 兼容零回归 |
+| **总计 v4.2 M1** | **60/60** | |
+
+### 📌 设计要点
+- **同事务写入**: `transition(cur=...)` 在 caller 事务内复用 cursor,保证 order UPDATE + event INSERT 原子性
+- **audit 失败不阻塞**: audit 内部异常 `try/except` 兜底,log warning 不抛
+- **partial_filled 实战场景**: bulk_approve 资金不足(留 v4.2.x — 需 cash 表基建)
+- **legacy 兼容**: 老字面量 alias 常量保留(`STATUS_PENDING_BUY = "pending_buy"`),让现有调用方继续工作
+- **summary by_status 归一化**: 老字面量 sold/bought/pending_buy/pending_sell 自动归到新名字 key,前端用新名字展示
+
+### 📁 文件清单
+- **改** `backend/database.py` (新表 DDL + ALTER 兜底)
+- **改** `backend/services/t1_watcher.py` (~250 LOC — 6 态 + transition + 4 处状态变更改造 + 8 处查询双谓词)
+- **改** `database/schema.sql` + `database/schema.sqlite.sql` (新表 + 新列同步)
+- **新** `scripts/migrations/v4.2_m1_add_t1_order_events.sql` (dev DB 手动 apply)
+- **新** `tests/test_t1_watcher_n_state.py` (30 测试,~300 LOC)
+- **改** `tests/test_t1_watcher.py` (5 处断言更新到新字面量 + import 加 alias)
+
+### 📌 下一步
+- v4.2 M2: 因子分钟级(55 因子完整对齐 + compute_minute_factors + minute_factor_cache)
+- bulk_approve partial_filled 实现留 v4.2.x(需 cash 表基建)
+- 前端 status badge 显示新状态字面量留 v5.0-beta M8
 
 ---
 

@@ -781,6 +781,32 @@ def init_db():
             conn.execute("ALTER TABLE t1_pending_orders ADD COLUMN proposal_id INTEGER")
         except Exception:
             pass
+        # v4.2 M1: partial_filled 支持 — 已成交股数 + 挂单剩余股数
+        try:
+            conn.execute("ALTER TABLE t1_pending_orders ADD COLUMN filled_shares INTEGER NOT NULL DEFAULT 0")
+        except Exception:
+            pass
+        try:
+            conn.execute("ALTER TABLE t1_pending_orders ADD COLUMN pending_shares INTEGER")
+        except Exception:
+            pass
+        # ── v4.2 M1: T+1 watcher 事件溯源表(状态机审计) ──
+        conn.execute("""CREATE TABLE IF NOT EXISTS t1_order_events (
+            event_id       INTEGER PRIMARY KEY AUTOINCREMENT,
+            order_id       INTEGER NOT NULL REFERENCES t1_pending_orders(id) ON DELETE CASCADE,
+            actor          TEXT    NOT NULL DEFAULT 'system',
+            event_type     TEXT    NOT NULL,
+            from_status    TEXT,
+            to_status      TEXT,
+            filled_shares  INTEGER,
+            pending_shares INTEGER,
+            reason         TEXT    NOT NULL DEFAULT '',
+            metadata_json  TEXT    NOT NULL DEFAULT '{}',
+            created_at     TEXT    NOT NULL DEFAULT (datetime('now','localtime'))
+        )""")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_t1_ev_order ON t1_order_events(order_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_t1_ev_time  ON t1_order_events(created_at)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_t1_ev_type  ON t1_order_events(event_type)")
         conn.execute("""CREATE TABLE IF NOT EXISTS approval_attempts (
             attempt_id          INTEGER PRIMARY KEY AUTOINCREMENT,
             proposal_id         INTEGER NOT NULL REFERENCES approval_proposals(proposal_id) ON DELETE CASCADE,

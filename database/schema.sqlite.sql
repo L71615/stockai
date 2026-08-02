@@ -88,25 +88,27 @@ CREATE TABLE installed_skills (
 );
 
 -- v4.0 (T+1/T+2) — 模拟成交订单表
--- 状态机: pending_buy → bought → pending_sell → sold
---   pending_buy:  22:00 pipeline 生成,等待次日 09:30 模拟买入
---   bought:       已模拟买入(写 holdings + transactions),等待持仓期满
---   pending_sell: 持仓期满,等待次日 09:30 模拟卖出
---   sold:         已模拟卖出(写 transactions),记录收益统计
---   cancelled:    手动取消或异常退出
+-- v4.2 M1 状态机升级 (6 态, OSS OMS 风格):
+--   open:           未成交(含买入/卖出挂单) — pending_buy / pending_sell 老字面量归一化到此
+--   partial_filled: 部分成交
+--   filled:         已成交(持仓中,未卖出) — bought 老字面量归一化到此
+--   closed:         已卖出结算完成 — sold 老字面量归一化到此
+--   cancelled:      用户取消
+--   rejected:       broker/系统拒绝
+-- 状态机白名单 + 转换守卫见 backend/services/t1_watcher.py:transition()
 CREATE TABLE t1_pending_orders (
     id                  INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id             INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     stock_code          TEXT    NOT NULL,
     stock_name          TEXT    NOT NULL DEFAULT '',
     brief_id            INTEGER REFERENCES quant_briefs(id) ON DELETE SET NULL,  -- 关联的简报
-    shares              INTEGER NOT NULL DEFAULT 100,         -- 模拟买入股数
+    shares              INTEGER NOT NULL DEFAULT 100,         -- 模拟买入股数(原计划)
     planned_entry_price REAL,                                  -- 计划买入价(前晚收盘价)
     planned_exit_price  REAL,                                  -- 计划卖出价(预期)
     executed_entry_price REAL,                                 -- 实际模拟成交价(开盘 × 滑点)
     executed_exit_price  REAL,                                 -- 实际模拟成交价(开盘 × 滑点)
     hold_days           INTEGER NOT NULL DEFAULT 1,            -- 持仓天数 T+1=1
-    status              TEXT    NOT NULL DEFAULT 'pending_buy',
+    status              TEXT    NOT NULL DEFAULT 'open',       -- v4.2 M1: 新字面量
     slippage_bps        REAL    NOT NULL DEFAULT 10.0,         -- 滑点
     entry_date          TEXT,                                  -- 计划买入日(次日)
     exit_date           TEXT,                                  -- 计划卖出日(持仓期满次日)
@@ -119,6 +121,10 @@ CREATE TABLE t1_pending_orders (
     net_pnl             REAL,                                  -- 净盈亏(扣费 + 溢价)
     net_return_pct      REAL,                                  -- 净收益率 %
     reason              TEXT    NOT NULL DEFAULT '',           -- 推荐理由 / 取消原因
+    source              TEXT    NOT NULL DEFAULT 'user_manual', -- v4.1 1A.3: pipeline_proposal / user_manual
+    proposal_id         INTEGER,                                -- v4.1 1A.3: 关联 approval_proposals.proposal_id
+    filled_shares       INTEGER NOT NULL DEFAULT 0,             -- v4.2 M1: partial_filled 已成交股数
+    pending_shares      INTEGER,                                -- v4.2 M1: partial_filled 挂单剩余股数
     created_at          TEXT    NOT NULL DEFAULT (datetime('now','localtime')),
     updated_at          TEXT    NOT NULL DEFAULT (datetime('now','localtime'))
 );
@@ -127,6 +133,25 @@ CREATE INDEX idx_t1_orders_status    ON t1_pending_orders(status);
 CREATE INDEX idx_t1_orders_brief     ON t1_pending_orders(brief_id);
 CREATE INDEX idx_t1_orders_entry_dt  ON t1_pending_orders(entry_date);
 CREATE INDEX idx_t1_orders_exit_dt   ON t1_pending_orders(exit_date);
+
+-- v4.2 M1 — T+1 watcher 事件溯源表(append-only 审计)
+-- 每次状态转换 / 风控拦截 / 取消都写一条 event,order_id → 整条生命周期可回放
+CREATE TABLE t1_order_events (
+    event_id       INTEGER PRIMARY KEY AUTOINCREMENT,
+    order_id       INTEGER NOT NULL REFERENCES t1_pending_orders(id) ON DELETE CASCADE,
+    actor          TEXT    NOT NULL DEFAULT 'system',
+    event_type     TEXT    NOT NULL,                          -- 'transition' / 'risk_blocked' / 'cancel' / 'filled' / 'closed' / 'expired'
+    from_status    TEXT,                                       -- 转换前状态(原样记录, 老字面量可追溯)
+    to_status      TEXT,                                       -- 转换后状态
+    filled_shares  INTEGER,                                    -- partial_filled 用
+    pending_shares INTEGER,                                    -- partial_filled 用
+    reason         TEXT    NOT NULL DEFAULT '',
+    metadata_json  TEXT    NOT NULL DEFAULT '{}',              -- risk_blocked 时存 risk_result
+    created_at     TEXT    NOT NULL DEFAULT (datetime('now','localtime'))
+);
+CREATE INDEX idx_t1_ev_order ON t1_order_events(order_id);
+CREATE INDEX idx_t1_ev_time  ON t1_order_events(created_at);
+CREATE INDEX idx_t1_ev_type  ON t1_order_events(event_type);
 
 -- 价格提醒表
 CREATE TABLE price_alerts (

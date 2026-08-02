@@ -40,22 +40,83 @@ logger = logging.getLogger(__name__)
 
 
 # ═══════════════════════════════════════════════════════════════
-#  状态机常量
+#  状态机常量 — v4.2 M1 N 态(6 态,OSS OMS 风格)
 # ═══════════════════════════════════════════════════════════════
 
-STATUS_PENDING_BUY = "pending_buy"
-STATUS_BOUGHT = "bought"
-STATUS_PENDING_SELL = "pending_sell"
-STATUS_SOLD = "sold"
-STATUS_CANCELLED = "cancelled"
+STATUS_OPEN           = "open"            # 未成交(含买入/卖出挂单)
+STATUS_PARTIAL_FILLED = "partial_filled"  # 部分成交
+STATUS_FILLED         = "filled"          # 已成交(持仓中,未卖出)
+STATUS_CLOSED         = "closed"          # 已卖出结算完成
+STATUS_CANCELLED      = "cancelled"       # 用户取消
+STATUS_REJECTED       = "rejected"        # broker / 系统拒绝
 
 ALL_STATUSES = {
-    STATUS_PENDING_BUY,
-    STATUS_BOUGHT,
-    STATUS_PENDING_SELL,
-    STATUS_SOLD,
-    STATUS_CANCELLED,
+    STATUS_OPEN, STATUS_PARTIAL_FILLED, STATUS_FILLED,
+    STATUS_CLOSED, STATUS_CANCELLED, STATUS_REJECTED,
 }
+
+# 老记录状态字面量 → 新名字映射(老记录保留,新代码不再使用)
+LEGACY_STATUS_MAP: dict[str, str] = {
+    "pending_buy":  STATUS_OPEN,
+    "pending_sell": STATUS_OPEN,
+    "bought":       STATUS_FILLED,
+    "sold":         STATUS_CLOSED,
+}
+
+# 兼容集合:查询层用,把所有等价字面量合并
+_LEGACY_OPEN_SET   = {STATUS_OPEN, "pending_buy", "pending_sell"}
+_LEGACY_FILLED_SET = {STATUS_FILLED, "bought"}
+_LEGACY_CLOSED_SET = {STATUS_CLOSED, "sold"}
+_LEGACY_NOT_TERMINAL_SET = _LEGACY_OPEN_SET | _LEGACY_FILLED_SET
+
+# v4.2 M1: 老字面量 alias(让现有 from-import 不破坏, 标记 deprecated)
+# 现有测试 / 调用方仍可引用这些常量,但应该迁移到新名字
+STATUS_PENDING_BUY  = "pending_buy"   # deprecated: 用 STATUS_OPEN
+STATUS_BOUGHT       = "bought"        # deprecated: 用 STATUS_FILLED
+STATUS_PENDING_SELL = "pending_sell"  # deprecated: 用 STATUS_OPEN
+STATUS_SOLD         = "sold"          # deprecated: 用 STATUS_CLOSED
+# STATUS_CANCELLED 不变(终态语义保持)
+
+# 状态转换白名单(from → {to})
+# closed / cancelled / rejected 均为终态,不能转出
+_ALLOWED_TRANSITIONS: dict[str, set[str]] = {
+    STATUS_OPEN: {
+        STATUS_PARTIAL_FILLED, STATUS_FILLED,
+        STATUS_CANCELLED, STATUS_REJECTED,
+    },
+    STATUS_PARTIAL_FILLED: {
+        STATUS_FILLED, STATUS_OPEN,                  # 撤单重挂 → open
+        STATUS_CANCELLED, STATUS_REJECTED,
+    },
+    STATUS_FILLED: {
+        STATUS_CLOSED, STATUS_CANCELLED,              # 极端平仓场景
+    },
+    STATUS_CLOSED:    set(),
+    STATUS_CANCELLED: set(),
+    STATUS_REJECTED:  set(),
+}
+
+
+def _expand_legacy_status(status: str) -> list[str]:
+    """把新状态字面量展开为 [新, 老...] 同义集合(查询层兼容用)
+
+    - "open"     → ["open", "pending_buy", "pending_sell"]
+    - "filled"   → ["filled", "bought"]
+    - "closed"   → ["closed", "sold"]
+    - "partial_filled" / "cancelled" / "rejected" → [自身]
+    """
+    if status == STATUS_OPEN:
+        return ["open", "pending_buy", "pending_sell"]
+    if status == STATUS_FILLED:
+        return ["filled", "bought"]
+    if status == STATUS_CLOSED:
+        return ["closed", "sold"]
+    return [status]
+
+
+def _legacy_status_to_new(status: str) -> str:
+    """把任意字面量(新或老)归一化为新名字 — 用于聚合 / 标签"""
+    return LEGACY_STATUS_MAP.get(status, status)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -86,7 +147,7 @@ def create_pending_order(
         其他参数: 见 schema
 
     Returns:
-        {"id": 新订单 ID, "status": "pending_buy", "source": ..., ...}
+        {"id": 新订单 ID, "status": "open", "source": ..., ...}
     """
     from database import execute, query_one
 
@@ -101,7 +162,7 @@ def create_pending_order(
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     # v4.1 1A.3: source 字段 + proposal_id 字段 (v4.0 schema 可能没有, 用 try/except ALTER)
-    # 这里直接 INSERT, source 是新字段, proposal_id 也加进去
+    # v4.2 M1: status 默认值改为 STATUS_OPEN (新状态字面量)
     try:
         result = execute(
             """INSERT INTO t1_pending_orders
@@ -113,7 +174,7 @@ def create_pending_order(
             (
                 user_id, stock_code, stock_name, brief_id, shares,
                 planned_entry_price, planned_exit_price, hold_days,
-                STATUS_PENDING_BUY, slippage_bps, entry_date, exit_date,
+                STATUS_OPEN, slippage_bps, entry_date, exit_date,
                 reason, source, proposal_id, now, now,
             ),
         )
@@ -149,7 +210,7 @@ def create_pending_order(
         "entry_date": entry_date,
         "exit_date": exit_date,
         "hold_days": hold_days,
-        "status": STATUS_PENDING_BUY,
+        "status": STATUS_OPEN,
         "slippage_bps": slippage_bps,
         "source": source,
         "proposal_id": proposal_id,
@@ -161,14 +222,27 @@ def get_user_orders(
     status: str | None = None,
     limit: int = 50,
 ) -> list[dict]:
-    """获取用户的 T+1 订单列表"""
+    """获取用户的 T+1 订单列表(v4.2 M1: 双谓词兼容老字面量)
+
+    若 status 是新字面量(open/filled/closed/cancelled),自动展开同义老字面量
+    (pending_buy/pending_sell/bought/sold)以保持兼容。
+    """
     from database import query_all
 
     if status:
-        sql = """SELECT * FROM t1_pending_orders
-                WHERE user_id = ? AND status = ?
-                ORDER BY created_at DESC LIMIT ?"""
-        rows = query_all(sql, (user_id, status, limit))
+        # 展开同义字面量 — 老记录保留,新代码按新名字查
+        expanded = _expand_legacy_status(status)
+        if len(expanded) == 1:
+            sql = """SELECT * FROM t1_pending_orders
+                    WHERE user_id = ? AND status = ?
+                    ORDER BY created_at DESC LIMIT ?"""
+            rows = query_all(sql, (user_id, expanded[0], limit))
+        else:
+            placeholders = ",".join("?" for _ in expanded)
+            sql = f"""SELECT * FROM t1_pending_orders
+                    WHERE user_id = ? AND status IN ({placeholders})
+                    ORDER BY created_at DESC LIMIT ?"""
+            rows = query_all(sql, (user_id, *expanded, limit))
     else:
         sql = """SELECT * FROM t1_pending_orders
                 WHERE user_id = ?
@@ -191,17 +265,214 @@ def get_order_by_id(order_id: int, user_id: int | None = None) -> dict | None:
     return row
 
 
-def cancel_order(order_id: int, user_id: int, reason: str = "用户取消") -> bool:
-    """取消订单(只在 pending_buy 状态可取消)"""
-    from database import execute
+# ═══════════════════════════════════════════════════════════════
+#  v4.2 M1 — transition() 守卫 + 事件溯源
+# ═══════════════════════════════════════════════════════════════
 
+def _transition_inner(
+    cur,
+    *,
+    order_id: int,
+    target: str,
+    actor: str,
+    event_type: str,
+    reason: str,
+    filled_shares: int | None,
+    pending_shares: int | None,
+    metadata: dict | None,
+    expected_status: str | None,
+) -> dict:
+    """transition 的内部实现 — 在 caller 提供的事务内执行
+
+    步骤:
+      1. 读 order 当前 status (CAS 校验)
+      2. 校验 from→to 白名单
+      3. UPDATE t1_pending_orders SET status, ...
+      4. INSERT t1_order_events(append-only audit)
+      5. 返回最新 order
+
+    Raises:
+        ValueError: order 不存在 / from→to 非法 / CAS 失败 / target 不在 ALL_STATUSES
+    """
+    import json as _json
+
+    if target not in ALL_STATUSES:
+        raise ValueError(f"transition: target '{target}' 不在 ALL_STATUSES 中")
+
+    # 1. 读 order
+    cur.execute(
+        "SELECT id, status, filled_shares, pending_shares FROM t1_pending_orders WHERE id = ?",
+        (order_id,),
+    )
+    row = cur.fetchone()
+    if row is None:
+        raise ValueError(f"transition: order {order_id} 不存在")
+
+    current = dict(row)
+    current_status = current.get("status")
+    if current_status not in ALL_STATUSES:
+        # 老字面量 → 视为等价的新名字(白名单查询用)
+        normalized_from = LEGACY_STATUS_MAP.get(current_status, current_status)
+    else:
+        normalized_from = current_status
+
+    # CAS 校验
+    if expected_status is not None:
+        if current_status != expected_status and normalized_from != expected_status:
+            raise ValueError(
+                f"transition: CAS 失败 order {order_id}: 当前 {current_status!r},"
+                f" 期望 {expected_status!r}"
+            )
+
+    # 2. 白名单校验(用 normalized_from,允许老记录转新状态)
+    allowed = _ALLOWED_TRANSITIONS.get(normalized_from, set())
+    if target not in allowed:
+        raise ValueError(
+            f"transition: 非法状态转换 order {order_id}:"
+            f" {current_status!r} → {target!r} 不在白名单"
+        )
+
+    # 3. UPDATE order
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    execute(
-        """UPDATE t1_pending_orders
-           SET status = ?, reason = ?, updated_at = ?
-           WHERE id = ? AND user_id = ? AND status = ?""",
-        (STATUS_CANCELLED, f"[{now}] {reason}", now,
-         order_id, user_id, STATUS_PENDING_BUY),
+    updates = ["status = ?", "updated_at = ?"]
+    params: list = [target, now]
+
+    if filled_shares is not None:
+        updates.append("filled_shares = ?")
+        params.append(int(filled_shares))
+    if pending_shares is not None:
+        updates.append("pending_shares = ?")
+        params.append(int(pending_shares))
+    if reason:
+        updates.append("reason = ?")
+        params.append(f"[{now}] {reason}")
+
+    params.append(order_id)
+    cur.execute(
+        f"UPDATE t1_pending_orders SET {', '.join(updates)} WHERE id = ?",
+        params,
+    )
+
+    # 4. INSERT audit event(原样记录 from_status, 老字面量可追溯)
+    metadata_json = _json.dumps(metadata or {}, default=str, ensure_ascii=False)
+    cur.execute(
+        """INSERT INTO t1_order_events
+           (order_id, actor, event_type, from_status, to_status,
+            filled_shares, pending_shares, reason, metadata_json)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (
+            order_id, actor, event_type,
+            current_status, target,
+            filled_shares, pending_shares,
+            reason, metadata_json,
+        ),
+    )
+
+    # 返回最新 order
+    cur.execute("SELECT * FROM t1_pending_orders WHERE id = ?", (order_id,))
+    updated = dict(cur.fetchone())
+    updated["_last_event_id"] = cur.lastrowid
+    return updated
+
+
+def transition(
+    *,
+    order_id: int,
+    target: str,
+    actor: str = "system",
+    event_type: str = "transition",
+    reason: str = "",
+    filled_shares: int | None = None,
+    pending_shares: int | None = None,
+    metadata: dict | None = None,
+    expected_status: str | None = None,
+    cur=None,
+) -> dict:
+    """统一状态转换入口(v4.2 M1)
+
+    全部订单状态变更必须走此函数,确保:
+      1. from→to 在白名单 (非法转换抛 ValueError)
+      2. CAS 校验 current_status (防并发覆盖)
+      3. 写 t1_order_events 审计行
+
+    Args:
+        order_id: t1_pending_orders.id
+        target: 目标状态(必须在 ALL_STATUSES)
+        actor: 谁触发,格式 'user:1' / 'scheduler' / 'risk_guard' /
+               'realtime_signal' / 'bulk_approve'
+        event_type: 'transition' / 'risk_blocked' / 'cancel' / 'expired'
+        reason: 备注
+        filled_shares / pending_shares: partial_filled 专用
+        metadata: 附加 dict, 序列化为 metadata_json(risk_blocked 时存 risk_result)
+        expected_status: CAS 校验当前状态
+        cur: 可选 — 若提供,在 caller 事务内复用 cursor
+
+    Returns:
+        最新 order dict(含 _last_event_id)
+
+    Raises:
+        ValueError: 见 _transition_inner
+    """
+    from database import execute_transaction
+
+    if cur is None:
+        # 单独事务(用于 cancel_order 等单步场景)
+        def _do(c) -> dict:
+            return _transition_inner(
+                c,
+                order_id=order_id,
+                target=target,
+                actor=actor,
+                event_type=event_type,
+                reason=reason,
+                filled_shares=filled_shares,
+                pending_shares=pending_shares,
+                metadata=metadata,
+                expected_status=expected_status,
+            )
+        return execute_transaction(_do)
+    return _transition_inner(
+        cur,
+        order_id=order_id,
+        target=target,
+        actor=actor,
+        event_type=event_type,
+        reason=reason,
+        filled_shares=filled_shares,
+        pending_shares=pending_shares,
+        metadata=metadata,
+        expected_status=expected_status,
+    )
+
+
+def cancel_order(order_id: int, user_id: int, reason: str = "用户取消") -> bool:
+    """取消订单(v4.2 M1 N 态版) — 走 transition() 写审计
+
+    open / partial_filled 状态可取消。filled(持仓中)取消等价于强制平仓,
+    由 _simulate_sell 的 closed 路径处理,不通过本函数。
+    """
+    from database import query_one
+
+    order = query_one(
+        "SELECT id, status FROM t1_pending_orders WHERE id = ? AND user_id = ?",
+        (order_id, user_id),
+    )
+    if order is None:
+        return False
+
+    current_status = order["status"]
+    # 老字面量也算可取消
+    normalized = LEGACY_STATUS_MAP.get(current_status, current_status)
+    if normalized not in (STATUS_OPEN, STATUS_PARTIAL_FILLED):
+        return False
+
+    transition(
+        order_id=order_id,
+        target=STATUS_CANCELLED,
+        actor=f"user:{user_id}",
+        event_type="cancel",
+        reason=reason,
+        expected_status=current_status,
     )
 
     # v4.1 1B.1: 推送取消通知 (best-effort, 不阻塞取消主流程)
@@ -344,22 +615,24 @@ def _notify_risk_block(order_id: int, user_id: int, stock_code: str, risk_result
         logger.warning("t1_watcher: 风险通知失败(不阻塞): %s", e)
 
 
-def _cancel_blocked_order(order_id: int, reason: str) -> None:
-    """风控拦截时把订单标 cancelled + 记录原因
+def _cancel_blocked_order(order_id: int, reason: str, risk_result: dict | None = None) -> None:
+    """风控拦截时把订单标 cancelled + 写审计(v4.2 M1)
 
     不复用 cancel_order(user_id, reason="用户取消"),因为这里没有 user_id 校验
-    需求(订单本来就是这个用户的)。直接 UPDATE。
+    需求(订单本来就是这个用户的)。走 transition() 写 audit event_type='risk_blocked'。
     """
-    from database import execute
     try:
-        execute(
-            """UPDATE t1_pending_orders
-               SET status = ?, updated_at = ?
-               WHERE id = ? AND status = ?""",
-            (STATUS_CANCELLED, datetime.now().isoformat(), order_id, STATUS_PENDING_BUY),
+        transition(
+            order_id=order_id,
+            target=STATUS_CANCELLED,
+            actor="risk_guard",
+            event_type="risk_blocked",
+            reason=reason,
+            metadata=risk_result,
         )
         logger.info("t1_watcher: order %s marked cancelled by risk: %s", order_id, reason)
-    except Exception as e:
+    except ValueError as e:
+        # 订单已被并发取消/已 filled 等,记录 warning 不阻塞主流程
         logger.warning("t1_watcher: cancel blocked order %s failed: %s", order_id, e)
 
 
@@ -497,14 +770,23 @@ def _simulate_buy(order: dict, open_price: float) -> dict:
             )
             holdings_id = int(cur.lastrowid)
 
-        # 3. 更新订单状态
+        # 3. 更新订单状态 — v4.2 M1: 走 transition() 写审计 (cur 同事务)
+        transition(
+            order_id=order_id,
+            target=STATUS_FILLED,
+            actor="scheduler",
+            event_type="filled",
+            reason=f"模拟买入成交 @ {round(open_price, 4)}",
+            expected_status=None,  # 不强制 CAS — 单 ticker 串行, 简化
+            cur=cur,
+        )
+
+        # 同步更新价格/费用字段(transition 不覆盖这些)
         cur.execute(
             """UPDATE t1_pending_orders
-               SET status = ?, executed_entry_price = ?, entry_fee = ?,
-                   actual_entry_at = ?, updated_at = ?
+               SET executed_entry_price = ?, entry_fee = ?, actual_entry_at = ?
                WHERE id = ?""",
-            (STATUS_BOUGHT, round(open_price, 4), round(fee["total"], 2),
-             now, now, order_id),
+            (round(open_price, 4), round(fee["total"], 2), now, order_id),
         )
 
         return {"holdings_id": holdings_id}
@@ -613,17 +895,27 @@ def _simulate_sell(order: dict, open_price: float) -> dict:
                     (new_qty, now, existing_d["id"]),
                 )
 
-        # 更新订单状态
+        # 更新订单状态 — v4.2 M1: 走 transition() 写审计
+        transition(
+            order_id=order_id,
+            target=STATUS_CLOSED,
+            actor="scheduler",
+            event_type="closed",
+            reason=f"模拟卖出成交 @ {round(open_price, 4)},"
+                   f" 净收益 {round(t1.get('net_pnl', 0), 2)}",
+            cur=cur,
+        )
+        # 同步更新价格/费用/PnL 字段(transition 不覆盖这些)
         cur.execute(
             """UPDATE t1_pending_orders
-               SET status = ?, executed_exit_price = ?, exit_fee = ?,
+               SET executed_exit_price = ?, exit_fee = ?,
                    holding_risk_premium = ?, gross_pnl = ?, net_pnl = ?, net_return_pct = ?,
-                   actual_exit_at = ?, updated_at = ?
+                   actual_exit_at = ?
                WHERE id = ?""",
-            (STATUS_SOLD, round(open_price, 4), round(fee["total"], 2),
+            (round(open_price, 4), round(fee["total"], 2),
              t1.get("holding_risk_premium", 0), t1.get("gross_pnl", 0),
              t1.get("net_pnl", 0), t1.get("net_return_pct", 0),
-             now, now, order_id),
+             now, order_id),
         )
         return {}
 
@@ -658,7 +950,7 @@ def _simulate_sell(order: dict, open_price: float) -> dict:
 # ═══════════════════════════════════════════════════════════════
 
 def process_pending_buys(today: str | None = None) -> list[dict]:
-    """扫描所有 pending_buy 且 entry_date <= today,模拟买入
+    """扫描所有 open(含 pending_buy / pending_sell 老字面量)且 entry_date <= today,模拟买入
 
     Args:
         today: 今天日期(YYYY-MM-DD),默认今天
@@ -671,11 +963,13 @@ def process_pending_buys(today: str | None = None) -> list[dict]:
     if today is None:
         today = datetime.now().strftime("%Y-%m-%d")
 
+    # v4.2 M1: 双谓词 — 同时查新字面量 'open' 和老字面量 'pending_buy' / 'pending_sell'
     rows = query_all(
         """SELECT * FROM t1_pending_orders
-           WHERE status = ? AND entry_date <= ?
+           WHERE status IN ('open', 'pending_buy', 'pending_sell')
+             AND entry_date <= ?
            ORDER BY created_at ASC""",
-        (STATUS_PENDING_BUY, today),
+        (today,),
     )
 
     results: list[dict] = []
@@ -704,12 +998,12 @@ def process_pending_buys(today: str | None = None) -> list[dict]:
                     order_id, risk_result,
                 )
             elif risk_result.get("action") == "block_buy":
-                # 仓位超标 — 标记订单 cancelled + 通知
+                # 仓位超标 — 标记订单 cancelled + 通知(v4.2 M1: 走 transition 写 audit)
                 logger.warning(
                     "process_pending_buys: order %s BLOCKED by risk: %s",
                     order_id, risk_result.get("reason"),
                 )
-                _cancel_blocked_order(order_id, risk_result.get("reason", ""))
+                _cancel_blocked_order(order_id, risk_result.get("reason", ""), risk_result)
                 _notify_risk_block(order_id, order["user_id"], stock_code, risk_result)
                 results.append({
                     "order_id": order_id,
@@ -730,7 +1024,7 @@ def process_pending_buys(today: str | None = None) -> list[dict]:
 
 
 def process_pending_sells(today: str | None = None) -> list[dict]:
-    """扫描所有 bought 且 exit_date <= today,模拟卖出
+    """扫描所有 filled(含 bought 老字面量)且 exit_date <= today,模拟卖出
 
     实际语义:exit_date 是"持仓期满次日"。所以 exit_date == today 时卖出。
     """
@@ -739,11 +1033,12 @@ def process_pending_sells(today: str | None = None) -> list[dict]:
     if today is None:
         today = datetime.now().strftime("%Y-%m-%d")
 
+    # v4.2 M1: 双谓词 — filled + 老字面量 bought
     rows = query_all(
         """SELECT * FROM t1_pending_orders
-           WHERE status = ? AND exit_date <= ?
+           WHERE status IN ('filled', 'bought') AND exit_date <= ?
            ORDER BY created_at ASC""",
-        (STATUS_BOUGHT, today),
+        (today,),
     )
 
     results: list[dict] = []
@@ -774,7 +1069,11 @@ def process_pending_sells(today: str | None = None) -> list[dict]:
 # ═══════════════════════════════════════════════════════════════
 
 def summarize_user_pnl(user_id: int, days: int = 30) -> dict:
-    """汇总用户最近 N 天的 T+1 模拟盈亏"""
+    """汇总用户最近 N 天的 T+1 模拟盈亏(v4.2 M1: by_status 用新名字聚合)
+
+    老字面量 pending_buy/pending_sell/bought/sold 自动归一化为
+    open/filled/closed,保证 by_status key 一致性。
+    """
     from database import query_all
 
     rows = query_all(
@@ -791,19 +1090,40 @@ def summarize_user_pnl(user_id: int, days: int = 30) -> dict:
         "days": days,
         "by_status": {},
         "total_orders": 0,
-        "sold_orders": 0,
+        "sold_orders": 0,       # filled 的订单数(含 bought 老字面量)
         "total_pnl": 0.0,
         "avg_return_pct": 0.0,
     }
     for r in rows:
-        summary["by_status"][r["status"]] = {
-            "count": r["cnt"],
-            "total_pnl": r["total_pnl"],
-            "avg_return_pct": r["avg_return_pct"],
-        }
+        # 归一化 status key(老字面量 → 新名字)
+        new_status = _legacy_status_to_new(r["status"])
+        # 合并同一新名字下的多行(老+新字面量)
+        if new_status in summary["by_status"]:
+            existing = summary["by_status"][new_status]
+            existing["count"] += r["cnt"]
+            existing["total_pnl"] += r["total_pnl"]
+            # avg_return_pct 不再平均(避免错误),保留首次记录
+        else:
+            summary["by_status"][new_status] = {
+                "count": r["cnt"],
+                "total_pnl": r["total_pnl"],
+                "avg_return_pct": r["avg_return_pct"],
+            }
         summary["total_orders"] += r["cnt"]
-        if r["status"] == STATUS_SOLD:
-            summary["sold_orders"] = r["cnt"]
-            summary["total_pnl"] = r["total_pnl"]
-            summary["avg_return_pct"] = r["avg_return_pct"]
+        if new_status == STATUS_CLOSED:
+            summary["sold_orders"] += r["cnt"]
+            summary["total_pnl"] += r["total_pnl"]
+    # 重新算 avg_return_pct (从闭合计)
+    closed = summary["by_status"].get(STATUS_CLOSED)
+    if closed and closed["count"] > 0:
+        # 重新拉一次 closed 状态数据算 avg
+        closed_rows = query_all(
+            """SELECT AVG(net_return_pct) as avg
+               FROM t1_pending_orders
+               WHERE user_id = ? AND status IN ('closed', 'sold')
+                 AND created_at >= date('now', ?)""",
+            (user_id, f"-{days} days"),
+        )
+        if closed_rows and closed_rows[0].get("avg") is not None:
+            summary["avg_return_pct"] = closed_rows[0]["avg"]
     return summary
