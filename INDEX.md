@@ -47,9 +47,9 @@ D:\stocks\
 - **后端**: Python FastAPI (端口 3000)
 - **前端**: Next.js 16 (端口 3001)
 - **数据库**: SQLite (WAL 模式)
-- **当前版本**: **v5.0** (2026-08-01 tag,准实盘量化 alpha 阶段完成)
+- **当前版本**: **v4.2** (2026-08-02,T+1 watcher N 态机 + 事件溯源)
 - **下一大版本**: v5.0-beta(WS 推送 / 分钟级 K 线 / 55 因子 / 多用户)
-- **核心能力**: v4.1.1 全量 + **v5.0-alpha 新增**: 实时行情接入(M1)/ 盘中因子缓存 5m TTL(M2)/ 盘中信号扫描 + 手动确认下单(M3)/ **`/live` 仪表板前端(M4)** — 详见 [`RELEASE-NOTES-v5.0.md`](stockai-project-docs/RELEASE-NOTES-v5.0.md)
+- **核心能力**: v5.0-alpha 全量(实时行情 / 因子缓存 / 信号扫描 / /live 仪表板)+ **v4.2 M1 新增**: 6 态状态机 + transition() 守卫 + t1_order_events 事件溯源表 — 详见 [`RELEASE-NOTES-v4.2.md`](stockai-project-docs/RELEASE-NOTES-v4.2.md) 与 [`RELEASE-NOTES-v5.0.md`](stockai-project-docs/RELEASE-NOTES-v5.0.md)
 - **项目入口**: `stockai-project-docs/README.md`
 - **GitHub 主页**: `README.md` (根)
 
@@ -77,7 +77,9 @@ D:\stocks\
 | 运行手册 | `stockai-project-docs/RUNBOOK.md` |
 | 待办事项 | `stockai-project-docs/TODOS.md` |
 | Agent 工作流 | `stockai-project-docs/AGENTS.md` |
-| **✅ v4.0+v4.1 已发布 / v4.2 候选** | **`stockai-project-docs/V4-PLAN.md`** |
+| **✅ v4.0+v4.1+v4.2 M1 已发布 / v5.0-beta 候选** | **`stockai-project-docs/V4-PLAN.md`** |
+| **v4.2 M1 release notes** | **`stockai-project-docs/RELEASE-NOTES-v4.2.md`** |
+| **v5.0-alpha release notes** | **`stockai-project-docs/RELEASE-NOTES-v5.0.md`** |
 | 监视器计划 | `monitor-desktop-docs/PLAN.md` |
 | 监视器改动 | `monitor-desktop-docs/DAILY-LOG.md` |
 | 文档归档说明 | `stockai-project-docs/ARCHIVE.md` |
@@ -142,6 +144,26 @@ D:\stocks\
 
 ---
 
+## 🆕 v4.2 M1 新增内容(2026-08-02 — T+1 watcher N 态机)
+
+| 项 | 文件 | 说明 |
+|----|------|------|
+| **6 态状态机(OSS 风格)** | `t1_watcher.py` 6 状态常量 + `_ALLOWED_TRANSITIONS` | open / partial_filled / filled / closed / cancelled / rejected |
+| **transition() 守卫函数** | `t1_watcher.transition()` | CAS 校验 + 白名单 + 同事务 audit 写入 |
+| **事件溯源表** | `database.py` + `t1_order_events` 表 | append-only 审计,整条订单生命周期可回放 |
+| **partial_filled 字段** | `t1_pending_orders` 加 `filled_shares` / `pending_shares` | bulk_approve 资金不足场景预留 |
+| **迁移脚本** | `scripts/migrations/v4.2_m1_add_t1_order_events.sql` | dev DB 手动 apply 兼容 |
+| **查询双谓词兼容** | `t1_watcher.process_pending_buys/sells` / `get_user_orders` / `summarize_user_pnl` | 老字面量 0 迁移,跨 deployment 不丢数据 |
+
+**修复**:
+- 4 处状态变更点( `cancel_order` / `_simulate_buy` / `_simulate_sell` / `_cancel_blocked_order`)全部走 transition(),统一审计入口
+- `_cancel_blocked_order` 增加 `event_type='risk_blocked'` 写 audit,带 `metadata=risk_result`
+
+**触发原因**:
+v5.0-strategy.md §3.2「若 T+1 watcher N 态 和 因子分钟级 各需要 ≥ 1 周,先开 v4.2」,M1 完成,M2(因子分钟级)继续推进中。
+
+---
+
 ## 🛡️ 敏感信息策略
 
 - `.env` / `*.db` / `*.db-wal` / `*.log` 全部 `.gitignore`
@@ -152,6 +174,11 @@ D:\stocks\
 
 ## 📝 文档历史
 
+- **2026-08-02**: v4.2 M1 文档三件套同步(CLAUDE.md / INDEX.md / CHANGELOG.md 当前版本 + RELEASE-NOTES-v4.2.md 新建 + git tag v4.2)
+- **2026-08-01**: v5.0-alpha 完成 + tag v5.0(M1-M4 共 69 测试)
+- **2026-07-30**: v4.1.1 patch3(5 项 bug 修复)+ v4.1 测试套件 168/168 全过
+- **2026-07-30**: v4.1 收尾(Phase 2A/2B — 真实基准 + Drift 监控)
+- **2026-07-28**: v4.0 正式发布(8 角色多 Agent + CoT + 工具调用 + 64 因子)
 - **2026-07-26**: v4.0 计划完整敲定(D1-D4)— AI 选股智能化 + T+1/T+2 短线预测
 - **2026-07-26**: README 三件套重写(高级版 + 合并 v3.11 重复项 + 英文同步) + 架构图删除
 - **2026-07-26**: MD 文件分类整理 + 后端监视器 v0.1.0 引入

@@ -2,9 +2,9 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-> **当前版本: v5.0**(2026-08-01 发布 tag) — 准实盘量化 alpha 阶段完成(M1-M4)
+> **当前版本: v4.2**(2026-08-02) — T+1 watcher N 态机(M1)完成,30 测试 + git tag v4.2
 > **量化方向**: 准实盘量化交易系统(D1 战略锁定) — 实时行情 + 盘中因子 + 信号手动确认 + 模拟成交
-> **最新改动**: v5.0 alpha 完成 — M1 实时行情接入 + M2 因子缓存 5m TTL + M3 信号扫描/手动确认 + M4 `/live` 仪表板前端(69 测试 + RELEASE-NOTES-v5.0.md + git tag v5.0);**v5.0 战略**:盘中量化分析功能(alpha 用户可见优先),详见 `2026-08-01-v5.0-strategy.md` + `2026-08-01-v5.0-alpha-plan.md` + `RELEASE-NOTES-v5.0.md`
+> **最新改动**: v4.2 M1 — T+1 watcher 6 态(OSS 风格)+ 事件溯源表 `t1_order_events` + transition() 守卫函数 + partial_filled 字段(60 测试全过 + migration 脚本 + 详见 `RELEASE-NOTES-v4.2.md`);**v5.0-alpha** 已完成(69 测试,git tag v5.0),详见 `2026-08-01-v5.0-strategy.md` + `RELEASE-NOTES-v5.0.md`
 > **详细记录**: 看 `stockai-project-docs/CHANGELOG.md` 和 `stockai-project-docs/V4-PLAN.md`
 > **文档结构**: 根目录 `INDEX.md` 是入口,所有 MD 已分类到 `stockai-project-docs/` 与 `monitor-desktop-docs/`
 
@@ -110,7 +110,7 @@ npm run dev:safe     # 4GB 堆内存，适用于大型页
   - `ai_service.py` + `vendor_router.py` + `ai_exceptions.py` — 多供应商（5 家）× 7 功能独立路由，异常体系 5 级
   - **`agent_tools.py`** — **🆕 v4.0 A2** Agent 工具注册表(get_quote / get_factor / run_backtest / calc_t1_cost),支持 OpenAI function_calling + Anthropic tool_use 双协议
   - **`t1_cost.py`** — **🆕 v4.0 C2** T+1/T+2 持仓成本计算器(卖费+持仓风险溢价+滑点)
-  - **`t1_watcher.py`** — **🆕 v4.0** T+1 模拟成交 watcher,状态机 pending_buy→bought→sold,写 holdings + transactions + **🆕 v4.1.1** `_evaluate_buy_risk` 风控拦截
+  - **`t1_watcher.py`** — **🆕 v4.0** T+1 模拟成交 watcher + **🆕 v4.2 M1** 6 态机(OSS 风格:open / partial_filled / filled / closed / cancelled / rejected)+ `transition()` 守卫函数 + 白名单 + CAS,写 holdings + transactions + **🆕 v4.1.1** `_evaluate_buy_risk` 风控拦截 + **🆕 v4.2** audit event_type='risk_blocked' 写 `t1_order_events`
   - `condition_engine.py` + `strategies/*.yaml` — 13 个 YAML 策略模板,AND/OR 组合 + 可调参数
   - **`strategy_registry.py`** — **🆕 v4.1.1** YAML 策略自动注册中心(单例 + mtime 失效 + validate)
   - **`risk_sizing.py`** — **🆕 v4.1.1** 4 种仓位算法(FixedFraction / Kelly / RiskParity / VolTarget) + calc_win_rate_and_profit_factor
@@ -134,7 +134,8 @@ npm run dev:safe     # 4GB 堆内存，适用于大型页
 - 入口：`database.query_all / query_one / execute / execute_many`（自动归还连接到池）。**⚠️ query_all 返回 `list[dict]`（已 dict 化），所有 `row[]` 整数索引会抛 KeyError**
 - 关键表：`users` · `holdings` · `transactions` · `dca_plans` · `futu_raw_quote` · `futu_raw_kline` · `historical_kline` · `futu_sync_runs` · `futu_sync_run_items` · `ai_*` · `trading_memory_*`
 - **🆕 v3.9 因子实验室表**：`factor_snapshot`（55 因子 × 全市场 · 24h TTL）· `factor_candidates`（GP/ML 挖掘候选因子）· `factor_lifecycle_status`（active/warning/retired）
-- **🆕 v4.0 T+1/T+2 表**：`t1_pending_orders`(状态机 pending_buy→bought→sold,模拟成交 + 收益统计)
+- **🆕 v4.0 T+1/T+2 表**：`t1_pending_orders`(状态机 pending_buy→bought→sold,模拟成交 + 收益统计)+ **🆕 v4.2 M1** 6 态(OSS 风格)+ `filled_shares` / `pending_shares` partial_filled 字段
+- **🆕 v4.2 M1 事件溯源表**：`t1_order_events`(order_id → 整条订单生命周期可回放,actor/event_type/from_status/to_status/metadata_json)
 - **🆕 v4.1 2A 基准表**：`index_kline`（6 默认指数 sh000300/sz399006 等 · PK (symbol, trade_date)）· `etf_kline`（11 默认 ETF 510300/510500/159915 等）· `index_sync_runs`/`index_sync_run_items` · `etf_sync_runs`/`etf_sync_run_items`
 - **🆕 v4.1 2A/2B 漂移表**：`drift_events`（factor/metric/value/severity 记录）· `drift_policies`（版本化阈值 policy_version + effective_from/to，init_db 自动插入 v1.0-default）
 - Schema：`database/schema.sql`（应用初始化时由 `database.init_db()` 执行 — **关键单点风险**：新表必须同步 4 处 `database.py` + `schema.sql` + `schema.sqlite.sql` + 直接 apply dev DB）
