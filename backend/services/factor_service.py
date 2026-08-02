@@ -16,7 +16,7 @@
 
 import math
 import logging
-from typing import Optional
+from typing import Optional, Callable
 
 logger = logging.getLogger(__name__)
 
@@ -1287,6 +1287,179 @@ def factor_inst_change(inst_data: Optional[dict]) -> Optional[float]:
 # ═══════════════════════════════════════════════════════════
 # 单只股票全因子计算
 # ═══════════════════════════════════════════════════════════
+
+
+# ═══════════════════════════════════════════════════════════
+# 单只股票全因子计算
+# ═══════════════════════════════════════════════════════════
+
+
+# ── v4.2 M2: 分钟级因子注册表(55 因子, 与 factor_lab.FACTOR_REGISTRY 平行) ──
+# (fn, needs_volume, needs_highs_lows, needs_opens)
+#   - needs_volume: 因子函数依赖 volumes 参数
+#   - needs_highs_lows: 因子函数依赖 highs / lows 参数
+#   - needs_opens: K 线形态因子 (v4.0 B1) 依赖 opens
+# (fn, needs_volume, needs_highs_lows, needs_opens, fn_takes_only_volumes)
+#   - fn_takes_only_volumes: 因子函数签名是 (volumes,) 而不是 (closes, volumes)
+#     例: factor_vol_ma5(volumes), factor_vol_ma10(volumes) — 只算 volumes
+MINUTE_FACTOR_REGISTRY: dict[str, tuple[Callable, bool, bool, bool, bool]] = {
+    # ── 动量类 (closes only) ──
+    "ret_5d":          (factor_ret_5d,          False, False, False, False),
+    "ret_20d":         (factor_ret_20d,         False, False, False, False),
+    "ret_60d":         (factor_ret_60d,         False, False, False, False),
+    "rsi_14":          (factor_rsi,             False, False, False, False),
+    "macd_signal":     (factor_macd_signal,     False, False, False, False),
+    "ma_disposition":  (factor_ma_disposition,  False, False, False, False),
+
+    # ── 价格类 ──
+    "ma5":             (factor_ma5,             False, False, False, False),
+    "ma10":            (factor_ma10,            False, False, False, False),
+    "ma20":            (factor_ma20,            False, False, False, False),
+    "ma60":            (factor_ma60,            False, False, False, False),
+    "price_position": (factor_price_position,  False, False, False, False),
+    "high_low_ratio":  (factor_high_low_ratio,  False, True,  False, False),
+    "close_open_ratio":(factor_close_open_ratio,False, False, False, False),
+    "typical_price":   (factor_typical_price,   False, True,  False, False),
+    "weighted_close":  (factor_weighted_close,  False, True,  False, False),
+    "rsrs":            (factor_rsrs,            False, True,  False, False),
+
+    # ── 波动类 ──
+    "hist_vol_5d":     (factor_hist_vol,        False, False, False, False),
+    "hist_vol_20d":    (factor_hist_vol,        False, False, False, False),
+    "atr_14":          (factor_atr,             False, True,  False, False),
+    "amplitude_20d":   (factor_amplitude,       False, False, False, False),
+    "downside_vol":    (factor_downside_vol,    False, False, False, False),
+    "boll_upper":      (factor_boll_upper,      False, False, False, False),
+    "boll_lower":      (factor_boll_lower,      False, False, False, False),
+    "boll_position":   (factor_boll_position,   False, False, False, False),
+    "volatility_ratio":(factor_volatility_ratio,False, False, False, False),
+    "bb_width":        (factor_bb_width,        False, False, False, False),
+
+    # ── 成交量类 (needs_volume) ──
+    # vol_ma* / vol_std: 签名 (volumes,) 不接 closes
+    "vol_ma5":         (factor_vol_ma5,         True,  False, False, True),
+    "vol_ma10":        (factor_vol_ma10,        True,  False, False, True),
+    "vol_ma20":        (factor_vol_ma20,        True,  False, False, True),
+    "vol_std":         (factor_vol_std,         True,  False, False, True),
+    # vol_ratio: 签名 (volumes, period=20) 不接 closes
+    "vol_ratio":       (factor_vol_ratio,       True,  False, False, True),
+    # turnover_rate: (volumes, total_shares) — 第二个是 fund 参数,盘中无
+    "turnover_rate":   (factor_turnover_rate,   True,  False, False, False),
+    # obv_divergence: (closes, volumes) — 标准双参
+    "obv_divergence":  (factor_obv_divergence,  True,  False, False, False),
+    "price_volume_corr": (factor_price_volume_corr, True, False, False, False),
+    # avg_amount: (volumes, closes) — 第二参数 closes
+    "avg_amount":      (factor_avg_amount,      True,  False, False, False),
+
+    # ── K线形态类 v4.0 B1 (needs_opens + highs + lows) ──
+    "klen":            (factor_klen,            False, True,  True,  False),
+    "kup":             (factor_kup,             False, True,  True,  False),
+    "klow":            (factor_klow,            False, True,  True,  False),
+    "ksft":            (factor_ksft,            False, True,  True,  False),
+
+    # ── 价量类 v4.0 B2/B3 ──
+    "roc":             (factor_roc,             False, False, False, False),
+    "deviation":       (factor_deviation,       False, False, False, False),
+    "price_std":       (factor_price_std,       False, False, False, False),
+    "beta20":          (factor_beta20,          False, False, False, False),
+    "vroc":            (factor_vroc,            True,  False, False, False),
+    "corr20":          (factor_corr20,          True,  False, False, False),
+    "kmid":            (factor_kmid,            False, True,  True,  False),
+    "vwap":            (factor_vwap,            True,  False, False, False),
+    "corr":            (factor_corr,            True,  False, False, False),
+    "cord":            (factor_cord,            False, False, False, False),
+    "vol_change":      (factor_vol_change,      True,  False, False, True),  # (volumes, period)
+
+    # ── 情绪类 ──
+    "strength":        (factor_strength,        False, False, False, False),
+    "momentum_score":  (factor_momentum_score,  False, False, False, False),
+    "acceleration":    (factor_acceleration,    False, False, False, False),
+
+    # ── 资金类(盘中无对应频段 — 算时返回 None) ──
+    "north_flow":      (factor_north_flow,      False, False, False, False),
+    "inst_change":     (factor_inst_change,     False, False, False, False),
+}
+
+
+def compute_minute_factors(
+    *,
+    code: str,
+    closes: list[float],
+    highs: list[float] | None = None,
+    lows: list[float] | None = None,
+    opens: list[float] | None = None,
+    volumes: list[float] | None = None,
+    factor_names: list[str] | None = None,
+) -> dict[str, float | None]:
+    """计算指定股票分钟级 55 因子(v4.2 M2)
+
+    复用 55 个 factor_xxx 函数(签名 list[float]),不区分日级/分钟级。
+    算法天然兼容 — 60 根日 bar 与 60 根 5m bar 算出的因子值在数值上不同但语义等价。
+
+    Args:
+        code: 股票代码(日志用)
+        closes: 最近 N 根分钟 bar 收盘价序列(>=5 根)
+        highs / lows / opens / volumes: 可选,K 线 / 量价类因子需要
+        factor_names: 要算的因子名列表,None = 全部 MINUTE_FACTOR_REGISTRY
+
+    Returns:
+        {factor_name: value or None}
+        - value: 标量(float),因子计算成功
+        - None: 数据不足 / 计算失败 / 需要的数据未传入
+    """
+    from services.realtime_factor_cache import _extract_scalar
+
+    if len(closes) < 5:
+        logger.debug("compute_minute_factors[%s]: closes 不足 5 根, 返回空 dict", code)
+        return {}
+
+    vols = volumes or []
+    hi = highs or []
+    lo = lows or []
+    op = opens or []
+
+    targets = factor_names or list(MINUTE_FACTOR_REGISTRY.keys())
+    # 大写兼容(用户可能传 "MA5" 而注册表存 "ma5")
+    targets_lower = [n.lower() if isinstance(n, str) else n for n in targets]
+    unknown = [n for n in targets_lower if n not in MINUTE_FACTOR_REGISTRY]
+    if unknown:
+        raise ValueError(f"compute_minute_factors: 未知因子名 {unknown}")
+
+    results: dict[str, float | None] = {}
+    for name in targets_lower:
+        fn, needs_vol, needs_hilo, needs_open, fn_volumes_only = MINUTE_FACTOR_REGISTRY[name]
+        if needs_vol and not vols:
+            results[name] = None
+            continue
+        if needs_hilo and (not hi or not lo):
+            results[name] = None
+            continue
+        if needs_open and not op:
+            results[name] = None
+            continue
+        try:
+            # 构造参数: 区分"只接 volumes"和"接 closes+volumes"两类函数
+            if fn_volumes_only:
+                # vol_ma5(volumes) / vol_ratio(volumes, period) / vol_change(volumes, period)
+                args = [vols]
+            else:
+                # 标准: closes 必有, 其他按 needs
+                args = [closes]
+                if needs_vol:
+                    args.append(vols)
+            if needs_hilo:
+                args.append(hi)
+                args.append(lo)
+            if needs_open:
+                args.append(op)
+            raw = fn(*args)
+            results[name] = _extract_scalar(raw, closes)
+        except Exception as e:
+            logger.debug("compute_minute_factors[%s.%s] 计算失败: %s", code, name, e)
+            results[name] = None
+
+    return results
+
 
 def compute_all_factors(
     code: str,

@@ -1032,6 +1032,17 @@ def init_db():
         )""")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_rfc_ts ON realtime_factor_cache(ts)")
 
+        # ── v4.2 M2: 分钟级 55 因子缓存(独立表,与 realtime_factor_cache 分离) ──
+        conn.execute("""CREATE TABLE IF NOT EXISTS minute_factor_cache (
+            stock_code  TEXT NOT NULL,
+            factor_name TEXT NOT NULL,
+            value       REAL,
+            ts          REAL NOT NULL,         -- unix timestamp, 写入时刻
+            PRIMARY KEY (stock_code, factor_name)
+        )""")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_mfc_code ON minute_factor_cache(stock_code)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_mfc_ts ON minute_factor_cache(ts)")
+
         # ── v5.0-alpha M3: 盘中信号日志(手动确认) ──
         conn.execute("""CREATE TABLE IF NOT EXISTS realtime_signal_log (
             id            INTEGER PRIMARY KEY AUTOINCREMENT,

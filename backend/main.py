@@ -95,6 +95,7 @@ from routers import shadow as shadow_router
 from routers import realtime as realtime_router
 from routers import realtime_factor as realtime_factor_router
 from routers import realtime_signal as realtime_signal_router
+from routers import realtime_factor_minute as realtime_factor_minute_router
 app.include_router(approvals_router.router)
 app.include_router(experiments_router.router)
 app.include_router(counterfactual.router)
@@ -102,6 +103,7 @@ app.include_router(shadow_router.router)
 app.include_router(realtime_router.router)
 app.include_router(realtime_factor_router.router)
 app.include_router(realtime_signal_router.router)
+app.include_router(realtime_factor_minute_router.router)
 
 # 健康检查
 @app.get("/api/health")

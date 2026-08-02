@@ -1,0 +1,163 @@
+"""盘中分钟级 55 因子计算 + 5m TTL 缓存 — v4.2 M2
+
+复用:
+  - services/factor_service.MINUTE_FACTOR_REGISTRY (55 因子, v4.2 M2 新增)
+  - services/factor_service.compute_minute_factors() (55 因子计算入口)
+  - services/realtime_factor_cache._extract_scalar (标量提取 — 已 v5.0-alpha 写过)
+
+独立 cache 表:
+  - minute_factor_cache (独立于 realtime_factor_cache, 5m TTL)
+  - 后续 v5.0-rc 可能调 TTL(60s/300s/900s), 两个频段分开 cache 更灵活
+
+数据源:
+  - fetch_recent_bars() — 临时用 historical_kline 日级 fallback (60 根)
+  - v5.0-rc M11 切 futu_raw_kline 分钟级 (1m / 5m)
+"""
+from __future__ import annotations
+
+import logging
+import time
+
+from database import execute, query_all, query_one
+
+logger = logging.getLogger(__name__)
+CACHE_TTL_SECONDS = 300  # 5 分钟
+
+
+# ── 缓存 CRUD ────────────────────────────────────────
+
+
+def get_cached_factor(code: str, factor_name: str) -> float | None:
+    """取单个缓存因子(过期返回 None)"""
+    row = query_one(
+        "SELECT value, ts FROM minute_factor_cache WHERE stock_code = ? AND factor_name = ?",
+        (code, factor_name),
+    )
+    if row is None:
+        return None
+    if time.time() - row["ts"] > CACHE_TTL_SECONDS:
+        return None
+    return row["value"]
+
+
+def get_all_cached(code: str) -> dict[str, float]:
+    """取某股票的所有未过期缓存因子"""
+    rows = query_all(
+        "SELECT factor_name, value, ts FROM minute_factor_cache WHERE stock_code = ?",
+        (code,),
+    )
+    now = time.time()
+    return {
+        r["factor_name"]: r["value"]
+        for r in rows
+        if r["value"] is not None and now - r["ts"] <= CACHE_TTL_SECONDS
+    }
+
+
+def set_cached_factor(code: str, factor_name: str, value: float | None) -> None:
+    """写单个因子到缓存(value=None 不写 — 跳过空值, 同 realtime_factor_cache)"""
+    if value is None:
+        return
+    try:
+        execute(
+            """INSERT INTO minute_factor_cache (stock_code, factor_name, value, ts)
+               VALUES (?, ?, ?, ?)
+               ON CONFLICT(stock_code, factor_name) DO UPDATE
+                   SET value = excluded.value, ts = excluded.ts""",
+            (code, factor_name, float(value), time.time()),
+        )
+    except Exception as e:
+        logger.warning("minute_factor_cache.set failed: %s", e)
+
+
+def invalidate(code: str) -> None:
+    """清某股票的所有 minute 因子缓存(alpha 测试用)"""
+    execute("DELETE FROM minute_factor_cache WHERE stock_code = ?", (code,))
+
+
+# ── 数据获取(临时, v5.0-rc 切 futu_raw_kline) ─────
+
+
+def fetch_recent_bars(
+    code: str,
+    limit: int = 240,
+) -> tuple[list[float], list[float], list[float], list[float], list[float]]:
+    """从 historical_kline 取最近 N 根 bar — 用日级 fallback
+
+    Returns:
+        (closes, highs, lows, opens, volumes)
+        v5.0-rc 切 futu_raw_kline(1m / 5m) — 同样 5 个序列
+    """
+    rows = query_all(
+        """SELECT trade_date, open, high, low, close, volume
+           FROM historical_kline
+           WHERE stock_code = ?
+           ORDER BY trade_date DESC LIMIT ?""",
+        (code, limit),
+    )
+    rows = list(reversed(rows))
+    closes = [r["close"] for r in rows if r["close"] is not None]
+    highs = [r["high"] for r in rows if r.get("high") is not None]
+    lows = [r["low"] for r in rows if r.get("low") is not None]
+    opens = [r["open"] for r in rows if r.get("open") is not None]
+    volumes = [r["volume"] for r in rows if r.get("volume") is not None]
+    return closes, highs, lows, opens, volumes
+
+
+# ── 因子计算(带缓存) ─────────────────────────────────
+
+
+def compute_minute_factors_with_cache(
+    *,
+    code: str,
+    closes: list[float],
+    highs: list[float] | None = None,
+    lows: list[float] | None = None,
+    opens: list[float] | None = None,
+    volumes: list[float] | None = None,
+    factor_names: list[str] | None = None,
+) -> dict[str, float | None]:
+    """带 minute_factor_cache 5m TTL 的因子计算
+
+    流程:
+      1. 读 cache 已有因子
+      2. targets 中未命中 → 重算
+      3. 写回 cache
+
+    Args:
+        同 factor_service.compute_minute_factors
+    """
+    from services.factor_service import compute_minute_factors
+
+    cached = get_all_cached(code)
+
+    if factor_names:
+        targets = [n.lower() if isinstance(n, str) else n for n in factor_names]
+    else:
+        # targets 全集: 从 cache 缺失 + 显式指定
+        from services.factor_service import MINUTE_FACTOR_REGISTRY
+        targets = list(MINUTE_FACTOR_REGISTRY.keys())
+
+    missing = [n for n in targets if n not in cached]
+    if missing:
+        new_factors = compute_minute_factors(
+            code=code,
+            closes=closes, highs=highs, lows=lows, opens=opens, volumes=volumes,
+            factor_names=missing,
+        )
+        for name, val in new_factors.items():
+            set_cached_factor(code, name, val)
+            if val is not None:
+                cached[name] = val
+
+    # 返回: 优先 cache, 加上 None 标记的未算因子
+    result: dict[str, float | None] = {}
+    for name in targets:
+        result[name] = cached.get(name)
+    return result
+
+
+def all_factor_names() -> list[str]:
+    """返回 minute_factor_cache 支持的全部因子名(小写)"""
+    from services.factor_service import MINUTE_FACTOR_REGISTRY
+    return list(MINUTE_FACTOR_REGISTRY.keys())

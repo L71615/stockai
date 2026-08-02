@@ -153,6 +153,18 @@ CREATE INDEX idx_t1_ev_order ON t1_order_events(order_id);
 CREATE INDEX idx_t1_ev_time  ON t1_order_events(created_at);
 CREATE INDEX idx_t1_ev_type  ON t1_order_events(event_type);
 
+-- v4.2 M2 — 分钟级 55 因子缓存(独立表, 5m TTL)
+-- 与 realtime_factor_cache(factor_lab 30 因子用)分离,后续 v5.0-rc 可调 TTL
+CREATE TABLE minute_factor_cache (
+    stock_code  TEXT NOT NULL,
+    factor_name TEXT NOT NULL,
+    value       REAL,
+    ts          REAL NOT NULL,
+    PRIMARY KEY (stock_code, factor_name)
+);
+CREATE INDEX idx_mfc_code ON minute_factor_cache(stock_code);
+CREATE INDEX idx_mfc_ts ON minute_factor_cache(ts);
+
 -- 价格提醒表
 CREATE TABLE price_alerts (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,

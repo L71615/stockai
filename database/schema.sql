@@ -382,6 +382,17 @@ CREATE INDEX IF NOT EXISTS idx_t1_ev_order ON t1_order_events(order_id);
 CREATE INDEX IF NOT EXISTS idx_t1_ev_time  ON t1_order_events(created_at);
 CREATE INDEX IF NOT EXISTS idx_t1_ev_type  ON t1_order_events(event_type);
 
+-- v4.2 M2: 分钟级 55 因子缓存(独立表, 与 realtime_factor_cache 分离)
+CREATE TABLE IF NOT EXISTS minute_factor_cache (
+    stock_code    TEXT NOT NULL,
+    factor_name   TEXT NOT NULL,
+    value         REAL,
+    ts            REAL NOT NULL,
+    PRIMARY KEY (stock_code, factor_name)
+);
+CREATE INDEX IF NOT EXISTS idx_mfc_code ON minute_factor_cache(stock_code);
+CREATE INDEX IF NOT EXISTS idx_mfc_ts ON minute_factor_cache(ts);
+
 -- v3.11 (T8): 灰度开关 (feature flags)
 CREATE TABLE IF NOT EXISTS feature_flags (
     flag_key     TEXT PRIMARY KEY,
