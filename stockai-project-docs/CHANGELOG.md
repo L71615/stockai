@@ -1,7 +1,60 @@
 # StockAI 项目日志
 
 > StockAI 从 0 到 v4.2 的完整演进记录。按时间倒序。
-> **当前版本: v4.2**(2026-08-02) — T+1 watcher N 态(M1)。v5.0-alpha 已完成,详见 `2026-08-01-v5.0-strategy.md`
+> **当前版本: v4.2.1**(2026-08-03 tag) — T+1 watcher N 态(M1) + 因子分钟级 55 因子(M2)
+> **下一阶段**: v5.0-beta(M5 WS 推送 / M6 分钟级 K 线 / M8 多用户 / M9 通知集成),详见 `2026-08-01-v5.0-strategy.md`
+
+---
+
+## 2026-08-03 — v4.2 M2 (因子分钟级 55 因子完整对齐)
+
+### 🆕 feat: factor_service 55 因子分钟级 + REST + 前端
+
+**触发**: v5.0-strategy.md §3.4 M5「实时因子计算(55 因子分钟级)」前置。
+
+#### 核心交付
+
+| 项 | 文件 | 说明 |
+|---|---|---|
+| `MINUTE_FACTOR_REGISTRY` (55 因子) | `factor_service.py` | 5 元组 (fn, needs_vol, needs_hilo, needs_open, fn_volumes_only), 与既有 92-key FACTOR_REGISTRY 并存 |
+| `compute_minute_factors()` | `factor_service.py` | 复用 55 个 `factor_xxx` 函数(签名天然兼容 `list[float]`), 大写 key 自动归一化, 单因子失败返回 None 不抛 |
+| `realtime_factor_minute.py` (新) | `services/` | 5m TTL 缓存 CRUD + `compute_minute_factors_with_cache` + `fetch_recent_bars` (~160 LOC) |
+| `minute_factor_cache` 表 | `database.py` | 独立于 `realtime_factor_cache` (5m TTL), 后续 v5.0-rc 可独立调 TTL |
+| REST 3 端点 | `routers/realtime_factor_minute.py` | GET `/api/realtime/factor/{code}/minute` + invalidate + factor-names |
+| 前端 hook | `hooks/use-realtime-minute-factor.ts` | SWR 30s + 8 组因子分类 |
+| 前端组件 | `components/realtime-minute-factor-card.tsx` | 4 组核心因子 + 数据源标识(fallback 黄色 / 真实 绿色) |
+
+#### 数据源
+- **临时**: `historical_kline` 日级 fallback (240 根)
+- **v5.0-rc M11** 切 `futu_raw_kline` 1m/5m(响应加 `data_source` 字段标记)
+
+### ✅ 测试验收
+- **25 个新测试**(`tests/test_factor_service_minute.py`)
+- **212/212 全过**(含 187 现有 v4.0/v4.1/v4.2 M1/v5.0-alpha 回归)
+
+### 📌 设计要点
+- **fn_volumes_only 第 5 字段**: `factor_vol_ma5(volumes)` 等只接 volumes 的因子显式标记,计算入口据此区分参数构造
+- **大写兼容**: 用户传 "MA5" 自动归一化为 "ma5"
+- **数据缺失不抛**: K 线因子无 highs/lows 时返 None(不抛),量价因子无 volumes 时返 None
+- **与 factor_lab 30 因子并存**: 不动 v5.0-alpha M2 的 factor_lab 路径, M2 走 factor_service 新路径
+
+### 📁 文件清单
+- **改** `backend/database.py` (新表 DDL)
+- **改** `backend/services/factor_service.py` (新注册表 + compute_minute_factors)
+- **改** `backend/main.py` (注册新 router)
+- **改** `database/schema.sql` + `schema.sqlite.sql`
+- **新** `backend/services/realtime_factor_minute.py`
+- **新** `backend/routers/realtime_factor_minute.py`
+- **新** `scripts/migrations/v4.2_m2_add_minute_factor_cache.sql`
+- **新** `tests/test_factor_service_minute.py`
+- **新** `frontend/src/hooks/use-realtime-minute-factor.ts`
+- **新** `frontend/src/components/realtime-minute-factor-card.tsx`
+
+### 📌 不在 M2 范围
+- ❌ 真正的 `futu_raw_kline` 5m/1m 接入 — 留 v5.0-rc M11
+- ❌ 增量更新(每根新 bar 触发) — 留 v5.0-rc M10
+- ❌ `/live` 页面集成 — 留 v5.0-beta M8
+- ❌ 缓存 TTL 动态配置 — 留 v5.0-rc
 
 ---
 

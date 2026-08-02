@@ -47,9 +47,12 @@ D:\stocks\
 - **后端**: Python FastAPI (端口 3000)
 - **前端**: Next.js 16 (端口 3001)
 - **数据库**: SQLite (WAL 模式)
-- **当前版本**: **v4.2** (2026-08-02,T+1 watcher N 态机 + 事件溯源)
-- **下一大版本**: v5.0-beta(WS 推送 / 分钟级 K 线 / 55 因子 / 多用户)
-- **核心能力**: v5.0-alpha 全量(实时行情 / 因子缓存 / 信号扫描 / /live 仪表板)+ **v4.2 M1 新增**: 6 态状态机 + transition() 守卫 + t1_order_events 事件溯源表 — 详见 [`RELEASE-NOTES-v4.2.md`](stockai-project-docs/RELEASE-NOTES-v4.2.md) 与 [`RELEASE-NOTES-v5.0.md`](stockai-project-docs/RELEASE-NOTES-v5.0.md)
+- **当前版本**: **v4.2.1** (2026-08-03 tag,M1 + M2 打包)
+- **下一大版本**: v5.0-beta(WS 推送 / 分钟级 K 线 / 多用户 / 通知集成)
+- **核心能力**: v5.0-alpha 全量 + **v4.2 新增**:
+  - **M1**: T+1 watcher 6 态机(OSS 风格) + transition() 守卫 + t1_order_events 事件溯源 + partial_filled 字段
+  - **M2**: factor_service 55 因子分钟级对齐 + compute_minute_factors() + minute_factor_cache 5m TTL + REST `/api/realtime/factor/{code}/minute` + 前端 hook/组件
+  - 详见 [`RELEASE-NOTES-v4.2.md`](stockai-project-docs/RELEASE-NOTES-v4.2.md) + [`RELEASE-NOTES-v4.2-m2.md`](stockai-project-docs/RELEASE-NOTES-v4.2-m2.md) + [`RELEASE-NOTES-v5.0.md`](stockai-project-docs/RELEASE-NOTES-v5.0.md)
 - **项目入口**: `stockai-project-docs/README.md`
 - **GitHub 主页**: `README.md` (根)
 
@@ -77,8 +80,9 @@ D:\stocks\
 | 运行手册 | `stockai-project-docs/RUNBOOK.md` |
 | 待办事项 | `stockai-project-docs/TODOS.md` |
 | Agent 工作流 | `stockai-project-docs/AGENTS.md` |
-| **✅ v4.0+v4.1+v4.2 M1 已发布 / v5.0-beta 候选** | **`stockai-project-docs/V4-PLAN.md`** |
+| **✅ v4.0+v4.1+v4.2 已发布 / v5.0-beta 候选** | **`stockai-project-docs/V4-PLAN.md`** |
 | **v4.2 M1 release notes** | **`stockai-project-docs/RELEASE-NOTES-v4.2.md`** |
+| **v4.2 M2 release notes** | **`stockai-project-docs/RELEASE-NOTES-v4.2-m2.md`** |
 | **v5.0-alpha release notes** | **`stockai-project-docs/RELEASE-NOTES-v5.0.md`** |
 | 监视器计划 | `monitor-desktop-docs/PLAN.md` |
 | 监视器改动 | `monitor-desktop-docs/DAILY-LOG.md` |
@@ -144,6 +148,22 @@ D:\stocks\
 
 ---
 
+## 🆕 v4.2.1 新增内容(2026-08-03 — M1 + M2 打包 tag)
+
+| 项 | 文件 | 说明 |
+|----|------|------|
+| **M2 55 因子分钟级** | `factor_service.MINUTE_FACTOR_REGISTRY` | 5 元组 (fn, needs_vol, needs_hilo, needs_open, fn_volumes_only) |
+| **`compute_minute_factors()`** | `factor_service.py` | 复用 55 个 `factor_xxx` 函数, 大写 key 自动归一化 |
+| **`realtime_factor_minute.py`** | `services/` 新 | 5m TTL 缓存 + `compute_minute_factors_with_cache` + `fetch_recent_bars` |
+| **`minute_factor_cache` 表** | `database.py` | 独立于 realtime_factor_cache, 后续 v5.0-rc 可独立调 TTL |
+| **REST 3 端点** | `routers/realtime_factor_minute.py` 新 | GET `/api/realtime/factor/{code}/minute` + invalidate + factor-names |
+| **前端 hook + 组件** | `hooks/use-realtime-minute-factor.ts` + `components/realtime-minute-factor-card.tsx` 新 | SWR 30s + 4 组核心因子卡片 |
+
+**触发原因**:
+v5.0-strategy.md §3.4 M5「实时因子计算(55 因子分钟级)」前置,M1 + M2 一起打 tag v4.2.1。
+
+---
+
 ## 🆕 v4.2 M1 新增内容(2026-08-02 — T+1 watcher N 态机)
 
 | 项 | 文件 | 说明 |
@@ -174,6 +194,7 @@ v5.0-strategy.md §3.2「若 T+1 watcher N 态 和 因子分钟级 各需要 ≥
 
 ## 📝 文档历史
 
+- **2026-08-03**: v4.2 M2 文档同步 — RELEASE-NOTES-v4.2-m2.md 新建 + CLAUDE.md / INDEX.md / CHANGELOG.md 当前版本 v4.2.1
 - **2026-08-02**: v4.2 M1 文档三件套同步(CLAUDE.md / INDEX.md / CHANGELOG.md 当前版本 + RELEASE-NOTES-v4.2.md 新建 + git tag v4.2)
 - **2026-08-01**: v5.0-alpha 完成 + tag v5.0(M1-M4 共 69 测试)
 - **2026-07-30**: v4.1.1 patch3(5 项 bug 修复)+ v4.1 测试套件 168/168 全过

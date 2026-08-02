@@ -2,9 +2,12 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-> **当前版本: v4.2**(2026-08-02) — T+1 watcher N 态机(M1)完成,30 测试 + git tag v4.2
+> **当前版本: v4.2.1**(2026-08-03 tag) — T+1 watcher N 态(M1) + 因子分钟级 55 因子(M2)
 > **量化方向**: 准实盘量化交易系统(D1 战略锁定) — 实时行情 + 盘中因子 + 信号手动确认 + 模拟成交
-> **最新改动**: v4.2 M1 — T+1 watcher 6 态(OSS 风格)+ 事件溯源表 `t1_order_events` + transition() 守卫函数 + partial_filled 字段(60 测试全过 + migration 脚本 + 详见 `RELEASE-NOTES-v4.2.md`);**v5.0-alpha** 已完成(69 测试,git tag v5.0),详见 `2026-08-01-v5.0-strategy.md` + `RELEASE-NOTES-v5.0.md`
+> **最新改动**: v4.2.1 打包(M1 + M2):
+>   - **M1**: T+1 watcher 6 态(OSS 风格)+ `t1_order_events` 事件溯源表 + `transition()` 守卫函数 + partial_filled 字段(60 测试)
+>   - **M2**: `factor_service.MINUTE_FACTOR_REGISTRY` 55 因子 + `compute_minute_factors()` + `minute_factor_cache` 5m TTL + REST `/api/realtime/factor/{code}/minute` + 前端 hook/组件(25 测试)
+> 详见 `RELEASE-NOTES-v4.2.md` + `RELEASE-NOTES-v4.2-m2.md`;**v5.0-alpha** 已完成(69 测试,git tag v5.0),详见 `2026-08-01-v5.0-strategy.md` + `RELEASE-NOTES-v5.0.md`
 > **详细记录**: 看 `stockai-project-docs/CHANGELOG.md` 和 `stockai-project-docs/V4-PLAN.md`
 > **文档结构**: 根目录 `INDEX.md` 是入口,所有 MD 已分类到 `stockai-project-docs/` 与 `monitor-desktop-docs/`
 
