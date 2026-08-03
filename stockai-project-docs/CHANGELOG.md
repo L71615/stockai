@@ -1,9 +1,34 @@
 # StockAI 项目日志
 
 > StockAI 从 0 到 v4.2 的完整演进记录。按时间倒序。
-> **当前版本: v4.2.2**(2026-08-03 tag) — v4.2.1 patch(2 bug fix + 1 feat 增强 + 2 docs 同步)
-> **上一稳定版**: v4.2.1(2026-08-03)— T+1 watcher N 态(M1) + 因子分钟级 55 因子(M2)
-> **下一阶段**: v5.0-beta(M5 WS 推送 / M6 分钟级 K 线 / M8 多用户 / M9 通知集成),详见 `2026-08-01-v5.0-strategy.md`
+> **当前版本: v4.2.3**(2026-08-03 tag) — partial_filled 完整处理骨架(1 feat + 19 测试)
+> **上一稳定版**: v4.2.2(2026-08-03)— v4.2.1 patch(2 bug fix + 1 feat + 2 docs)
+> **再上一稳定版**: v4.2.1(2026-08-03)— T+1 watcher N 态(M1) + 因子分钟级 55 因子(M2)
+> **下一阶段**: v5.0-beta(M5 WS 推送 / M6 分钟级 K 线 / M8 多用户 + cash 表 / M9 通知集成),详见 `2026-08-01-v5.0-strategy.md`
+
+---
+
+## 2026-08-03 — v4.2.3 (patch: partial_filled 完整处理骨架)
+
+### 🆕 feat: partial_filled 状态从"有字段"升级为"可调用 API"
+
+**触发**: v4.2 M1 加了 STATUS_PARTIAL_FILLED 状态常量 + 白名单 + filled_shares/pending_shares 字段,但 `_simulate_buy` 仍默认全成交。本次 patch 把代码路径补全。
+
+| API | 改动 |
+|---|---|
+| `_simulate_buy(order, price, *, partial_shares)` | 加 `partial_shares` kwarg,N < requested 时走 STATUS_PARTIAL_FILLED + 写 filled/pending |
+| `try_fill_pending_order(order_id, *, open_price, partial_shares)` | 新增:给 partial_filled 订单补成交的外部入口 |
+| `process_pending_buys(today)` | SQL 增加 partial_filled 扫描 + 风控按补成交金额算 |
+| `_ALLOWED_TRANSITIONS` | 加 `partial_filled → partial_filled`(补成交合法状态不变) |
+
+### ✅ 测试验收
+- **19 个新测试**(`tests/test_t1_watcher_partial_filled.py`)
+- **134/134 全过**(无现有回归)
+
+### 📌 不在 v4.2.3 范围
+- ❌ bulk_approve 真接资金校验 — 需 cash 表基建,留 v5.0-beta M8
+- ❌ 前端 status badge 显示 partial_filled — 留 v5.0-beta M8
+- ❌ try_fill_pending_order REST 暴露 — 留 v5.0-beta M9
 
 ---
 

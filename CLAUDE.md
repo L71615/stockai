@@ -2,13 +2,11 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-> **当前版本: v4.2.2**(2026-08-03 tag) — v4.2.1 patch:2 bug fix + 1 feat + 2 docs 同步
+> **当前版本: v4.2.3**(2026-08-03 tag) — partial_filled 完整处理骨架(1 feat + 19 测试)
 > **量化方向**: 准实盘量化交易系统(D1 战略锁定) — 实时行情 + 盘中因子 + 信号手动确认 + 模拟成交
-> **最新改动**: v4.2.2 patch(v4.2.1 后续 5 commit 打包):
->   - **bug fix**: scanner 默认策略 3→7(`a919100`)+ 因子 key 大小写 + scanner typo(`52be641`)
->   - **feat**: `/live` 第 6 section 接入分钟级 55 因子卡片 + 百分比自动格式化(`7fc9a6f`)
->   - **docs**: 三件套 + README.en.md 同步 v4.2.1 + v5.0-alpha(`aa0e250`)+ 移除 docs/README.md 的 v4.0 ASCII 架构图(`1a1e359`)
-> 详见 `RELEASE-NOTES-v4.2.md` + `RELEASE-NOTES-v4.2-m2.md` + `RELEASE-NOTES-v4.2.2.md`;**v5.0-alpha** 已完成(69 测试,git tag v5.0),详见 `2026-08-01-v5.0-strategy.md` + `RELEASE-NOTES-v5.0.md`
+> **最新改动**: v4.2.3 patch:
+>   - **feat**: `_simulate_buy` 接受 `partial_shares` kwarg + 新增 `try_fill_pending_order()` helper + `process_pending_buys` 扫 partial_filled 补成交 + 白名单加 `partial_filled → partial_filled`(`d4c3d44`)
+> 详见 `RELEASE-NOTES-v4.2.md` + `RELEASE-NOTES-v4.2-m2.md` + `RELEASE-NOTES-v4.2.2.md` + `RELEASE-NOTES-v4.2.3.md`;**v5.0-alpha** 已完成(69 测试,git tag v5.0),详见 `2026-08-01-v5.0-strategy.md` + `RELEASE-NOTES-v5.0.md`
 > **详细记录**: 看 `stockai-project-docs/CHANGELOG.md` 和 `stockai-project-docs/V4-PLAN.md`
 > **文档结构**: 根目录 `INDEX.md` 是入口,所有 MD 已分类到 `stockai-project-docs/` 与 `monitor-desktop-docs/`
 

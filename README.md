@@ -2,9 +2,9 @@
 
 # StockAI
 
-> ✅ **当前版本: v4.2.2**(2026-08-03 tag) — v4.2.1 patch(2 bug fix + 1 feat + 2 docs 同步)
+> ✅ **当前版本: v4.2.3**(2026-08-03 tag) — partial_filled 完整处理骨架(1 feat + 19 测试)
 > **v5.0 alpha 阶段完成**(2026-08-01) — M1-M4 已交付,详见 [`RELEASE-NOTES-v5.0.md`](stockai-project-docs/RELEASE-NOTES-v5.0.md)
-> 下一阶段: v5.0-beta(WS 推送 / 分钟级 K 线 / 多用户 / 通知集成)
+> 下一阶段: v5.0-beta(WS 推送 / 分钟级 K 线 / 多用户 + cash 表 / 通知集成)
 > 详见 [`stockai-project-docs/CHANGELOG.md`](stockai-project-docs/CHANGELOG.md) v4.2 + v5.0-alpha 系列
 
 ### A 股 AI 量化选股 · T+1 短线预测 + 研究→决策证据闭环
@@ -237,6 +237,7 @@ stocks/
 
 | 版本 | 日期 | 主题 |
 |------|------|------|
+| **v4.2.3** | 2026-08-03 | partial_filled 完整处理骨架:_simulate_buy 接受 partial_shares + try_fill_pending_order helper + process_pending_buys 扫 partial_filled 补成交(19 新测试,134 总过) |
 | **v4.2.2** | 2026-08-03 | v4.2.1 patch(2 bug fix + 1 feat + 2 docs):/live 接分钟因子卡片 + scanner 默认策略 3→7 + 三件套同步 |
 | **v4.2.1** | 2026-08-03 | M1 T+1 watcher 6 态机(OSS 风格) + transition() 守卫 + 事件溯源 + partial_filled + M2 因子分钟级 55 因子(85 新测试,212 总过) |
 | **v5.0-alpha** | 2026-08-01 | M1 实时行情 + M2 因子缓存 + M3 信号扫描 + M4 /live 仪表板(69 测试) |
