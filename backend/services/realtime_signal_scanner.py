@@ -44,8 +44,18 @@ class RealtimeSignalScanner:
             logger.debug("realtime_signal_scanner: 已在运行, 跳过启动")
             return
         self._running = True
+        # 默认策略列表 — 覆盖不同市场状态:
+        #  - turtle_s1 / breakout_pullback: 突破类(强势股)
+        #  - boll_mean: 回归类(震荡市)
+        #  - momentum_leader: 动量类(趋势确认)
+        #  - trend_continuation: 趋势中途介入(半山腰)
+        #  - gap_reversal: 反转类(超跌反弹)
+        #  - rsi_oversold: 弱反转
         strategies = enabled_strategies or [
-            "turtle_s1", "boll_mean", "momentum_leader",
+            "turtle_s1", "breakout_pullback",
+            "boll_mean", "momentum_leader",
+            "trend_continuation",
+            "gap_reversal", "rsi_oversold",
         ]
         self._thread = threading.Thread(
             target=self._loop,
