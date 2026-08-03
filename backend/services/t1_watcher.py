@@ -87,6 +87,7 @@ _ALLOWED_TRANSITIONS: dict[str, set[str]] = {
     STATUS_PARTIAL_FILLED: {
         STATUS_FILLED, STATUS_OPEN,                  # 撤单重挂 → open
         STATUS_CANCELLED, STATUS_REJECTED,
+        STATUS_PARTIAL_FILLED,                       # 补成交累加 filled/pending → 同状态 (v4.2.3)
     },
     STATUS_FILLED: {
         STATUS_CLOSED, STATUS_CANCELLED,              # 极端平仓场景
@@ -695,18 +696,83 @@ def _apply_slippage(price: float, side: str, slippage_bps: float) -> float:
         return price * (1 - factor)
 
 
-def _simulate_buy(order: dict, open_price: float) -> dict:
+def try_fill_pending_order(
+    order_id: int,
+    *,
+    open_price: float | None = None,
+    today: str | None = None,
+    partial_shares: int | None = None,
+) -> dict | None:
+    """补成交 partial_filled 订单 — v4.2.3
+
+    已知用法:
+      1. 外部 broker 回调告知部分成交 → process_pending_buys 当天先按 partial_shares 成交
+      2. 次日 / 之后又补了一部分 → 调本函数追加成交
+
+    Args:
+        order_id: t1_pending_orders.id (必须在 partial_filled 或 open 状态)
+        open_price: 补成交价(默认按当天再次获取开盘价)
+        today: 补成交日期(YYYY-MM-DD), 默认今天
+        partial_shares: 本次补成交股数(None = 全量补齐 pending_shares)
+
+    Returns:
+        dict: _simulate_buy 返回结果 或 None (订单不是 partial_filled / 不存在)
+    """
+    from database import query_one
+
+    if today is None:
+        today = datetime.now().strftime("%Y-%m-%d")
+
+    order = query_one("SELECT * FROM t1_pending_orders WHERE id = ?", (order_id,))
+    if not order:
+        return None
+
+    if order["status"] != STATUS_PARTIAL_FILLED:
+        # 仅 partial_filled 状态可补成交; open 状态应该走 process_pending_buys
+        return None
+
+    # 默认补齐全部 pending_shares
+    if partial_shares is None:
+        partial_shares = int(order.get("pending_shares") or 0)
+    if partial_shares <= 0:
+        return None
+
+    if open_price is None:
+        open_price = _get_open_price(order["stock_code"], today)
+        if open_price is None or open_price <= 0:
+            return None
+        open_price = _apply_slippage(open_price, "buy", float(order.get("slippage_bps", 10.0)))
+
+    # _simulate_buy 自动识别 already_filled > 0, 累加 filled_shares
+    return _simulate_buy(order, open_price, partial_shares=partial_shares)
+
+
+def _simulate_buy(
+    order: dict,
+    open_price: float,
+    *,
+    partial_shares: int | None = None,
+) -> dict:
     """模拟买入 — 写 holdings + transactions + 更新订单状态
 
     v4.1 outside voice fix: 4 步写入现在封装在单个事务中, 任一异常全部回滚,
     避免"成交已记 + 持仓未更新"或"持仓已加 + 订单状态未变"的不一致.
 
+    v4.2.3 partial_filled 支持: 当 partial_shares < order.shares 时,
+    走 STATUS_PARTIAL_FILLED 状态, 写入 filled_shares/pending_shares 字段;
+    调用方后续可调 try_fill_pending_order() 补成交剩余份额。
+
     Args:
         order: t1_pending_orders 记录
         open_price: 开盘价(已应用滑点)
+        partial_shares: 本次实际成交股数(None = 全部成交 order.shares;
+            < order.shares = 部分成交 → 走 partial_filled 状态)
+            注意: 已 partial_filled 的订单补成交时, partial_shares 应该是
+            pending_shares 数额 (即剩余可买), 函数会自动累加 filled_shares
 
     Returns:
-        {"order_id", "filled_price", "filled_shares", "fee", "holdings_id"}
+        {"order_id", "filled_price", "filled_shares", "fee", "holdings_id",
+         "status": "filled" / "partial_filled"}
     """
     from database import execute_transaction
 
@@ -714,10 +780,30 @@ def _simulate_buy(order: dict, open_price: float) -> dict:
     user_id = order["user_id"]
     stock_code = order["stock_code"]
     stock_name = order["stock_name"] or stock_code
-    shares = int(order["shares"])
+    requested_shares = int(order["shares"])
 
-    # 买入手续费
-    buy_amount = open_price * shares
+    # v4.2.3: 计算本次实际成交股数 + 是否部分成交
+    if partial_shares is None:
+        actual_shares = requested_shares
+        is_partial = False
+    else:
+        # 限制: 不超过 requested_shares, 不小于 0
+        actual_shares = max(0, min(int(partial_shares), requested_shares))
+        is_partial = actual_shares < requested_shares
+
+    # v4.2.3: 如果订单已在 partial_filled 状态, 累加 filled_shares
+    already_filled = int(order.get("filled_shares") or 0)
+    if already_filled > 0:
+        # 补成交: 累加新成交 + 计算总 filled/pending
+        new_filled_total = already_filled + actual_shares
+        new_pending_total = max(0, requested_shares - new_filled_total)
+        is_partial = new_pending_total > 0
+    else:
+        new_filled_total = actual_shares
+        new_pending_total = requested_shares - actual_shares if is_partial else 0
+
+    # 买入手续费 (基于本次 actual_shares)
+    buy_amount = open_price * actual_shares
     fee = calc_buy_fee(buy_amount)
     total_cost = buy_amount + fee["total"]
 
@@ -732,7 +818,7 @@ def _simulate_buy(order: dict, open_price: float) -> dict:
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 user_id, stock_code, stock_name, "buy",
-                round(open_price, 4), shares,
+                round(open_price, 4), actual_shares,
                 round(total_cost, 2),
                 round(fee["total"], 2),
                 now,
@@ -751,8 +837,8 @@ def _simulate_buy(order: dict, open_price: float) -> dict:
             existing_d = dict(existing)
             old_qty = float(existing_d["quantity"])
             old_cost = float(existing_d["cost_price"])
-            new_qty = old_qty + shares
-            new_cost = (old_cost * old_qty + open_price * shares) / new_qty if new_qty > 0 else open_price
+            new_qty = old_qty + actual_shares
+            new_cost = (old_cost * old_qty + open_price * actual_shares) / new_qty if new_qty > 0 else open_price
             cur.execute(
                 """UPDATE holdings
                    SET quantity = ?, cost_price = ?, stock_name = ?, updated_at = ?
@@ -766,20 +852,31 @@ def _simulate_buy(order: dict, open_price: float) -> dict:
                    (user_id, stock_code, stock_name, asset_type, quantity, cost_price, created_at, updated_at)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
                 (user_id, stock_code, stock_name, "stock",
-                 shares, round(open_price, 4), now, now),
+                 actual_shares, round(open_price, 4), now, now),
             )
             holdings_id = int(cur.lastrowid)
 
         # 3. 更新订单状态 — v4.2 M1: 走 transition() 写审计 (cur 同事务)
-        transition(
+        # v4.2.3: partial_filled 时 target=STATUS_PARTIAL_FILLED + 填 filled/pending 字段
+        target_status = STATUS_PARTIAL_FILLED if is_partial else STATUS_FILLED
+        transition_kwargs: dict = dict(
             order_id=order_id,
-            target=STATUS_FILLED,
+            target=target_status,
             actor="scheduler",
-            event_type="filled",
-            reason=f"模拟买入成交 @ {round(open_price, 4)}",
+            event_type="partial_filled" if is_partial else "filled",
+            reason=(
+                f"模拟买入部分成交 @ {round(open_price, 4)} "
+                f"({actual_shares}/{requested_shares} 股)"
+                if is_partial
+                else f"模拟买入成交 @ {round(open_price, 4)}"
+            ),
             expected_status=None,  # 不强制 CAS — 单 ticker 串行, 简化
             cur=cur,
         )
+        if is_partial or already_filled > 0:
+            transition_kwargs["filled_shares"] = new_filled_total
+            transition_kwargs["pending_shares"] = new_pending_total
+        transition(**transition_kwargs)
 
         # 同步更新价格/费用字段(transition 不覆盖这些)
         cur.execute(
@@ -795,24 +892,33 @@ def _simulate_buy(order: dict, open_price: float) -> dict:
 
     # 4. v4.1 1B.1: 推送模拟买入通知（不影响主流程，失败仅 audit log）
     _notify_settlement(
-        title=f"[模拟买入] {stock_code} {stock_name}",
+        title=(
+            f"[模拟买入-部分] {stock_code} {stock_name}"
+            if is_partial
+            else f"[模拟买入] {stock_code} {stock_name}"
+        ),
         body=(
-            f"已模拟买入 {stock_code} {stock_name} {shares} 股 @ {round(open_price, 4)}\n"
+            f"已模拟买入 {stock_code} {stock_name} {actual_shares}/{requested_shares} 股 @ {round(open_price, 4)}\n"
             f"金额: ¥{round(buy_amount, 2)} + 费 ¥{round(fee['total'], 2)}\n"
             f"总成本: ¥{round(total_cost, 2)}\n"
             f"持仓时间: {today}"
+            + (f"\n剩余 {new_pending_total} 股未成交 (状态 partial_filled)" if is_partial else "")
         ),
         order_id=order_id,
     )
 
+    final_status = STATUS_PARTIAL_FILLED if is_partial else STATUS_FILLED
     return {
         "order_id": order_id,
         "filled_price": round(open_price, 4),
-        "filled_shares": shares,
+        "filled_shares": actual_shares,
         "fee": round(fee["total"], 2),
         "total_cost": round(total_cost, 2),
         "entry_date": today,
         "holdings_id": result["holdings_id"],
+        "status": final_status,
+        "is_partial": is_partial,
+        "pending_shares": new_pending_total if is_partial else 0,
     }
 
 
@@ -964,9 +1070,10 @@ def process_pending_buys(today: str | None = None) -> list[dict]:
         today = datetime.now().strftime("%Y-%m-%d")
 
     # v4.2 M1: 双谓词 — 同时查新字面量 'open' 和老字面量 'pending_buy' / 'pending_sell'
+    # v4.2.3: 也扫 partial_filled, 对当天还有 pending_shares 的订单做补成交
     rows = query_all(
         """SELECT * FROM t1_pending_orders
-           WHERE status IN ('open', 'pending_buy', 'pending_sell')
+           WHERE status IN ('open', 'pending_buy', 'pending_sell', 'partial_filled')
              AND entry_date <= ?
            ORDER BY created_at ASC""",
         (today,),
@@ -988,7 +1095,14 @@ def process_pending_buys(today: str | None = None) -> list[dict]:
 
             # v4.1.1: 风控检查 — 单仓位 > 30% / 总仓位 > 80% → BLOCK_BUY
             planned_shares = int(order.get("planned_shares") or 0)
-            proposed_value = filled_price * planned_shares if planned_shares > 0 else filled_price * 100
+            # v4.2.3: partial_filled 时, 风控金额按补成交 (pending_shares) 计算, 不重复计
+            if order["status"] == STATUS_PARTIAL_FILLED:
+                risk_shares = int(order.get("pending_shares") or 0)
+            elif planned_shares > 0:
+                risk_shares = planned_shares
+            else:
+                risk_shares = 100
+            proposed_value = filled_price * risk_shares
             risk_result = _evaluate_buy_risk(order["user_id"], stock_code, proposed_value)
 
             if risk_result.get("action") == "liquidate":
@@ -1013,7 +1127,31 @@ def process_pending_buys(today: str | None = None) -> list[dict]:
                 })
                 continue
 
-            result = _simulate_buy(order, filled_price)
+            # v4.2.3: partial_filled 状态补成交 — 只成交 pending_shares
+            # open 状态 — 全部成交
+            partial_shares: int | None = None
+            if order["status"] == STATUS_PARTIAL_FILLED:
+                partial_shares = int(order.get("pending_shares") or 0)
+                if partial_shares <= 0:
+                    # pending_shares 已为 0, 但状态还卡在 partial_filled (异常)
+                    # 直接走 transition 推到 filled (不创建新交易)
+                    transition(
+                        order_id=order_id,
+                        target=STATUS_FILLED,
+                        actor="scheduler",
+                        event_type="filled",
+                        reason="pending_shares=0 触发自动 finalized 到 filled",
+                        expected_status=None,
+                    )
+                    results.append({
+                        "order_id": order_id,
+                        "filled": True,
+                        "reason": "已 finalized 到 filled (无剩余股数)",
+                        "is_partial": False,
+                    })
+                    continue
+
+            result = _simulate_buy(order, filled_price, partial_shares=partial_shares)
             result["filled"] = True
             results.append(result)
         except Exception as e:
