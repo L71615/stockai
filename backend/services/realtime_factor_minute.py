@@ -123,6 +123,7 @@ def compute_minute_factors_with_cache(
       1. 读 cache 已有因子
       2. targets 中未命中 → 重算
       3. 写回 cache
+      4. v4.2.3 patch: 注入 strategy 评估需要的辅助字段(close/open/high_20d 等)
 
     Args:
         同 factor_service.compute_minute_factors
@@ -139,6 +140,7 @@ def compute_minute_factors_with_cache(
         targets = list(MINUTE_FACTOR_REGISTRY.keys())
 
     missing = [n for n in targets if n not in cached]
+    extra_fields: dict[str, float | None] = {}  # v4.2.3: 衍生字段 (不入 cache)
     if missing:
         new_factors = compute_minute_factors(
             code=code,
@@ -146,14 +148,21 @@ def compute_minute_factors_with_cache(
             factor_names=missing,
         )
         for name, val in new_factors.items():
-            set_cached_factor(code, name, val)
-            if val is not None:
-                cached[name] = val
+            # v4.2.3: 区分 cache-able factor (在 registry 内) vs 衍生字段
+            from services.factor_service import MINUTE_FACTOR_REGISTRY
+            if name in MINUTE_FACTOR_REGISTRY:
+                set_cached_factor(code, name, val)
+                if val is not None:
+                    cached[name] = val
+            else:
+                # 衍生字段: 不写 cache (每次重新计算便宜, 也避免污染)
+                extra_fields[name] = val
 
-    # 返回: 优先 cache, 加上 None 标记的未算因子
+    # 返回: 优先 cache, 加上 None 标记的未算因子 + 衍生字段
     result: dict[str, float | None] = {}
     for name in targets:
         result[name] = cached.get(name)
+    result.update(extra_fields)
     return result
 
 

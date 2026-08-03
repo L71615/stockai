@@ -174,22 +174,41 @@ def compile_condition(cond: dict) -> Callable[[dict], bool]:
 
 
 def evaluate(stock_data: dict, condition_tree: dict) -> bool:
-    """递归评估 AND/OR 条件树"""
+    """递归评估 AND/OR 条件树
+
+    v4.2.3 patch: 因子层 (factor_service) 返百分比用 0~1 比率 (ret_5d=0.05=5%),
+    但 strategy_backtest 的 YAML 习惯用百分点 [3, 20] (3% ~ 20%)。
+    评估前对百分比字段 ×100 注入副本, 避免改 factor_service 数据格式。
+    """
     logic = condition_tree.get("logic", "AND").upper()
     conditions = condition_tree.get("conditions", [])
 
     if not conditions:
         return True
 
+    # v4.2.3: 百分比字段归一化(0~1 → 百分点 0~100) — 注入副本不污染原 data
+    PCT_FIELDS = {"ret_5d", "ret_20d", "ret_60d"}
+    eval_data = stock_data
+    needs_norm = any(
+        cond.get("field") in PCT_FIELDS or cond.get("compare_field") in PCT_FIELDS
+        for cond in conditions if "conditions" not in cond
+    )
+    if needs_norm:
+        eval_data = {**stock_data}
+        for f in PCT_FIELDS:
+            v = eval_data.get(f)
+            if v is not None:
+                eval_data[f] = v * 100
+
     results = []
     for cond in conditions:
         if "conditions" in cond:
             # 嵌套条件树
-            results.append(evaluate(stock_data, cond))
+            results.append(evaluate(eval_data, cond))
         else:
             fn = compile_condition(cond)
             try:
-                results.append(fn(stock_data))
+                results.append(fn(eval_data))
             except Exception as e:
                 logger.warning("condition_engine: eval error for field '%s': %s",
                                cond.get("field", "?"), e)

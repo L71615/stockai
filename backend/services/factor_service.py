@@ -1458,6 +1458,45 @@ def compute_minute_factors(
             logger.debug("compute_minute_factors[%s.%s] 计算失败: %s", code, name, e)
             results[name] = None
 
+    # v4.2.3 patch: 注入 strategy_backtest 需要的辅助字段(原始价格 + 衍生字段)
+    # 这些字段不被 factor_service 注册表管, 但 strategy YAML 的条件 evaluate 需要
+    if closes:
+        results["close"] = closes[-1]
+    if opens and op:
+        results["open"] = op[-1]
+    if highs and hi:
+        results["high"] = hi[-1]
+    if lows and lo:
+        results["low"] = lo[-1]
+    # 衍生字段: 滚动高低点
+    if highs and hi:
+        results["high_20d"] = max(hi[-20:]) if len(hi) >= 20 else max(hi)
+        results["high_55d"] = max(hi[-55:]) if len(hi) >= 55 else max(hi)
+    if lows and lo:
+        results["low_5d"]  = min(lo[-5:])  if len(lo) >= 5  else min(lo)
+        results["low_20d"] = min(lo[-20:]) if len(lo) >= 20 else min(lo)
+    # close_vs_high_20d: 收盘价相对 20 日高点的位置(0~1, 越高越接近高点)
+    if closes and highs and len(hi) >= 20:
+        h20 = max(hi[-20:])
+        l20 = min(lo[-20:]) if lows and lo else h20 * 0.9
+        if h20 > l20 > 0:
+            results["close_vs_high_20d"] = (closes[-1] - l20) / (h20 - l20)
+    if closes and highs and len(hi) >= 55:
+        h55 = max(hi[-55:])
+        l55 = min(lo[-55:]) if lows and lo else h55 * 0.9
+        if h55 > l55 > 0:
+            results["close_vs_high_55d"] = (closes[-1] - l55) / (h55 - l55)
+    # atr_pct: ATR 占当前价的百分比 (波动率归一化, strategy 通用)
+    if results.get("atr_14") is not None and closes:
+        results["atr_pct"] = results["atr_14"] / closes[-1] if closes[-1] > 0 else None
+    # avg_amount_20d: 20 日均成交额 (avg_amount * 20 取近似)
+    if volumes and len(vols) >= 20 and closes:
+        avg_amt = sum(vols[-20:]) / 20 * closes[-1]  # 量×价 ≈ 成交额
+        results["avg_amount_20d"] = avg_amt
+    # strength_20d: trend_continuation sort_by 用, ma20 > 0 即视为强势
+    if results.get("ma20") is not None:
+        results["strength_20d"] = results["ma20"]
+
     return results
 
 

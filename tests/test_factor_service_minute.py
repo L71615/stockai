@@ -105,16 +105,30 @@ class TestComputeMinuteFactors:
         assert result == {}
 
     def test_60_bars_returns_55_factors(self):
-        """60 根 → 返回 55 因子 dict"""
+        """60 根 → 返回 55 因子 dict (v4.2.3: +3 衍生字段 close/open/high, 共 58)"""
         closes = [100.0 + i * 0.1 for i in range(60)]
+        opens = [99.5 + i * 0.1 for i in range(60)]
+        highs = [100.5 + i * 0.1 for i in range(60)]
+        lows = [99.0 + i * 0.1 for i in range(60)]
         volumes = [1000000.0 + i * 1000 for i in range(60)]
-        result = compute_minute_factors(code="TEST", closes=closes, volumes=volumes)
-        assert len(result) == len(MINUTE_FACTOR_REGISTRY)
+        result = compute_minute_factors(
+            code="TEST", closes=closes, opens=opens, highs=highs, lows=lows, volumes=volumes,
+        )
+        # v4.2.3: 注入 close/open/high/low + 衍生字段 (varies by data availability)
+        # 至少 55 主因子 + close/open/high 3 个 = 58
+        assert len(result) >= len(MINUTE_FACTOR_REGISTRY) + 3
         # 至少 ma5 / rsi_14 / macd_signal 有值(简单行情足以算)
         assert result["ma5"] is not None
         assert result["ma10"] is not None
         assert result["ma20"] is not None
         assert result["rsi_14"] is not None
+        # v4.2.3: 衍生字段
+        assert result["close"] == closes[-1]
+        assert result["open"] == opens[-1]
+        assert result["high"] == highs[-1]
+        assert result["low"] == lows[-1]
+        # high_20d / close_vs_high_20d 等也应有值
+        assert result["high_20d"] is not None
 
     def test_volume_only_factors_with_volumes(self):
         """vol_ma5 / vol_ratio 等纯量因子能正常计算"""
@@ -162,13 +176,17 @@ class TestComputeMinuteFactors:
             )
 
     def test_subset_factor_names(self):
-        """factor_names 子集只算指定因子"""
+        """factor_names 子集只算指定因子(v4.2.3: +衍生字段 close/strength_20d)"""
         closes = [100.0 + i * 0.1 for i in range(60)]
         result = compute_minute_factors(
             code="TEST", closes=closes, factor_names=["ma5", "ma20"],
         )
-        assert set(result.keys()) == {"ma5", "ma20"}
+        # v4.2.3: 即使只算 ma5/ma20, 也会注入 close + strength_20d (衍生字段)
+        assert "ma5" in result and "ma20" in result
         assert result["ma5"] is not None
+        # 衍生字段: close 是 closes[-1]
+        assert result["close"] == closes[-1]
+        assert result["strength_20d"] is not None  # = ma20
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -294,11 +312,14 @@ class TestMinuteFactorRestApi:
         assert data["bar_count"] > 0
 
     def test_get_minute_factors_with_names_filter(self, client, _seed_kline):
-        """GET ?names=ma5,ma20 只返回指定因子"""
+        """GET ?names=ma5,ma20 只返回指定因子(v4.2.3: +衍生字段)"""
         res = client.get("/api/realtime/factor/000725/minute?names=ma5,ma20")
         assert res.status_code == 200
         data = res.json()
-        assert set(data["factors"].keys()) == {"ma5", "ma20"}
+        # v4.2.3: 至少包含 ma5/ma20 + close (衍生字段)
+        assert "ma5" in data["factors"]
+        assert "ma20" in data["factors"]
+        assert "close" in data["factors"]  # 衍生字段自动注入
 
     def test_get_minute_factors_404(self, client):
         """无 K 线数据 → 404"""
