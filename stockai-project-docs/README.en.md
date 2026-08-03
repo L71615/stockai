@@ -2,10 +2,11 @@
 
 # StockAI
 
-> ✅ **Current version: v4.2.1** (2026-08-03 tag) — T+1 watcher N-state (M1) + minute-level 55 factors (M2)
+> ✅ **Current version: v4.2.2** (2026-08-03 tag) — v4.2.1 patch (2 bug fix + 1 feat + 2 docs)
+> **Previous stable: v4.2.1** (2026-08-03) — T+1 watcher N-state (M1) + minute-level 55 factors (M2)
 > Plus **v5.0-alpha completed** (2026-08-01 tag, M1-M4 / 69 tests)
 > Next phase: v5.0-beta (WebSocket push / minute K-line / multi-user / notification)
-> See [`RELEASE-NOTES-v4.2.md`](RELEASE-NOTES-v4.2.md) + [`RELEASE-NOTES-v4.2-m2.md`](RELEASE-NOTES-v4.2-m2.md) + [`RELEASE-NOTES-v5.0.md`](RELEASE-NOTES-v5.0.md)
+> See [`RELEASE-NOTES-v4.2.md`](RELEASE-NOTES-v4.2.md) + [`RELEASE-NOTES-v4.2-m2.md`](RELEASE-NOTES-v4.2-m2.md) + [`RELEASE-NOTES-v4.2.2.md`](RELEASE-NOTES-v4.2.2.md) + [`RELEASE-NOTES-v5.0.md`](RELEASE-NOTES-v5.0.md)
 
 ### A-Share AI Quant Screener · T+1 Short-term Forecast + Research → Decision Evidence Loop + Quasi-Live Quant
 

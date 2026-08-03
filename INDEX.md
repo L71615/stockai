@@ -24,6 +24,7 @@ D:\stocks\
 │   ├── RELEASE-NOTES-v4.1.md       ← v4.1 release notes
 │   ├── RELEASE-NOTES-v4.2.md       ← v4.2 M1 release notes
 │   ├── RELEASE-NOTES-v4.2-m2.md    ← v4.2 M2 release notes
+│   ├── RELEASE-NOTES-v4.2.2.md     ← v4.2.2 patch release notes
 │   └── RELEASE-NOTES-v5.0.md       ← v5.0-alpha release notes
 │
 ├── docs/                           ← 📦 历史归档 + 路线图(早期内容)
@@ -50,12 +51,14 @@ D:\stocks\
 - **后端**: Python FastAPI (端口 3000)
 - **前端**: Next.js 16 (端口 3001)
 - **数据库**: SQLite (WAL 模式)
-- **当前版本**: **v4.2.1** (2026-08-03 tag,M1 + M2 打包)
+- **当前版本**: **v4.2.2** (2026-08-03 tag,v4.2.1 patch — 2 bug fix + 1 feat + 2 docs)
+- **上一稳定版**: v4.2.1 (2026-08-03,M1 + M2 打包)
 - **下一大版本**: v5.0-beta(WS 推送 / 分钟级 K 线 / 多用户 / 通知集成)
 - **核心能力**: v5.0-alpha 全量 + **v4.2 新增**:
   - **M1**: T+1 watcher 6 态机(OSS 风格) + transition() 守卫 + t1_order_events 事件溯源 + partial_filled 字段
   - **M2**: factor_service 55 因子分钟级对齐 + compute_minute_factors() + minute_factor_cache 5m TTL + REST `/api/realtime/factor/{code}/minute` + 前端 hook/组件
-  - 详见 [`RELEASE-NOTES-v4.2.md`](stockai-project-docs/RELEASE-NOTES-v4.2.md) + [`RELEASE-NOTES-v4.2-m2.md`](stockai-project-docs/RELEASE-NOTES-v4.2-m2.md) + [`RELEASE-NOTES-v5.0.md`](stockai-project-docs/RELEASE-NOTES-v5.0.md)
+  - **v4.2.2 patch**: /live 接分钟因子卡片 + 百分比自动格式化 + scanner 默认策略 3→7 + 三件套同步
+  - 详见 [`RELEASE-NOTES-v4.2.md`](stockai-project-docs/RELEASE-NOTES-v4.2.md) + [`RELEASE-NOTES-v4.2-m2.md`](stockai-project-docs/RELEASE-NOTES-v4.2-m2.md) + [`RELEASE-NOTES-v4.2.2.md`](stockai-project-docs/RELEASE-NOTES-v4.2.2.md) + [`RELEASE-NOTES-v5.0.md`](stockai-project-docs/RELEASE-NOTES-v5.0.md)
 - **项目入口**: `stockai-project-docs/README.md`
 - **GitHub 主页**: `README.md` (根)
 
@@ -86,6 +89,7 @@ D:\stocks\
 | **✅ v4.0+v4.1+v4.2 已发布 / v5.0-beta 候选** | **`stockai-project-docs/V4-PLAN.md`** |
 | **v4.2 M1 release notes** | **`stockai-project-docs/RELEASE-NOTES-v4.2.md`** |
 | **v4.2 M2 release notes** | **`stockai-project-docs/RELEASE-NOTES-v4.2-m2.md`** |
+| **v4.2.2 patch release notes** | **`stockai-project-docs/RELEASE-NOTES-v4.2.2.md`** |
 | **v5.0-alpha release notes** | **`stockai-project-docs/RELEASE-NOTES-v5.0.md`** |
 | 监视器计划 | `monitor-desktop-docs/PLAN.md` |
 | 监视器改动 | `monitor-desktop-docs/DAILY-LOG.md` |

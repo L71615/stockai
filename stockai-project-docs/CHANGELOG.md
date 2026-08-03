@@ -1,8 +1,33 @@
 # StockAI 项目日志
 
 > StockAI 从 0 到 v4.2 的完整演进记录。按时间倒序。
-> **当前版本: v4.2.1**(2026-08-03 tag) — T+1 watcher N 态(M1) + 因子分钟级 55 因子(M2)
+> **当前版本: v4.2.2**(2026-08-03 tag) — v4.2.1 patch(2 bug fix + 1 feat 增强 + 2 docs 同步)
+> **上一稳定版**: v4.2.1(2026-08-03)— T+1 watcher N 态(M1) + 因子分钟级 55 因子(M2)
 > **下一阶段**: v5.0-beta(M5 WS 推送 / M6 分钟级 K 线 / M8 多用户 / M9 通知集成),详见 `2026-08-01-v5.0-strategy.md`
+
+---
+
+## 2026-08-03 — v4.2.2 (patch: v4.2.1 后续 5 个 commit 打包)
+
+### 🆕 修复/增强/文档同步
+
+**触发**: v4.2.1 打完 tag 后临时累积的 5 个 commit(2 bug fix + 1 feat + 2 docs),无新功能/新表/新接口。
+
+| 类型 | Commit | 说明 |
+|---|---|---|
+| bug fix | `52be641` | 因子 key 大小写不匹配 + scanner 默认策略 ID typo(momentum → momentum_leader) |
+| bug fix | `a919100` | scanner 默认策略列表扩展 3 → 7 个(覆盖突破/回归/动量/趋势中途/反转/弱反转) |
+| feat | `7fc9a6f` | `/live` 第 6 section — 选中股票的分钟级 55 因子卡片 + 百分比自动格式化 |
+| docs | `aa0e250` | 三件套 + README.en.md 同步到 v4.2.1 + v5.0-alpha |
+| docs | `1a1e359` | 移除 docs/README.md 的 v4.0 ASCII 架构图(描述已过期) |
+
+### ✅ 测试验收
+- **212/212 全过**(patch 没改后端代码,全部回归通过)
+
+### 📌 不在 v4.2.2 范围
+- ❌ 无新功能 / 新表 / 新接口
+- ❌ 无新依赖 / 无 breaking change
+- 纯 patch tag
 
 ---
 

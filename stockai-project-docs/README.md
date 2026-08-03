@@ -2,10 +2,11 @@
 
 # StockAI
 
-> ✅ **当前版本: v4.2.1**(2026-08-03 tag)— T+1 watcher N 态(M1) + 因子分钟级 55 因子(M2)
+> ✅ **当前版本: v4.2.2**(2026-08-03 tag) — v4.2.1 patch(2 bug fix + 1 feat + 2 docs 同步)
+> **上一稳定版**: v4.2.1(2026-08-03)— T+1 watcher N 态(M1) + 因子分钟级 55 因子(M2)
 > 此外 v5.0-alpha 已完成(2026-08-01 tag,M1-M4 共 69 测试)
 > 下一阶段: v5.0-beta(WS 推送 / 分钟级 K 线 / 多用户 / 通知集成)
-> 详见 [`RELEASE-NOTES-v4.2.md`](RELEASE-NOTES-v4.2.md) + [`RELEASE-NOTES-v4.2-m2.md`](RELEASE-NOTES-v4.2-m2.md) + [`RELEASE-NOTES-v5.0.md`](RELEASE-NOTES-v5.0.md)
+> 详见 [`RELEASE-NOTES-v4.2.md`](RELEASE-NOTES-v4.2.md) + [`RELEASE-NOTES-v4.2-m2.md`](RELEASE-NOTES-v4.2-m2.md) + [`RELEASE-NOTES-v4.2.2.md`](RELEASE-NOTES-v4.2.2.md) + [`RELEASE-NOTES-v5.0.md`](RELEASE-NOTES-v5.0.md)
 
 ### A 股 AI 量化选股 · T+1 短线预测 + 研究→决策证据闭环 + 准实盘量化
 
@@ -29,6 +30,10 @@ StockAI 是一个**纯本地化**的 A 股量化工具箱,主线场景分两段:
 
 - **T+1/T+2 短线预测**(v4.x 主线) — 前晚 22:00 跑 Pipeline → 次日开盘模拟成交 → 第三日卖出
 - **盘中实时量化**(v5.0-alpha 主线) — 交易时段实时行情 + 实时因子 + 自动信号扫描 + 手动确认下单 + 模拟成交
+
+**v4.2.2 patch(v4.2.1 后续 5 commit 打包):**
+- **bug fix** — scanner 默认策略 3→7(覆盖突破/回归/动量/趋势中途/反转/弱反转)+ 因子 key 大小写不匹配(scanner typo `momentum → momentum_leader`)
+- **feat** — `/live` 第 6 section 接入分钟级 55 因子卡片 + 百分比因子自动 `×100 + %` 格式化
 
 **v4.2.1 打包(M1 + M2):**
 - **M1** — T+1 watcher 6 态机(OSS 风格 `open / partial_filled / filled / closed / cancelled / rejected`) + `transition()` 守卫函数 + `t1_order_events` 事件溯源表 + partial_filled 字段
@@ -239,6 +244,7 @@ stocks/
 
 | 版本 | 日期 | 主题 |
 |------|------|------|
+| **v4.2.2** | 2026-08-03 | v4.2.1 patch(2 bug fix + 1 feat + 2 docs):/live 接分钟因子卡片 + scanner 默认策略 3→7 + 三件套同步 |
 | **v4.2.1** | 2026-08-03 | M1 T+1 watcher 6 态机(OSS 风格) + transition() 守卫 + 事件溯源 + partial_filled + M2 因子分钟级 55 因子(85 新测试,212 总过) |
 | **v5.0-alpha** | 2026-08-01 | M1 实时行情 + M2 因子缓存 + M3 信号扫描 + M4 /live 仪表板(69 测试) |
 | **v4.1.1** | 2026-07-30 | patch: YAML 策略自动注册 + RSRS 因子 + 4 仓位算法 + 4 规则风控 + 因子退役通知 + impact cost look-ahead 修复 (63 新测试) |

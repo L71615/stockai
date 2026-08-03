@@ -2,12 +2,13 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-> **当前版本: v4.2.1**(2026-08-03 tag) — T+1 watcher N 态(M1) + 因子分钟级 55 因子(M2)
+> **当前版本: v4.2.2**(2026-08-03 tag) — v4.2.1 patch:2 bug fix + 1 feat + 2 docs 同步
 > **量化方向**: 准实盘量化交易系统(D1 战略锁定) — 实时行情 + 盘中因子 + 信号手动确认 + 模拟成交
-> **最新改动**: v4.2.1 打包(M1 + M2):
->   - **M1**: T+1 watcher 6 态(OSS 风格)+ `t1_order_events` 事件溯源表 + `transition()` 守卫函数 + partial_filled 字段(60 测试)
->   - **M2**: `factor_service.MINUTE_FACTOR_REGISTRY` 55 因子 + `compute_minute_factors()` + `minute_factor_cache` 5m TTL + REST `/api/realtime/factor/{code}/minute` + 前端 hook/组件(25 测试)
-> 详见 `RELEASE-NOTES-v4.2.md` + `RELEASE-NOTES-v4.2-m2.md`;**v5.0-alpha** 已完成(69 测试,git tag v5.0),详见 `2026-08-01-v5.0-strategy.md` + `RELEASE-NOTES-v5.0.md`
+> **最新改动**: v4.2.2 patch(v4.2.1 后续 5 commit 打包):
+>   - **bug fix**: scanner 默认策略 3→7(`a919100`)+ 因子 key 大小写 + scanner typo(`52be641`)
+>   - **feat**: `/live` 第 6 section 接入分钟级 55 因子卡片 + 百分比自动格式化(`7fc9a6f`)
+>   - **docs**: 三件套 + README.en.md 同步 v4.2.1 + v5.0-alpha(`aa0e250`)+ 移除 docs/README.md 的 v4.0 ASCII 架构图(`1a1e359`)
+> 详见 `RELEASE-NOTES-v4.2.md` + `RELEASE-NOTES-v4.2-m2.md` + `RELEASE-NOTES-v4.2.2.md`;**v5.0-alpha** 已完成(69 测试,git tag v5.0),详见 `2026-08-01-v5.0-strategy.md` + `RELEASE-NOTES-v5.0.md`
 > **详细记录**: 看 `stockai-project-docs/CHANGELOG.md` 和 `stockai-project-docs/V4-PLAN.md`
 > **文档结构**: 根目录 `INDEX.md` 是入口,所有 MD 已分类到 `stockai-project-docs/` 与 `monitor-desktop-docs/`
 
