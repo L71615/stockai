@@ -2,17 +2,22 @@
 
 # StockAI
 
-### A 股 AI 量化选股 · T+1 短线预测 + 研究→决策证据闭环
+> ✅ **当前版本: v4.2.1**(2026-08-03 tag)— T+1 watcher N 态(M1) + 因子分钟级 55 因子(M2)
+> 此外 v5.0-alpha 已完成(2026-08-01 tag,M1-M4 共 69 测试)
+> 下一阶段: v5.0-beta(WS 推送 / 分钟级 K 线 / 多用户 / 通知集成)
+> 详见 [`RELEASE-NOTES-v4.2.md`](RELEASE-NOTES-v4.2.md) + [`RELEASE-NOTES-v4.2-m2.md`](RELEASE-NOTES-v4.2-m2.md) + [`RELEASE-NOTES-v5.0.md`](RELEASE-NOTES-v5.0.md)
 
-**64 因子 · 13 策略 · 8 角色多 Agent + Agent 工具调用 · 自动量化 Pipeline · T+1 模拟成交 · 反事实报告 · 多策略组合**
+### A 股 AI 量化选股 · T+1 短线预测 + 研究→决策证据闭环 + 准实盘量化
 
-![Version](https://img.shields.io/badge/version-v4.1.1-success?style=flat-square)
+**55 因子 · 13 策略 · 8 角色多 Agent + Agent 工具调用 · 自动量化 Pipeline · T+1 模拟成交 · 反事实报告 · 多策略组合 · 盘中实时因子**
+
+![Version](https://img.shields.io/badge/version-v4.2.1-success?style=flat-square)
 ![Python](https://img.shields.io/badge/python-3.11+-blue?style=flat-square&logo=python&logoColor=white)
 ![Next.js](https://img.shields.io/badge/Next.js-16-black?style=flat-square&logo=next.js&logoColor=white)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.6-3178C6?style=flat-square&logo=typescript&logoColor=white)
 ![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)
 
-[English](stockai-project-docs/README.en.md) · [中文](#) · [文档导航](INDEX.md) · [v4.0 计划](V4-PLAN.md)
+[English](README.en.md) · [中文](#) · [文档导航](../INDEX.md) · [路线图](V4-PLAN.md)
 
 </div>
 
@@ -20,23 +25,34 @@
 
 ## 🎯 TL;DR
 
-StockAI v4.1 是一个**纯本地化**的 A 股量化工具箱,主线场景为 **T+1/T+2 短线预测**(前晚 22:00 跑 Pipeline → 次日开盘模拟成交 → 第三日卖出),辅以完整的因子回测 / 决策闭环 / 证据可视化。
+StockAI 是一个**纯本地化**的 A 股量化工具箱,主线场景分两段:
 
-**v4.1 三大主线 + v4.1.1 patch:**
-- **决策闭环** — scheduler 22:00 守护 pipeline + 09:35 T+1 watcher + bulk-approve 单事务 + 反事实自动跟跑
-- **真实基准** — index_kline (6 指数) + etf_kline (11 ETF) + 4 段 fallback
-- **漂移监控** — PSI/KL 阈值版本化 + experiment_runs gate + baseline_value 真实填值
-- **v4.1.1 patch** — YAML 策略自动注册 + RSRS 因子 + 4 种仓位算法 + 4 规则风控拦截 + 因子退役通知 + impact cost look-ahead 修复
+- **T+1/T+2 短线预测**(v4.x 主线) — 前晚 22:00 跑 Pipeline → 次日开盘模拟成交 → 第三日卖出
+- **盘中实时量化**(v5.0-alpha 主线) — 交易时段实时行情 + 实时因子 + 自动信号扫描 + 手动确认下单 + 模拟成交
+
+**v4.2.1 打包(M1 + M2):**
+- **M1** — T+1 watcher 6 态机(OSS 风格 `open / partial_filled / filled / closed / cancelled / rejected`) + `transition()` 守卫函数 + `t1_order_events` 事件溯源表 + partial_filled 字段
+- **M2** — `factor_service.MINUTE_FACTOR_REGISTRY` 55 因子 + `compute_minute_factors()` + `minute_factor_cache` 5m TTL + REST `/api/realtime/factor/{code}/minute` + 前端 hook/组件
+
+**v5.0-alpha(4 个 milestone 已完成):**
+- **M1** — 实时行情接入(腾讯免费 API,盘中 + 盘后统一)
+- **M2** — 因子缓存 5m TTL + REST + 前端卡片
+- **M3** — 信号扫描 5s/轮 + 手动确认下单(`realtime_signal_scanner` 单例守护线程,7 默认策略)
+- **M4** — `/live` 仪表板(5 个 section:实时行情 / 实时持仓 / 盘中信号 / 盘中因子 / 待确认订单)
+
+**v4.1.1 patch(已稳定,被 v4.2/v5.0 复用):**
+- YAML 策略自动注册 + RSRS 因子 + 4 种仓位算法 + 4 规则风控拦截 + 因子退役通知 + impact cost look-ahead 修复
 
 **核心能力**:
 - **8 角色多 Agent + CoT 推理** + Agent 工具调用(Claude tool_use / OpenAI function_calling)
-- **65 因子**(29 经典 + 35 Alpha158 + 1 RSRS 阻力支撑)
-- **T+1 模拟成交 watcher** + **单仓位 > 30% 风控拦截** (v4.1.1)
+- **55 因子**(29 经典 + 35 Alpha158 + 1 RSRS 阻力支撑)— 日级 + 分钟级双频段
+- **T+1 模拟成交 watcher** 6 态机 + **单仓位 > 30% 风控拦截**
 - **滑点 + 冲击成本**模型(B4 10bps + B5 ADV 平方根,带 as_of_date 防 look-ahead)
+- **盘中信号扫描** 7 默认策略 + 手动确认 + `t1_watcher` 联动
 - **证据闭环**: 三轴状态机 + OOS 快照 + T+1 watcher + 审批收件箱 + 反事实可视化 + 灰度 flag + Drift PSI/KL
 - **后端监视器**: Electron 桌面 app
 
-> 📖 完整文档: [stockai-project-docs/](stockai-project-docs/) · 📋 监视器: [monitor-desktop/](monitor-desktop/)
+> 📖 完整文档: [stockai-project-docs/](../) · 📋 监视器: [monitor-desktop/](../monitor-desktop/)
 
 ---
 
@@ -85,6 +101,11 @@ StockAI v4.1 是一个**纯本地化**的 A 股量化工具箱,主线场景为 *
 | 🧠 **AI 对话** | SSE 流式响应,5 供应商独立路由(Claude/DeepSeek/OpenAI/MiniMax/Xiaomi) |
 | 📡 **数据源** | Futu→新浪→AKShare→Baostock fallback,环境变量切换 |
 | 🖥️ **后端监视器** | Electron 桌面 app · 5 模块 · 只读 · **详见 [monitor-desktop/](monitor-desktop/)** |
+| 📡 **实时行情** | **🆕 v5.0-alpha M1** — 盘中 + 盘后统一腾讯免费 API + 5s 轮询守护线程 |
+| ⚡ **盘中因子** | **🆕 v5.0-alpha M2 + v4.2 M2** — 30 因子(factor_lab) + 55 因子(factor_service) 双轨制 + 5m TTL 缓存 |
+| 🎯 **盘中信号扫描** | **🆕 v5.0-alpha M3** — 7 默认策略 + 5s/轮 + 手动确认下单 → t1_watcher 联动 |
+| 📊 **/live 仪表板** | **🆕 v5.0-alpha M4** — 实时行情 + 实时持仓 PnL + 盘中信号 + 盘中因子 + 待确认订单 5 section |
+| 🔁 **T+1 6 态状态机** | **🆕 v4.2 M1** — `open / partial_filled / filled / closed / cancelled / rejected` + transition() 守卫 + t1_order_events 事件溯源 |
 
 ---
 
@@ -96,7 +117,7 @@ StockAI v4.1 是一个**纯本地化**的 A 股量化工具箱,主线场景为 *
 |------|------------|----------|
 | **T1 实验账本** | 三轴状态机 (lifecycle/portfolio_role/proposal) + 版本 CAS + append-only 审计 | 持续维护,作为因子/策略实验的账本 |
 | **T2 OOS 快照** | snapshot_hash + point-in-time replay + leakage 检测 | IC 重新校准接口(因子排名一键出) |
-| **T3 影子组合** | T+1 执行 + 整手(100 股) + 缺价 blocked + UNIQUE 防重复 | **完整重构为 T+1 模拟成交 watcher**(`t1_pending_orders` 状态机 pending_buy→bought→sold,滑点+冲击+T+1 成本全计入) |
+| **T3 影子组合** | T+1 执行 + 整手(100 股) + 缺价 blocked + UNIQUE 防重复 | **完整重构为 T+1 模拟成交 watcher**(`t1_pending_orders` **6 态状态机 `open / partial_filled / filled / closed / cancelled / rejected`,v4.2 M1** + 滑点+冲击+T+1 成本全计入) |
 | **T4 审批收件箱** | TTL lease + 三层 CAS + counterfactual 复盘 | **加 C1 反事实报告可视化**(`/pipeline` 新 Tab,approved vs rejected 实际表现对比) |
 | **T5 灰度开关** | 5 个 feature flag (默认 OFF) + 一键回 OFF + notification_log 独立审计 | 持续维护,v4.0 新能力默认 OFF 走此机制 |
 
@@ -189,6 +210,7 @@ run.bat
 | **`/pipeline`** | **v4.0 收件箱 + 反事实** — 待审批/已通过/已拒绝/已过期 + lease 倒计时 + approved vs rejected 实际表现对比 Tab |
 | `/watchlist` | 自选股 — 实时行情 + 批量报价 |
 | `/market` | 大盘指数 — 全球 15 指数 |
+| **`/live`**` **🆕** | **v5.0-alpha M4** — 实时行情 + 实时持仓 PnL + 盘中信号 + 盘中因子 + 待确认订单 5 section |
 | `/transactions` | 交易记录 CRUD |
 | `/ai-assistant` | AI 对话 — SSE 流式 |
 | `/settings` | AI Key + 通知配置 |
@@ -246,6 +268,8 @@ stocks/
 
 | 版本 | 日期 | 主题 |
 |------|------|------|
+| **v4.2.1** | 2026-08-03 | M1 T+1 watcher 6 态机(OSS 风格) + transition() 守卫 + 事件溯源 + partial_filled + M2 因子分钟级 55 因子(85 新测试,212 总过) |
+| **v5.0-alpha** | 2026-08-01 | M1 实时行情 + M2 因子缓存 + M3 信号扫描 + M4 /live 仪表板(69 测试) |
 | **v4.1.1** | 2026-07-30 | patch: YAML 策略自动注册 + RSRS 因子 + 4 仓位算法 + 4 规则风控 + 因子退役通知 + impact cost look-ahead 修复 (63 新测试) |
 | **v4.1** | 2026-07-30 | 决策闭环 + 真实基准(index_kline / etf_kline) + Drift PSI/KL 监控 (53 新测试) |
 | **v4.0** | 2026-07-28 | T+1 短线预测主线 · 8 角色多 Agent + CoT + 工具调用 + 个性化 · 64 因子 · 滑点+冲击 · 多策略组合 · 反事实(193 新测试) |

@@ -19,9 +19,12 @@ D:\stocks\
 │   ├── DESIGN.md                   ← 设计系统(权威)
 │   ├── TODOS.md                    ← 待办
 │   ├── AGENTS.md                   ← Agent 工作流
-│   ├── V4-PLAN.md                  ← ✅ v4.0+v4.1 已发布 / v4.2 候选
+│   ├── V4-PLAN.md                  ← ✅ v4.0+v4.1+v4.2+v5.0-alpha 已发布 / v5.0-beta 候选
 │   ├── RELEASE-NOTES-v4.0.md       ← v4.0 release notes
-│   └── RELEASE-NOTES-v4.1.md       ← v4.1 release notes
+│   ├── RELEASE-NOTES-v4.1.md       ← v4.1 release notes
+│   ├── RELEASE-NOTES-v4.2.md       ← v4.2 M1 release notes
+│   ├── RELEASE-NOTES-v4.2-m2.md    ← v4.2 M2 release notes
+│   └── RELEASE-NOTES-v5.0.md       ← v5.0-alpha release notes
 │
 ├── docs/                           ← 📦 历史归档 + 路线图(早期内容)
 │   ├── ROADMAP.md                  ← 路线图(v3.6 时代,历史)

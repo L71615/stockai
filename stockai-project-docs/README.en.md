@@ -2,17 +2,22 @@
 
 # StockAI
 
-### A-Share AI Quant Screener · T+1 Short-term Forecast + Research → Decision Evidence Loop
+> ✅ **Current version: v4.2.1** (2026-08-03 tag) — T+1 watcher N-state (M1) + minute-level 55 factors (M2)
+> Plus **v5.0-alpha completed** (2026-08-01 tag, M1-M4 / 69 tests)
+> Next phase: v5.0-beta (WebSocket push / minute K-line / multi-user / notification)
+> See [`RELEASE-NOTES-v4.2.md`](RELEASE-NOTES-v4.2.md) + [`RELEASE-NOTES-v4.2-m2.md`](RELEASE-NOTES-v4.2-m2.md) + [`RELEASE-NOTES-v5.0.md`](RELEASE-NOTES-v5.0.md)
 
-**64 factors · 13 strategies · 8-role multi-agent + agent tool calls · Auto Quant Pipeline · T+1 simulated fills · Counterfactual reports · Multi-strategy portfolio**
+### A-Share AI Quant Screener · T+1 Short-term Forecast + Research → Decision Evidence Loop + Quasi-Live Quant
 
-![Version](https://img.shields.io/badge/version-v4.1.1-success?style=flat-square)
+**55 factors · 13 strategies · 8-role multi-agent + agent tool calls · Auto Quant Pipeline · T+1 simulated fills · Counterfactual reports · Multi-strategy portfolio · Real-time intraday factors**
+
+![Version](https://img.shields.io/badge/version-v4.2.1-success?style=flat-square)
 ![Python](https://img.shields.io/badge/python-3.11+-blue?style=flat-square&logo=python&logoColor=white)
 ![Next.js](https://img.shields.io/badge/Next.js-16-black?style=flat-square&logo=next.js&logoColor=white)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.6-3178C6?style=flat-square&logo=typescript&logoColor=white)
 ![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)
 
-[中文](README.md) · [English](#) · [Docs](../INDEX.md) · [v4.0 Plan](V4-PLAN.md)
+[中文](README.md) · [English](#) · [Docs](../INDEX.md) · [Roadmap](V4-PLAN.md)
 
 </div>
 
@@ -20,23 +25,34 @@
 
 ## 🎯 TL;DR
 
-StockAI v4.1 is a **purely local** A-share quant toolbox with the main scenario of **T+1/T+2 short-term forecast** (run pipeline at 22:00 → simulate fill at next open → sell on day 3), complemented by full factor backtest / decision loop / evidence visualization.
+StockAI is a **purely local** A-share quant toolbox with two main scenarios:
 
-**v4.1 three main lines + v4.1.1 patch:**
-- **Decision loop** — scheduler 22:00 pipeline + 09:35 T+1 watcher + bulk-approve single transaction + auto counterfactual
-- **Real benchmarks** — index_kline (6 indices) + etf_kline (11 ETFs) + 4-tier fallback
-- **Drift monitoring** — PSI/KL versioned thresholds + experiment_runs gate + baseline_value tracking
-- **v4.1.1 patch** — YAML strategy auto-registry + RSRS factor + 4 sizing algorithms + 4-rule risk guard + factor retirement notify + impact cost look-ahead fix
+- **T+1/T+2 short-term forecast** (v4.x main line) — Run pipeline at 22:00 → simulate fill at next open → sell on day 3
+- **Real-time intraday quant** (v5.0-alpha main line) — In-trading-hours real-time quote + real-time factors + auto signal scanning + manual confirm + simulated fill
+
+**v4.2.1 release (M1 + M2):**
+- **M1** — T+1 watcher 6-state machine (OSS-style `open / partial_filled / filled / closed / cancelled / rejected`) + `transition()` guard function + `t1_order_events` event sourcing table + `partial_filled` field
+- **M2** — `factor_service.MINUTE_FACTOR_REGISTRY` 55 factors + `compute_minute_factors()` + `minute_factor_cache` 5m TTL + REST `/api/realtime/factor/{code}/minute` + frontend hook/component
+
+**v5.0-alpha (4 milestones completed):**
+- **M1** — Real-time quote ingest (unified Tencent free API, intraday + post-market)
+- **M2** — Factor cache 5m TTL + REST + frontend card
+- **M3** — Signal scanning 5s/round + manual confirm order (`realtime_signal_scanner` singleton daemon, 7 default strategies)
+- **M4** — `/live` dashboard (5 sections: real-time quote / PnL / signals / factors / pending orders)
+
+**v4.1.1 patch (stable, reused by v4.2/v5.0):**
+- YAML strategy auto-registry + RSRS factor + 4 sizing algorithms + 4-rule risk guard + factor retirement notify + impact cost look-ahead fix
 
 **Core capabilities**:
 - **8-role multi-agent + CoT reasoning** + agent tool calls (Claude tool_use / OpenAI function_calling)
-- **65 factors** (29 classic + 35 Alpha158 + 1 RSRS resistance/support)
-- **T+1 simulated fill watcher** + **single-position > 30% risk gate** (v4.1.1)
+- **55 factors** (29 classic + 35 Alpha158 + 1 RSRS resistance/support) — daily + minute dual-band
+- **T+1 simulated fill watcher** 6-state machine + **single-position > 30% risk gate**
 - **Slippage + market impact** models (B4 10bps + B5 ADV square-root, with `as_of_date` to prevent look-ahead)
+- **Intraday signal scanning** 7 default strategies + manual confirm + `t1_watcher` linkage
 - **Evidence loop**: tri-axis state machine + OOS snapshots + T+1 watcher + approval inbox + counterfactual + feature flags + Drift PSI/KL
 - **Backend monitor**: Electron desktop app
 
-> 📖 Full docs: [stockai-project-docs/](stockai-project-docs/) · 📋 Monitor: [monitor-desktop/](monitor-desktop/)
+> 📖 Full docs: [stockai-project-docs/](../) · 📋 Monitor: [monitor-desktop/](../monitor-desktop/)
 - **Strategy backtest**: 13 YAML strategy templates + parameter optimization + slippage/cost model + overfit warnings
 - **Evidence loop** (v3.11 + v4.0 enhanced): Three-axis state machine + OOS snapshot + shadow portfolio → T+1 simulated fill watcher + approval inbox + feature flags + counterfactual visualization — **every decision is traceable end-to-end**
 - **Auto Pipeline**: Post-close cron runs GP→ML→decay→data-health→brief push

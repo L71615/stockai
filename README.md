@@ -178,6 +178,7 @@ run.bat
 | **`/pipeline`** | **v4.0 收件箱 + 反事实** — 待审批/已通过/已拒绝/已过期 + lease 倒计时 + approved vs rejected 实际表现对比 Tab |
 | `/watchlist` | 自选股 — 实时行情 + 批量报价 |
 | `/market` | 大盘指数 — 全球 15 指数 |
+| **`/live`**` **🆕** | **v5.0-alpha M4** — 实时行情 + 实时持仓 PnL + 盘中信号 + 盘中因子 + 待确认订单 5 section |
 | `/transactions` | 交易记录 CRUD |
 | `/ai-assistant` | AI 对话 — SSE 流式 |
 | `/settings` | AI Key + 通知配置 |
@@ -235,6 +236,8 @@ stocks/
 
 | 版本 | 日期 | 主题 |
 |------|------|------|
+| **v4.2.1** | 2026-08-03 | M1 T+1 watcher 6 态机(OSS 风格) + transition() 守卫 + 事件溯源 + partial_filled + M2 因子分钟级 55 因子(85 新测试,212 总过) |
+| **v5.0-alpha** | 2026-08-01 | M1 实时行情 + M2 因子缓存 + M3 信号扫描 + M4 /live 仪表板(69 测试) |
 | **v4.1.1** | 2026-07-30 | patch: YAML 策略自动注册 + RSRS 因子 + 4 仓位算法 + 4 规则风控 + 因子退役通知 + impact cost look-ahead 修复 (63 新测试) |
 | **v4.1** | 2026-07-30 | 决策闭环 + 真实基准(index_kline / etf_kline) + Drift PSI/KL 监控 (53 新测试) |
 | **v4.0** | 2026-07-28 | T+1 短线预测主线 · 8 角色多 Agent + CoT + 工具调用 + 个性化 · 64 因子 · 滑点+冲击 · 多策略组合 · 反事实(193 新测试) |
