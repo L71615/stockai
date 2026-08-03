@@ -1,14 +1,15 @@
 "use client"
 
 /**
- * /live 盘中量化分析仪表板 — v5.0-alpha M4
+ * /live 盘中量化分析仪表板 — v5.0-alpha M4 + v4.2 M2
  *
- * 5 个 section:
+ * 6 个 section:
  *   1. 顶部 持仓实时 PnL 总览
  *   2. 实时行情 watchlist 表 (5s 刷新)
  *   3. 盘中信号触发列表 (接受/拒绝手动确认)
  *   4. 实时持仓表 (含未实现盈亏)
- *   5. 选中股票的盘中因子卡片
+ *   5. 选中股票的日级因子卡片 (v5.0-alpha M2 30 因子)
+ *   6. 选中股票的分钟级因子卡片 (v4.2 M2 55 因子 — historical_kline fallback)
  *
  * 设计遵循 stockai-project-docs/DESIGN.md:
  *   - 暗色主题 + rounded-none
@@ -24,6 +25,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { RealtimeFactorCard } from "@/components/realtime-factor-card"
+import { RealtimeMinuteFactorCard } from "@/components/realtime-minute-factor-card"
 import { useRealtimeQuote, type Quote } from "@/hooks/use-realtime-quote"
 import { apiPost } from "@/lib/auth"
 import { swrFetcher } from "@/lib/swr-config"
@@ -310,9 +312,14 @@ export default function LivePage() {
           </CardContent>
         </Card>
 
-        {/* ───── 5. 选中股票的盘中因子 ───── */}
+        {/* ───── 5. 选中股票的盘中因子 (日级 30 因子, v5.0-alpha M2) ───── */}
         {selectedCode && (
           <RealtimeFactorCard code={selectedCode} />
+        )}
+
+        {/* ───── 6. 选中股票的分钟级因子 (v4.2 M2, 55 因子 historical_kline fallback) ───── */}
+        {selectedCode && (
+          <RealtimeMinuteFactorCard code={selectedCode} />
         )}
       </div>
     </>

@@ -18,6 +18,25 @@ interface Props {
   className?: string
 }
 
+/** 百分比因子 (后端返 0-1 比率) — 显示时 ×100 + % */
+const PERCENT_FACTORS = new Set([
+  // 价格偏离度
+  "ma5", "ma10", "ma20", "ma60", "price_position",
+  // 收益率
+  "ret_5d", "ret_20d", "ret_60d",
+  // BOLL 偏离度
+  "boll_position",
+  // 量价比率
+  "vol_ratio", "turnover_rate",
+  // K 线形态偏离
+  "klen", "kup", "klow", "kmid",
+  // 量价相关/变化
+  "price_volume_corr", "vroc", "vol_change", "hist_vol_5d", "hist_vol_20d",
+  "volatility_ratio", "amplitude_20d", "downside_vol",
+  // 个股情绪
+  "strength", "momentum_score", "acceleration",
+])
+
 export function RealtimeMinuteFactorCard({ code, className }: Props) {
   const { factors, isLoading, lastUpdate, barCount, dataSource } = useRealtimeMinuteFactor(
     code,
@@ -109,10 +128,13 @@ function FactorGroup({
         {names.map((name) => {
           const v = factors[name]
           const decimals = decimalsMap[name] ?? 2
+          const display = PERCENT_FACTORS.has(name)
+            ? (v === null || v === undefined ? "--" : `${(v * 100).toFixed(decimals)}%`)
+            : fmt(v, decimals)
           return (
             <div key={name} className="border border-border rounded-none p-1.5">
               <p className="text-[10px] text-muted-foreground">{name}</p>
-              <p className="font-mono tabular-nums">{fmt(v, decimals)}</p>
+              <p className="font-mono tabular-nums">{display}</p>
             </div>
           )
         })}
