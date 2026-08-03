@@ -65,10 +65,11 @@ export function useRealtimeFactor(
 }
 
 // 常用因子分组(给前端 UI 用)
+// key 用小写 — 与 factor_lab.FACTOR_REGISTRY 返回的 key 一致(v4.2 M2 修)
 export const COMMON_FACTOR_GROUPS = {
-  trend:   ["MA5", "MA10", "MA20", "MA60"],
-  momentum: ["RET_5D", "RET_20D", "RET_60D"],
-  tech:    ["RSI", "MACD", "BOLL_UPPER", "BOLL_LOWER", "BOLL_POSITION"],
-  volume:  ["VOL_MA5", "VOL_MA10", "VOL_RATIO"],
-  volatility: ["VOLATILITY", "AMPLITUDE", "BOLL_POSITION"],
+  trend:   ["ma5", "ma10", "ma20", "ma60"],
+  momentum: ["ret_5d", "ret_20d", "ret_60d"],
+  tech:    ["rsi_14", "macd_signal", "boll_upper", "boll_lower", "boll_position"],
+  volume:  ["vol_ma5", "vol_ma10", "vol_ratio"],
+  volatility: ["volatility", "amplitude", "boll_position"],
 }

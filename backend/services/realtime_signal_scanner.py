@@ -45,7 +45,7 @@ class RealtimeSignalScanner:
             return
         self._running = True
         strategies = enabled_strategies or [
-            "turtle_s1", "boll_mean", "momentum",
+            "turtle_s1", "boll_mean", "momentum_leader",
         ]
         self._thread = threading.Thread(
             target=self._loop,
