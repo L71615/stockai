@@ -82,9 +82,13 @@ async def get_cached_leaderboard(
 |---------|------|------|
 | **手动端到端** `/api/factor-lab/leaderboard` | ✅ 200 | curl 直查,响应 ~4s(首次)/ <50ms(缓存命中) |
 | **回归** `/api/stocks/holdings/with-pnl` | ✅ 200 | 修复前 ECONNREFUSED,修复后 5ms |
-| 现有 134 测试(无回归) | ✅ 134/134 | 本 patch 不改 t1_watcher / factor_service / minute factor |
+| **v4.2.4 新增** `tests/test_factor_lab_v424.py` | **14/14** | 向量化数值一致性 + 缓存 TTL/Lock + 性能 smoke |
+| 现有 factor 测试(无回归) | ✅ 56/56 | test_factor_service + test_factor_leaderboard_quantile |
 
-> 📌 **未新增 pytest**:本 patch 改动相对局部,主要验证手段是端到端 HTTP 调用 + uvicorn 启动。`_pearson_daily` 向量化后端到端跑过全量 240 天 × 5000 股,无 NaN/inf 异常。
+> 📌 **测试设计**:
+> - `_pearson_daily` 向量化用与 v4.2.4 之前 per-date 循环的**对比测试**,数值误差阈值 `atol=1e-9`,确保浮点累加顺序差异在可控范围
+> - `get_cached_leaderboard` 用 `monkeypatch` 替换 `compute_factor_leaderboard`,纯逻辑测试无数据库依赖
+> - 并发 lock 测试用 `threading.Event`(因 `asyncio.to_thread` 把 compute 丢到线程池)
 
 ---
 

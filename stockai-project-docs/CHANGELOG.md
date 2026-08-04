@@ -43,9 +43,16 @@
 - ❌ 缓存自动失效 hook(因子生命周期变化时) — 留 v5.0-beta
 - ❌ `test_factor_lab.py` 完整 pytest 覆盖 — 本 patch 用端到端验证代替
 
+### ✅ 回归测试 (`cca034a` — `tests/test_factor_lab_v424.py`)
+- **14 个测试**,1.11s 跑完,3 个核心验证:
+  - **P0-1** `_pearson_daily` 向量化数值一致性(6 个): 与原 per-date 循环对比,误差 < 1e-9
+  - **P0-2** `get_cached_leaderboard` 5min TTL + per-key Lock(7 个): miss/hit/invalidate/TTL 过期/并发
+  - **P0-3** 向量化性能 smoke(1 个): 向量化应至少快 5x
+- 不依赖数据库,纯 DataFrame + monkeypatch,CI 友好
+
 ### 📚 详见
 - [`RELEASE-NOTES-v4.2.4.md`](RELEASE-NOTES-v4.2.4.md)
-- commit `70f9dc3`
+- commit `70f9dc3`(代码)+ `cca034a`(测试)+ `3006835`(gitignore)
 
 ---
 
