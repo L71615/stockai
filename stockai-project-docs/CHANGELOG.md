@@ -1,10 +1,51 @@
 # StockAI 项目日志
 
 > StockAI 从 0 到 v4.2 的完整演进记录。按时间倒序。
-> **当前版本: v4.2.3**(2026-08-03 tag) — partial_filled 完整处理骨架(1 feat + 19 测试)
-> **上一稳定版**: v4.2.2(2026-08-03)— v4.2.1 patch(2 bug fix + 1 feat + 2 docs)
+> **当前版本: v4.2.4**(2026-08-05 tag) — leaderboard 超时修复 + 5min 缓存 + `async def` 漏改修复(`70f9dc3`)
+> **上一稳定版**: v4.2.3(2026-08-03)— partial_filled 完整处理骨架(1 feat + 19 测试)
+> **再上一稳定版**: v4.2.2(2026-08-03)— v4.2.1 patch(2 bug fix + 1 feat + 2 docs)
 > **再上一稳定版**: v4.2.1(2026-08-03)— T+1 watcher N 态(M1) + 因子分钟级 55 因子(M2)
 > **下一阶段**: v5.0-beta(M5 WS 推送 / M6 分钟级 K 线 / M8 多用户 + cash 表 / M9 通知集成),详见 `2026-08-01-v5.0-strategy.md`
+
+---
+
+## 2026-08-05 — v4.2.4 (patch: leaderboard 超时修复 + 5min 缓存 + async def 漏改)
+
+### 🆕 feat: leaderboard 向量化 + 缓存层
+
+**触发**:`/api/factor-lab/leaderboard` 55 因子 × 240 天全量计算 ~90s,客户端 60s timeout 必 500。
+
+| 改动 | 内容 |
+|------|------|
+| `_pearson_daily` | per-date 循环 → NumPy 矩阵(~0.3s → ~0.015s) |
+| `decay` 1d/5d/10d/20d | 同样向量化,复用模式(~12s → <0.1s) |
+| 默认窗口 | 365 → 240 天(减 33% 数据量,仍 > 200 有效 IC 天) |
+| `get_cached_leaderboard()` | 5min TTL 内存缓存 + per-key `asyncio.Lock` 防并发双算 |
+| `invalidate_leaderboard_cache()` | helper,后续接入调度触发 |
+| Router `_cache` 字段 | 透出 `hit`/`miss` 给前端排查 |
+
+### 🐛 fix: async def 漏改导致后端 ECONNREFUSED
+
+**症状**: 前端 `/api/stocks/holdings/with-pnl` → HTTP 500,错误 `AggregateError: connect ECONNREFUSED ::1:3000`。后端 3000 端口完全无人监听。
+
+**根因**:`backend/routers/factor_lab.py:81` 函数体加 `await get_cached_leaderboard(...)` 但函数签名是 `def` 而非 `async def` → **SyntaxError** → Python 解释器 import main.py 阶段崩溃 → uvicorn 卡在 `Waiting for application startup`。
+
+**修复**: 单行改动 `def get_leaderboard` → `async def get_leaderboard`。
+
+**验证**:
+- `python -c "import main"` ✅ 无 SyntaxError
+- uvicorn 启动 ✅ Application startup complete,3000 LISTENING
+- `GET /api/health` ✅ 200 (17ms)
+- `GET /api/stocks/holdings/with-pnl` ✅ **200 (5ms)** ← 用户报告失败的接口
+
+### 📌 不在 v4.2.4 范围
+- ❌ 缓存持久化(进程重启即失效) — 留 v5.0-beta
+- ❌ 缓存自动失效 hook(因子生命周期变化时) — 留 v5.0-beta
+- ❌ `test_factor_lab.py` 完整 pytest 覆盖 — 本 patch 用端到端验证代替
+
+### 📚 详见
+- [`RELEASE-NOTES-v4.2.4.md`](RELEASE-NOTES-v4.2.4.md)
+- commit `70f9dc3`
 
 ---
 

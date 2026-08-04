@@ -2,11 +2,12 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-> **当前版本: v4.2.3**(2026-08-03 tag) — partial_filled 完整处理骨架(1 feat + 19 测试)
+> **当前版本: v4.2.4**(2026-08-05 tag) — leaderboard 超时修复 + 5min 缓存 + `async def` 漏改修复(`70f9dc3`)
 > **量化方向**: 准实盘量化交易系统(D1 战略锁定) — 实时行情 + 盘中因子 + 信号手动确认 + 模拟成交
-> **最新改动**: v4.2.3 patch:
->   - **feat**: `_simulate_buy` 接受 `partial_shares` kwarg + 新增 `try_fill_pending_order()` helper + `process_pending_buys` 扫 partial_filled 补成交 + 白名单加 `partial_filled → partial_filled`(`d4c3d44`)
-> 详见 `RELEASE-NOTES-v4.2.md` + `RELEASE-NOTES-v4.2-m2.md` + `RELEASE-NOTES-v4.2.2.md` + `RELEASE-NOTES-v4.2.3.md`;**v5.0-alpha** 已完成(69 测试,git tag v5.0),详见 `2026-08-01-v5.0-strategy.md` + `RELEASE-NOTES-v5.0.md`
+> **最新改动**: v4.2.4 patch:
+>   - **fix**: `_pearson_daily` + decay 向量化(~90s → ~4s) + 默认窗口 240 天 + `get_cached_leaderboard()` 5min TTL + per-key asyncio.Lock
+>   - **fix**: `get_leaderboard` async def 漏改导致 `SyntaxError` → main.py import 崩溃 → 3000 ECONNREFUSED(现已修复,端到端 `/api/stocks/holdings/with-pnl` 200)
+> 详见 `RELEASE-NOTES-v4.2.md` + `RELEASE-NOTES-v4.2-m2.md` + `RELEASE-NOTES-v4.2.2.md` + `RELEASE-NOTES-v4.2.3.md` + `RELEASE-NOTES-v4.2.4.md`;**v5.0-alpha** 已完成(69 测试,git tag v5.0),详见 `2026-08-01-v5.0-strategy.md` + `RELEASE-NOTES-v5.0.md`
 > **详细记录**: 看 `stockai-project-docs/CHANGELOG.md` 和 `stockai-project-docs/V4-PLAN.md`
 > **文档结构**: 根目录 `INDEX.md` 是入口,所有 MD 已分类到 `stockai-project-docs/` 与 `monitor-desktop-docs/`
 
