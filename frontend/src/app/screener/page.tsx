@@ -37,8 +37,11 @@ interface AIPick {
 }
 
 interface WatchItem {
+  // 后端 screener_watchlist 表字段 (id/user_id/status/added_at/updated_at 也存在)
+  id?: number
   code: string; name: string; reason?: string; score?: number
   backtest_strategy?: string; backtest_sharpe?: number
+  stock_code?: string; stock_name?: string  // 兼容后端字段名
 }
 
 interface MultiAgentResult {
@@ -116,10 +119,18 @@ export default function ScreenerPage() {
       ])
       const candidates = Array.isArray(res) ? res : (res?.candidates || [])
       setResults(candidates)
-      // v4.2.4 fix: 去重 (后端 /api/screener/watchlist 可能返回重复 code)
+      // v4.2.4 fix: 后端 screener_watchlist 表用 stock_code/stock_name 字段,
+      // 前端 WatchItem 用 code/name 字段, 这里转换 + 去重
       const wlArr = Array.isArray(wl) ? wl : []
+      const wlNorm: WatchItem[] = wlArr.map((w: any) => ({
+        code: w.code || w.stock_code,
+        name: w.name || w.stock_name,
+        reason: w.reason,
+        score: w.score,
+        id: w.id,
+      }))
       const seen = new Set<string>()
-      const wlUniq = wlArr.filter((w) => {
+      const wlUniq = wlNorm.filter((w) => {
         if (!w?.code || seen.has(w.code)) return false
         seen.add(w.code)
         return true
