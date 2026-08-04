@@ -81,6 +81,8 @@ def _build_raw_kline_statements(payload: dict) -> list[tuple[str, tuple]]:
 
 def _build_historical_sync_statements(payload: dict) -> list[tuple[str, tuple]]:
     statements: list[tuple[str, tuple]] = []
+    # v4.2.4: 防止 volume 单位不一致(akshare 手 vs futu 股)污染历史 K 线
+    from services.futu_sync_service import _normalize_volume_unit
     for idx, trade_date in enumerate(payload["dates"]):
         sql = """INSERT INTO historical_kline
                  (stock_code, trade_date, open, high, low, close, volume)
@@ -92,6 +94,8 @@ def _build_historical_sync_statements(payload: dict) -> list[tuple[str, tuple]]:
                      low=excluded.low,
                      close=excluded.close,
                      volume=excluded.volume"""
+        raw_volume = int(payload["volumes"][idx] or 0)
+        volume = _normalize_volume_unit(payload["code"], raw_volume, trade_date)
         params = (
             payload["code"],
             trade_date,
@@ -99,7 +103,7 @@ def _build_historical_sync_statements(payload: dict) -> list[tuple[str, tuple]]:
             payload["highs"][idx],
             payload["lows"][idx],
             payload["closes"][idx],
-            payload["volumes"][idx],
+            volume,
         )
         statements.append((sql, params))
     return statements

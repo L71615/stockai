@@ -1,4 +1,5 @@
 from datetime import datetime
+import logging
 
 from database import query_all, execute
 from services.utils import detect_asset_type
@@ -6,9 +7,70 @@ from services.futu_ingest_service import sync_quote, sync_minute_kline, sync_dai
 from services.notify_service import send_notification
 from services.futu_client import FutuClient
 
+logger = logging.getLogger(__name__)
+
 
 def _normalize_scope(scope: str) -> str:
     return scope if scope in {"watchlist", "holdings", "watchlist+holdings"} else "watchlist+holdings"
+
+
+def _normalize_volume_unit(code: str, new_volume: int, trade_date: str) -> int:
+    """v4.2.4: 防止 volume 单位不一致(akshare 手 vs futu 股)污染历史 K 线
+
+    背景:
+      historical_kline.volume 在 build_history.py (baostock) 是"股" 单位,
+      但 _update_daily_bars 用的 futu get_market_snapshot 也是"股",
+      然而 akshare/sina 同步脚本写入的是"手" (1 手 = 100 股)。
+      2026-07-06/07 之间曾因混用写入导致 vol_ratio 计算异常。
+
+    防护策略:
+      1. 查 stock_code 最近 30 天历史平均 volume
+      2. 如果新 volume < 历史平均 × 0.05, 说明单位不一致 (差 20 倍), 自动 × 100
+      3. 写 warning log + 返回归一化后的 volume (供 caller 写入)
+
+    Args:
+        code: 股票代码
+        new_volume: 本次要写入的 volume
+        trade_date: 本次写入的日期
+
+    Returns:
+        归一化后的 volume (若自动 × 100, 则 = new_volume * 100)
+    """
+    if new_volume is None or new_volume <= 0:
+        return 0
+
+    try:
+        rows = query_all("""
+            SELECT AVG(volume) as avg_v
+            FROM historical_kline
+            WHERE stock_code = ?
+              AND trade_date < ?
+              AND trade_date >= date(?, '-30 days')
+              AND volume IS NOT NULL
+              AND volume > 0
+        """, (code, trade_date, trade_date))
+        if not rows or rows[0]["avg_v"] is None:
+            return new_volume
+        hist_avg = float(rows[0]["avg_v"])
+        # 检测: 新 volume 远小于历史 (差 20 倍以上)
+        if hist_avg > 0 and new_volume < hist_avg * 0.05:
+            logger.warning(
+                "_normalize_volume_unit[%s %s]: new_volume=%d 远小于 hist_avg=%.0f "
+                "(ratio=%.3f), 自动 × 100 (手 → 股)",
+                code, trade_date, new_volume, hist_avg, new_volume / hist_avg,
+            )
+            return new_volume * 100
+        # 反向检测: 新 volume 远大于历史 (也可能有问题, 但 baostock 已经统一了)
+        if hist_avg > 0 and new_volume > hist_avg * 50:
+            logger.warning(
+                "_normalize_volume_unit[%s %s]: new_volume=%d 远大于 hist_avg=%.0f "
+                "(ratio=%.1f), 自动 ÷ 100 (股 → 手 → 修正)",
+                code, trade_date, new_volume, hist_avg, new_volume / hist_avg,
+            )
+            return new_volume // 100
+    except Exception as e:
+        logger.debug("_normalize_volume_unit[%s]: %s", code, e)
+    return new_volume
 
 
 
@@ -312,6 +374,9 @@ def _update_daily_bars(futu: FutuClient, trade_date: str) -> int:
                 price = s.get("price")
                 if price is None or price <= 0:
                     continue
+                # v4.2.4: 防止 akshare 手 vs futu 股单位不一致污染
+                raw_volume = int(s.get("volume") or 0)
+                volume = _normalize_volume_unit(s["code"], raw_volume, trade_date)
                 execute(
                     """INSERT OR REPLACE INTO historical_kline
                        (stock_code, trade_date, open, high, low, close, volume)
@@ -320,7 +385,7 @@ def _update_daily_bars(futu: FutuClient, trade_date: str) -> int:
                         s["code"], trade_date,
                         s.get("open_price"), s.get("high_price"),
                         s.get("low_price"), price,
-                        int(s.get("volume") or 0),
+                        volume,
                     ),
                 )
                 added += 1
