@@ -50,6 +50,9 @@ test_*.json
 
 # 后台启动脚本生成的日志
 backend/backend.log
+# Windows 路径拼接 bug 产物 (uvicorn 把 "D:/stocks/backend/backend.log" 拼成
+# "D:stocksbackendbackend.log" — 加这条兜底未来不再误提交)
+backend/D:*.log
 
 # --- 后端监视器 (独立 Electron 子项目,代码入仓,构建产物不入) ---
 monitor-desktop/node_modules/
