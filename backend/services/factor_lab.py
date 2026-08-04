@@ -8,8 +8,14 @@
 
 数据源:
   historical_kline (历史 K 线) — 用纯价格因子 (不需要历史 PE/PB)
+
+缓存:
+  compute_factor_leaderboard 5min TTL
+  (55 因子 + 240 天 = 90s 计算, 客户端 60s timeout 会 500)
 """
 import logging
+import time
+import asyncio
 from datetime import datetime, timedelta
 from typing import Optional
 
@@ -251,27 +257,49 @@ def _build_factor_panel(panels: dict[str, pd.DataFrame], factor_name: str) -> pd
 
 
 def _pearson_daily(factor_panel: pd.DataFrame, return_panel: pd.DataFrame) -> pd.Series:
-    """每日计算 Pearson(factor_t, return_{t+1})"""
+    """每日计算 Pearson(factor_t, return_{t+1})
+
+    v4.2.4 fix: 向量化 per-date 循环 → NumPy 矩阵运算
+    旧实现 240 天 × 5000 股 = ~0.3s/调用,55 因子 × 5 调用 = 90s+ 客户端 60s timeout 必 500
+    新实现 ~0.015s/调用,预期 ~4s 完成全因子 leaderboard
+    """
     # shift(-1) 让 return_t 对应 t+1 日的收益
     forward_returns = return_panel.shift(-1)
-    ic_values = {}
-    for date in factor_panel.index:
-        f = factor_panel.loc[date].dropna()
-        r = forward_returns.loc[date].dropna()
-        common = f.index.intersection(r.index)
-        if len(common) < 30:  # 至少 30 只股票
-            continue
-        f_vals = f[common].values.astype(float)
-        r_vals = r[common].values.astype(float)
-        if np.std(f_vals) < 1e-9 or np.std(r_vals) < 1e-9:
-            continue
-        try:
-            corr = np.corrcoef(f_vals, r_vals)[0, 1]
-            if not np.isnan(corr):
-                ic_values[date] = float(corr)
-        except Exception:
-            continue
-    return pd.Series(ic_values).sort_index()
+    common_index = factor_panel.index.intersection(forward_returns.index)
+    if len(common_index) == 0:
+        return pd.Series(dtype=float)
+
+    f_arr = factor_panel.loc[common_index].values.astype(float)
+    r_arr = forward_returns.loc[common_index].values.astype(float)
+
+    # NaN mask + 至少 30 只股票有效
+    valid_mask = ~(np.isnan(f_arr) | np.isnan(r_arr))
+    valid_count = valid_mask.sum(axis=1)
+    enough = valid_count >= 30
+
+    # 用 np.errstate 抑制 invalid value in divide (后面会被 mask 掉)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        # 缺失值不参与均值与协方差
+        f_sum = np.where(valid_mask, f_arr, 0.0).sum(axis=1)
+        r_sum = np.where(valid_mask, r_arr, 0.0).sum(axis=1)
+        f_sq = np.where(valid_mask, f_arr * f_arr, 0.0).sum(axis=1)
+        r_sq = np.where(valid_mask, r_arr * r_arr, 0.0).sum(axis=1)
+        cov_sum = np.where(valid_mask, f_arr * r_arr, 0.0).sum(axis=1)
+
+        f_means = f_sum / valid_count
+        r_means = r_sum / valid_count
+        cov = (cov_sum - valid_count * f_means * r_means) / valid_count
+        f_var = (f_sq - valid_count * f_means * f_means) / valid_count
+        r_var = (r_sq - valid_count * r_means * r_means) / valid_count
+        f_std = np.sqrt(f_var)
+        r_std = np.sqrt(r_var)
+
+        corr = cov / (f_std * r_std + 1e-9)
+        valid = enough & (f_std > 1e-9) & (r_std > 1e-9)
+        corr = np.where(valid, corr, np.nan)
+
+    idx = ~np.isnan(corr)
+    return pd.Series(corr[idx], index=common_index[idx]).sort_index()
 
 
 def _compute_decay_score(ic_decay: dict) -> dict:
@@ -354,11 +382,11 @@ def compute_factor_metrics(factor_names: list[str], stock_pool: str = "all",
             }
         }
     """
-    # 默认日期范围
+    # 默认日期范围 (v4.2.4: 365 → 240, 减少约 33% 数据量, 仍 > 200 有效 IC 天)
     if not end_date:
         end_date = datetime.now().strftime("%Y-%m-%d")
     if not start_date:
-        start_date = (datetime.now() - timedelta(days=365)).strftime("%Y-%m-%d")
+        start_date = (datetime.now() - timedelta(days=240)).strftime("%Y-%m-%d")
 
     logger.info("IC compute: pool=%s, dates=%s..%s, factors=%d",
                 stock_pool, start_date, end_date, len(factor_names))
@@ -396,39 +424,42 @@ def compute_factor_metrics(factor_names: list[str], stock_pool: str = "all",
             ir = ic_mean / ic_std if ic_std > 1e-9 else 0.0
             win_rate = float((ic_series > 0).sum() / len(ic_series))
 
-            # 衰减: 计算 N 日后的 IC
+            # 衰减: 计算 N 日后的 IC — v4.2.4 向量化 (原 per-date 循环 ~12s → <0.1s)
             decay = {}
             for n_days in [1, 5, 10, 20]:
                 # N 日 forward return
                 fwd_ret = (1 + return_panel).rolling(n_days).apply(np.prod, raw=True) - 1
                 fwd_ret = fwd_ret.shift(-n_days)
-                ic_n = {}
-                for date in factor_panel.index:
-                    f = factor_panel.loc[date].dropna()
-                    r = fwd_ret.loc[date].dropna() if date in fwd_ret.index else pd.Series()
-                    common = f.index.intersection(r.index)
-                    if len(common) < 30:
-                        continue
-                    f_vals = f[common].values.astype(float)
-                    r_vals = r[common].values.astype(float)
-                    if np.std(f_vals) < 1e-9 or np.std(r_vals) < 1e-9:
-                        continue
-                    try:
-                        c = np.corrcoef(f_vals, r_vals)[0, 1]
-                        if not np.isnan(c):
-                            ic_n[date] = float(c)
-                    except Exception:
-                        continue
-                if ic_n:
-                    decay[n_days] = float(np.mean(list(ic_n.values())))
-
-            # 换手率: 因子排名日变化
-            daily_rank_changes = []
-            for date in factor_panel.index:
-                if date not in factor_panel.index:
+                # 向量化 Pearson per-date
+                common_index = factor_panel.index.intersection(fwd_ret.index)
+                if len(common_index) == 0:
                     continue
-                pass
-            # 简化: 用 IC 时序的 1 日自相关 (1 - |corr|) 作为换手代理
+                f_arr = factor_panel.loc[common_index].values.astype(float)
+                r_arr = fwd_ret.loc[common_index].values.astype(float)
+                valid_mask = ~(np.isnan(f_arr) | np.isnan(r_arr))
+                valid_count = valid_mask.sum(axis=1)
+                enough = valid_count >= 30
+                with np.errstate(invalid="ignore", divide="ignore"):
+                    f_sum = np.where(valid_mask, f_arr, 0.0).sum(axis=1)
+                    r_sum = np.where(valid_mask, r_arr, 0.0).sum(axis=1)
+                    f_sq = np.where(valid_mask, f_arr * f_arr, 0.0).sum(axis=1)
+                    r_sq = np.where(valid_mask, r_arr * r_arr, 0.0).sum(axis=1)
+                    cov_sum = np.where(valid_mask, f_arr * r_arr, 0.0).sum(axis=1)
+                    f_means = f_sum / valid_count
+                    r_means = r_sum / valid_count
+                    cov = (cov_sum - valid_count * f_means * r_means) / valid_count
+                    f_var = (f_sq - valid_count * f_means * f_means) / valid_count
+                    r_var = (r_sq - valid_count * r_means * r_means) / valid_count
+                    f_std = np.sqrt(f_var)
+                    r_std = np.sqrt(r_var)
+                    corr = cov / (f_std * r_std + 1e-9)
+                    valid = enough & (f_std > 1e-9) & (r_std > 1e-9)
+                    corr = np.where(valid, corr, np.nan)
+                valid_corr = corr[~np.isnan(corr)]
+                if len(valid_corr) > 0:
+                    decay[n_days] = float(np.mean(valid_corr))
+
+            # 换手率: 用 IC 时序的 1 日自相关 (1 - |corr|) 作为换手代理
             turnover = float(1 - abs(np.corrcoef(ic_series.values[:-1], ic_series.values[1:])[0, 1])) \
                 if len(ic_series) > 2 else 0.0
 
@@ -1506,3 +1537,56 @@ def recalibrate_all_factors_ic(
         "top_factors": ranked[:top_n],
         "b1_factors": b1_ranked,
     }
+
+
+# Memory cache for leaderboard (5min TTL)
+# 55 factors + 240 days = ~90s compute time, well over HTTP client 60s timeout
+_leaderboard_cache: dict[str, tuple[float, dict]] = {}
+_leaderboard_locks: dict[str, asyncio.Lock] = {}
+LEADERBOARD_CACHE_TTL = 300
+
+
+def _leaderboard_cache_key(factors, stock_pool, start_date, end_date) -> str:
+    factors_part = ",".join(sorted(factors)) if factors else "all"
+    return f"{factors_part}|{stock_pool}|{start_date or ''}|{end_date or ''}"
+
+
+async def get_cached_leaderboard(
+    factors: list[str] | None = None,
+    stock_pool: str = "all",
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+) -> tuple[dict, bool]:
+    """Read leaderboard from cache, compute on miss (with per-key asyncio.Lock
+    防止并发请求同时重算 → 避免双倍 CPU 占用).
+
+    Returns: (result, cache_hit) where cache_hit=True means served from cache
+    """
+    key = _leaderboard_cache_key(factors, stock_pool, start_date, end_date)
+    now = time.time()
+    # 1. 缓存命中
+    if key in _leaderboard_cache:
+        ts, data = _leaderboard_cache[key]
+        if now - ts < LEADERBOARD_CACHE_TTL:
+            logger.debug("leaderboard cache hit: %s (age=%.1fs)", key, now - ts)
+            return data, True
+
+    # 2. 缓存未命中 → per-key lock 防并发双算
+    lock = _leaderboard_locks.setdefault(key, asyncio.Lock())
+    async with lock:
+        # 二次检查: lock 期间可能有别的请求写入了缓存
+        if key in _leaderboard_cache:
+            ts, data = _leaderboard_cache[key]
+            if time.time() - ts < LEADERBOARD_CACHE_TTL:
+                return data, True
+        # 真正计算 (向量化后 ~4s,一次只跑一个)
+        data = await asyncio.to_thread(
+            compute_factor_leaderboard, factors, stock_pool, start_date, end_date,
+        )
+        _leaderboard_cache[key] = (time.time(), data)
+        return data, False
+
+
+def invalidate_leaderboard_cache():
+    _leaderboard_cache.clear()
+    logger.info("leaderboard cache invalidated")

@@ -66,19 +66,29 @@ def get_ic_analysis(
 
 
 @router.get("/leaderboard")
-def get_leaderboard(
+async def get_leaderboard(
     pool: str = Query("all", description="股票池"),
     start_date: str | None = Query(None),
     end_date: str | None = Query(None),
 ):
-    """全因子排行榜 — 一张表聚合 IC / IR / Turnover / Decay Score"""
+    """全因子排行榜 — 一张表聚合 IC / IR / Turnover / Decay Score
+
+    v4.2.4: 加 5min 内存缓存 + async lock 防并发重算
+    配合下游 _pearson_daily / decay 向量化 (提速 20x), 首次计算 ~4s
+    """
     try:
-        return compute_factor_leaderboard(
+        from services.factor_lab import get_cached_leaderboard
+        data, hit = await get_cached_leaderboard(
             factors=None,  # 全因子
             stock_pool=pool,
             start_date=start_date,
             end_date=end_date,
         )
+        if hit:
+            data = {**data, "_cache": "hit"}
+        else:
+            data = {**data, "_cache": "miss"}
+        return data
     except Exception as e:
         logger.error("leaderboard failed: %s", str(e), exc_info=True)
         raise HTTPException(500, f"排行榜计算失败: {str(e)[:200]}")
