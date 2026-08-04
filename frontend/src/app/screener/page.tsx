@@ -116,7 +116,15 @@ export default function ScreenerPage() {
       ])
       const candidates = Array.isArray(res) ? res : (res?.candidates || [])
       setResults(candidates)
-      setWatchlist(Array.isArray(wl) ? wl : [])
+      // v4.2.4 fix: 去重 (后端 /api/screener/watchlist 可能返回重复 code)
+      const wlArr = Array.isArray(wl) ? wl : []
+      const seen = new Set<string>()
+      const wlUniq = wlArr.filter((w) => {
+        if (!w?.code || seen.has(w.code)) return false
+        seen.add(w.code)
+        return true
+      })
+      setWatchlist(wlUniq)
     } catch { /* */ }
     finally { setLoading(false) }
   }, [])
@@ -429,8 +437,8 @@ export default function ScreenerPage() {
                     <p className="text-xs text-muted-foreground">点击结果列表中的 ⭐ 加入盯盘</p>
                   ) : (
                     <div className="space-y-1">
-                      {watchlist.map((w) => (
-                        <div key={w.code} className="flex items-center justify-between py-1.5 border-b border-border last:border-0">
+                      {watchlist.map((w, i) => (
+                        <div key={w.id ?? `${w.code}-${i}`} className="flex items-center justify-between py-1.5 border-b border-border last:border-0">
                           <div>
                             <span className="text-xs font-mono font-medium">{w.code}</span>
                             <span className="text-xs ml-1.5">{w.name}</span>
