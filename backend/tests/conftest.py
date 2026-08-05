@@ -78,6 +78,17 @@ def test_db(monkeypatch, tmp_path):
             ts REAL NOT NULL,
             PRIMARY KEY (stock_code, factor_name)
         );
+
+        -- realtime_factor_cache: 与 backend/database.py:1026-1032 production schema 对齐
+        -- 5min TTL,M7 升级后存 55 因子
+        CREATE TABLE realtime_factor_cache (
+            stock_code  TEXT NOT NULL,
+            factor_name TEXT NOT NULL,
+            value       REAL,
+            ts          REAL NOT NULL,
+            PRIMARY KEY (stock_code, factor_name)
+        );
+        CREATE INDEX idx_rfc_ts ON realtime_factor_cache(ts);
     """)
     conn.commit()
     conn.close()
