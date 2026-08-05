@@ -18,7 +18,6 @@ CLAUDE.md
 start.bat
 backend/pytest.ini
 backend/requirements-dev.txt
-backend/.env.example
 
 # --- Docker（仅本地使用）---
 docker/
