@@ -109,6 +109,14 @@ class RealtimeQuoteService:
         with self._lock:
             self._subscribers.append(callback)
 
+    def unsubscribe(self, callback: Callable[[Quote], None]) -> None:
+        """移除已注册的 callback(WS 断开清理用) — v5.0-beta M5 新增"""
+        with self._lock:
+            try:
+                self._subscribers.remove(callback)
+            except ValueError:
+                pass  # 已被移除,幂等
+
     def get_snapshot(self, codes: list[str]) -> list[Quote]:
         """取当前缓存的所有 quote(空 codes 返回空列表)"""
         if not codes:

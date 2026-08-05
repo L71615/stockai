@@ -6,10 +6,12 @@ REST 端点:
   GET /api/realtime/all                           — 当前 cache 的所有 quote
 
 WebSocket:
-  /api/realtime/ws                                — 实时推送(beta 阶段)
+  /api/realtime/ws                                — 实时推送(v5.0-beta M5 升级)
 """
 from __future__ import annotations
 
+import asyncio
+import json
 import logging
 import time
 
@@ -71,29 +73,78 @@ def get_trading_status():
 
 @router.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
-    """WebSocket 实时推送 — beta 阶段实现
+    """WebSocket 实时推送 — v5.0-beta M5 真实推送实现
 
-    v5.0-alpha 简化: 只接受连接 + 立即断开, 留 hook 给 beta 阶段做真实推送
+    协议:
+      - 客户端发: {"type": "subscribe", "codes": ["000725", "600519"]}
+      - 服务端推: {"type": "snapshot", "quotes": [...]}
+      - 服务端推: {"type": "quote", ...quote.to_dict()...}  // 每次 service 更新
+      - 客户端发: {"type": "unsubscribe", "codes": ["..."]}
+      - 客户端发: "ping" → 服务端返 {"type": "pong"}
+
+    多客户端: 每连接独立 subscribed_codes,共享 RealtimeQuoteService 单例。
     """
     await websocket.accept()
+    service = get_quote_service()
+    loop = asyncio.get_event_loop()
+    subscribed_codes: set[str] = set()
+
+    def push_quote(quote):
+        """service.subscribe callback — 在 service 线程被调,跨线程 send_json"""
+        if quote.code not in subscribed_codes:
+            return
+        asyncio.run_coroutine_threadsafe(
+            websocket.send_json({"type": "quote", **quote.to_dict()}),
+            loop,
+        )
+
+    service.subscribe(push_quote)
+
     try:
-        # 立即推送一次当前 trading status
+        # 立即推一次 trading status
         await websocket.send_json({
             "type": "trading_status",
             "is_trading_hours": is_trading_hours(),
             "is_trading_day": is_trading_day(),
             "ts": time.time(),
         })
-        # 维持连接(等前端发任意消息或断连)
+
         while True:
             msg = await websocket.receive_text()
+
+            # ping/pong 字符串协议(简单)
             if msg == "ping":
                 await websocket.send_json({"type": "pong", "ts": time.time()})
+                continue
+
+            # JSON 协议(subscribe/unsubscribe)
+            try:
+                data = json.loads(msg)
+                msg_type = data.get("type")
+                codes = data.get("codes", [])
+
+                if msg_type == "subscribe":
+                    subscribed_codes.update(codes)
+                    # 立即推一次 snapshot
+                    snapshot = service.get_snapshot(list(subscribed_codes))
+                    await websocket.send_json({
+                        "type": "snapshot",
+                        "quotes": [q.to_dict() for q in snapshot],
+                        "ts": time.time(),
+                    })
+                elif msg_type == "unsubscribe":
+                    subscribed_codes.difference_update(codes)
+                else:
+                    logger.debug("realtime ws unknown type: %s", msg_type)
+            except (json.JSONDecodeError, AttributeError) as e:
+                logger.debug("realtime ws invalid msg: %s (%s)", msg[:50], e)
+
     except WebSocketDisconnect:
         pass
     except Exception as e:
         logger.warning("realtime ws error: %s", e)
     finally:
+        service.unsubscribe(push_quote)  # 清理 subscriber,避免泄漏
         try:
             await websocket.close()
         except Exception:
