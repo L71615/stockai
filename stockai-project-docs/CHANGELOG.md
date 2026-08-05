@@ -9,6 +9,33 @@
 
 ---
 
+## v5.0-beta-M5 — 2026-08-05
+
+**代号**: v5.0-beta M5 — WebSocket 实时推送
+**代码基线**: 78d428a
+**范围**: `/api/realtime/ws` + `useRealtimeQuote` 切 WebSocket
+
+### 关键改动
+
+- **feat(ws)**: `/api/realtime/ws` 支持 subscribe/unsubscribe + 多客户端广播 + ping/pong
+- **feat(ws)**: `RealtimeQuoteService.unsubscribe(callback)` 清理 API(断开时移除 subscriber)
+- **feat(frontend)**: `useRealtimeQuote` 改用 WebSocket(替换 SWR 5s polling)
+- **test(ws)**: 5 个 mock 测试(connect/snapshot/push/ping/multi-client)
+
+### 已知限制
+
+- WS 端点未鉴权(生产部署前需加 JWT)
+- 简单重连(3s 后重试)
+- 仅 quote 推送(factor / signal 仍 SWR)
+
+### 验收
+
+- 5/5 测试通过
+- 50/50 回归测试不破
+- 手动验证: websocat 连 ws 端点 + subscribe → 收到 snapshot + 推送
+
+---
+
 ## v5.0-beta-M7 — 2026-08-05
 
 **代号**: v5.0-beta M7 — 55 因子完整接入

@@ -2,14 +2,15 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-> **当前版本: v5.0-beta-M7**(2026-08-05 tag) — 55 因子完整接入(`235f20b`)
+> **当前版本: v5.0-beta-M5**(2026-08-05 tag) — WebSocket 实时推送(`78d428a`)
 > **量化方向**: 准实盘量化交易系统(D1 战略锁定) — 实时行情 + 盘中因子 + 信号手动确认 + 模拟成交
-> **最新改动**: v5.0-beta M7 patch:
->   - **feat**: `realtime_factor_cache.py` in-place 升 30→55 因子(`compute_realtime_factors()` 转发到 `factor_service.compute_minute_factors`)
->   - **feat**: `fetch_recent_bars()` 改返 5 元组 `(closes, highs, lows, opens, volumes)` + `data_source` 字段
->   - **feat**: `/api/realtime/factor/{code}` 响应新增 `data_source` 字段
->   - **test**: 20 个 mock 测试 + M6 30 测试回归全过
-> **上一里程碑**: v5.0-beta M6: minute bars 接入 — `fetch_recent_bars()` 灰度切 1m(`REALTIME_USE_MINUTE_BARS` env), Futu 失败自动 fallback 日级。详见 `RELEASE-NOTES-v5.0-beta-M6.md`
+> **最新改动**: v5.0-beta M5 patch:
+>   - **feat(ws)**: `/api/realtime/ws` 支持 subscribe/unsubscribe + 多客户端广播 + ping/pong
+>   - **feat(ws)**: `RealtimeQuoteService.unsubscribe()` 清理 API
+>   - **feat(frontend)**: `useRealtimeQuote` 改 WebSocket 推送(替换 SWR 5s polling)
+>   - **test(ws)**: 5 个 mock 测试
+> **v5.0-beta M7**: 55 因子完整接入 — `realtime_factor_cache.py` in-place 升 30→55 因子。详见 `RELEASE-NOTES-v5.0-beta-M7.md`
+> **v5.0-beta M6**: minute bars 接入 — `fetch_recent_bars()` 灰度切 1m(`REALTIME_USE_MINUTE_BARS` env)。详见 `RELEASE-NOTES-v5.0-beta-M6.md`
 > **再上一**: v4.2.4 patch (`70f9dc3`) — `_pearson_daily` + decay 向量化(~90s → ~4s) + `get_cached_leaderboard()` 5min TTL + `async def` 漏改修复
 > 详见 `RELEASE-NOTES-v4.2.md` + `RELEASE-NOTES-v4.2-m2.md` + `RELEASE-NOTES-v4.2.2.md` + `RELEASE-NOTES-v4.2.3.md` + `RELEASE-NOTES-v4.2.4.md`;**v5.0-alpha** 已完成(69 测试,git tag v5.0),详见 `2026-08-01-v5.0-strategy.md` + `RELEASE-NOTES-v5.0.md`
 > **详细记录**: 看 `stockai-project-docs/CHANGELOG.md` 和 `stockai-project-docs/V4-PLAN.md`
