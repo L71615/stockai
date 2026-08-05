@@ -5,7 +5,29 @@
 > **上一稳定版**: v4.2.3(2026-08-03)— partial_filled 完整处理骨架(1 feat + 19 测试)
 > **再上一稳定版**: v4.2.2(2026-08-03)— v4.2.1 patch(2 bug fix + 1 feat + 2 docs)
 > **再上一稳定版**: v4.2.1(2026-08-03)— T+1 watcher N 态(M1) + 因子分钟级 55 因子(M2)
-> **下一阶段**: v5.0-beta(M5 WS 推送 / M6 分钟级 K 线 ✅ / M7 55 因子 ✅ / M9 通知集成)
+> **下一阶段**: v5.0-beta(全部完成 ✅) — M5 WS / M6 分钟 K 线 / M7 55 因子 / M9 通知集成
+
+---
+
+## v5.0-beta-M9 — 2026-08-06
+
+**代号**: v5.0-beta M9 — 通知集成
+**代码基线**: b81b5c1
+**范围**: `notify_service.send_signal` + `realtime_signal_scanner` 推送集成
+
+### 关键改动
+
+- **feat(notify)**: `notify_service.send_signal(signal)` 格式化 Markdown(dataclass + dict 双兼容)
+- **feat(notify)**: `realtime_signal_scanner._tick` 写 log_signal 后调 send_signal
+- **feat(notify)**: 5min dedup(同 code+strategy 不重推,避免刷屏)
+- **feat(notify)**: 异常隔离(单 channel 失败不阻塞 scanner)
+- **test(notify)**: 6 个 mock 测试
+
+### 验收
+
+- 6/6 测试通过
+- 55/55 回归测试不破
+- NOTIFY_ENABLED=false 即可关闭
 
 ---
 
