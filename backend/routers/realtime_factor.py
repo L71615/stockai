@@ -39,7 +39,7 @@ def get_realtime_factors(
         }
     """
     try:
-        closes, volumes = fetch_recent_bars(code, limit=240)
+        (closes, highs, lows, opens, volumes), data_source = fetch_recent_bars(code, limit=240)
     except Exception as e:
         logger.exception("realtime_factor.fetch_bars(%s) 失败: %s", code, e)
         raise HTTPException(503, f"拉取 bar 失败: {e}")
@@ -49,7 +49,13 @@ def get_realtime_factors(
 
     factor_list = [n.strip() for n in names.split(",") if n.strip()] if names else None
     factors = compute_factors_with_cache(
-        code=code, closes=closes, volumes=volumes, factor_names=factor_list,
+        code=code,
+        closes=closes,
+        highs=highs,
+        lows=lows,
+        opens=opens,
+        volumes=volumes,
+        factor_names=factor_list,
     )
 
     # 统计命中 / 重算
@@ -65,6 +71,7 @@ def get_realtime_factors(
         "cached_count": cached_count,
         "fresh_count": fresh_count,
         "bar_count": len(closes),
+        "data_source": data_source,  # v5.0-beta M7 新增
     }
 
 

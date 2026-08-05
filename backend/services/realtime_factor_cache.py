@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import time
 from typing import Optional
 
@@ -82,44 +83,32 @@ def compute_realtime_factors(
     *,
     code: str,
     closes: list[float],
+    highs: list[float] | None = None,
+    lows: list[float] | None = None,
+    opens: list[float] | None = None,
     volumes: list[float] | None = None,
     factor_names: list[str] | None = None,
 ) -> dict[str, float | None]:
-    """计算盘中分钟级因子
+    """计算盘中因子 (v5.0-beta M7: 升级到 55 因子)
 
-    Args:
-        code: 股票代码(日志用)
-        closes: 最近 N 根 bar 的收盘价序列(分钟级)
-        volumes: 最近 N 根 bar 的成交量序列(可选)
-        factor_names: 要算的因子名列表,None = 全部 30 个
-
-    Returns:
-        {factor_name: value or None}  None 表示计算失败或数据不足
+    转发到 services.factor_service.compute_minute_factors,
+    该函数已实现 55 因子 MINUTE_FACTOR_REGISTRY 的 5 元组分发。
     """
-    from services.factor_lab import FACTOR_REGISTRY
+    from services.factor_service import compute_minute_factors
 
     if len(closes) < 5:
         logger.debug("realtime_factor[%s]: 收盘序列不足 5 根, 跳过", code)
         return {}
 
-    vols = volumes or [0.0] * len(closes)
-    targets = factor_names or list(FACTOR_REGISTRY.keys())
-    results: dict[str, float | None] = {}
-
-    for name in targets:
-        if name not in FACTOR_REGISTRY:
-            results[name] = None
-            continue
-        fn, needs_volume = FACTOR_REGISTRY[name]
-        try:
-            raw = fn(closes, vols if needs_volume else None)
-            scalar = _extract_scalar(raw, closes)
-            results[name] = scalar
-        except Exception as e:
-            logger.debug("realtime_factor[%s.%s] 计算失败: %s", code, name, e)
-            results[name] = None
-
-    return results
+    return compute_minute_factors(
+        code=code,
+        closes=closes,
+        highs=highs,
+        lows=lows,
+        opens=opens,
+        volumes=volumes,
+        factor_names=factor_names,
+    )
 
 
 def _extract_scalar(raw, closes: list[float]) -> float | None:
@@ -159,28 +148,30 @@ def compute_factors_with_cache(
     *,
     code: str,
     closes: list[float],
+    highs: list[float] | None = None,
+    lows: list[float] | None = None,
+    opens: list[float] | None = None,
     volumes: list[float] | None = None,
     factor_names: list[str] | None = None,
 ) -> dict[str, float | None]:
-    """带缓存的因子计算
-
-    1. 先查 cache — 已有的跳过
-    2. 未命中 + 没缓存 → 重算全部
-    3. 未命中 + 部分缓存 → 重算缺失的
-    4. 写回 cache
-    """
+    """带缓存的因子计算 (v5.0-beta M7: 支持 5 元组)"""
     cached = get_all_cached(code)
 
     targets = factor_names or list(_all_factor_names())
     if not cached or set(targets) - set(cached.keys()):
         new_factors = compute_realtime_factors(
-            code=code, closes=closes, volumes=volumes, factor_names=targets,
+            code=code,
+            closes=closes,
+            highs=highs,
+            lows=lows,
+            opens=opens,
+            volumes=volumes,
+            factor_names=targets,
         )
         for name, val in new_factors.items():
             set_cached_factor(code, name, val)
         cached.update({k: v for k, v in new_factors.items() if v is not None})
 
-    # 返回结果(优先 cache + 加上 None 标记的未算因子)
     result: dict[str, float | None] = {}
     for name in targets:
         result[name] = cached.get(name)
@@ -188,26 +179,74 @@ def compute_factors_with_cache(
 
 
 def _all_factor_names() -> list[str]:
-    from services.factor_lab import FACTOR_REGISTRY
-    return list(FACTOR_REGISTRY.keys())
+    """v5.0-beta M7: 改读 MINUTE_FACTOR_REGISTRY (55 因子)"""
+    from services.factor_service import MINUTE_FACTOR_REGISTRY
+    return list(MINUTE_FACTOR_REGISTRY.keys())
 
 
-# ── 从 historical_kline 拉取分钟级数据(临时,beta 换 futu intraday) ─────
+# ── 从 K 线表拉取 bar(v5.0-beta M7: 5 元组分发, 灰度开关) ─────
 
 
-def fetch_recent_bars(code: str, limit: int = 240) -> tuple[list[float], list[float]]:
-    """从 historical_kline 取最近 N 根 bar(临时 — 用日级 fallback)
+def fetch_recent_bars(
+    code: str,
+    limit: int = 240,
+) -> tuple[tuple[list[float], list[float], list[float], list[float], list[float]], str]:
+    """从 minute 或 daily K 线表拉取最近 N 根 bar (M7: 返 5 元组 + data_source)
 
-    v5.0-alpha 阶段用日级数据 fallback(分钟级 K 线表 beta 阶段才有)
-    真实盘中用 futu_raw_kline 表(M11 阶段)
+    v5.0-beta M7: 复用 M6 模式 — REALTIME_USE_MINUTE_BARS=true 走 1m 分钟级,
+    Futu 查询空时自动 fallback 日级。独立实现,不跨模块依赖 realtime_factor_minute。
     """
-    rows = query_all(
-        "SELECT close, volume FROM historical_kline WHERE stock_code = ? "
-        "ORDER BY trade_date DESC LIMIT ?",
+    use_minute = os.getenv("REALTIME_USE_MINUTE_BARS", "false").strip().lower() == "true"
+
+    if use_minute:
+        rows = _fetch_minute_bars(code, limit)
+        if not rows:
+            logger.warning(
+                "minute_bars_empty_for_code=%s fallback_to_daily minute_bars=0",
+                code,
+            )
+            rows = _fetch_daily_bars(code, limit)
+            return _to_series(rows), "historical_daily_fallback"
+        return _to_series(rows), "futu_1m"
+
+    rows = _fetch_daily_bars(code, limit)
+    return _to_series(rows), "historical_daily_fallback"
+
+
+def _fetch_minute_bars(code: str, limit: int) -> list[dict]:
+    """读 futu_raw_kline (1m, qfq) 最近 N 根
+
+    Returns: list[dict{bar_time, open, high, low, close, volume}] — 倒序（最新在前）
+    """
+    return query_all(
+        """SELECT bar_time, open, high, low, close, volume
+           FROM futu_raw_kline
+           WHERE symbol = ? AND interval = '1m' AND adjust_type = 'qfq'
+           ORDER BY bar_time DESC LIMIT ?""",
         (code, limit),
     )
-    # 倒序 → 正序
-    rows = list(reversed(rows))
+
+
+def _fetch_daily_bars(code: str, limit: int) -> list[dict]:
+    """读 historical_kline 最近 N 根 (日级 fallback)
+
+    Returns: list[dict{bar_time, open, high, low, close, volume}] — 已按 bar_time 正序
+    """
+    rows = query_all(
+        """SELECT trade_date as bar_time, open, high, low, close, volume
+           FROM historical_kline
+           WHERE stock_code = ?
+           ORDER BY trade_date DESC LIMIT ?""",
+        (code, limit),
+    )
+    return list(reversed(rows))
+
+
+def _to_series(rows: list[dict]) -> tuple[list[float], list[float], list[float], list[float], list[float]]:
+    """统一转 (closes, highs, lows, opens, volumes) — None 值过滤"""
     closes = [r["close"] for r in rows if r["close"] is not None]
-    volumes = [r["volume"] for r in rows if r["volume"] is not None]
-    return closes, volumes
+    highs = [r["high"] for r in rows if r.get("high") is not None]
+    lows = [r["low"] for r in rows if r.get("low") is not None]
+    opens = [r["open"] for r in rows if r.get("open") is not None]
+    volumes = [r["volume"] for r in rows if r.get("volume") is not None]
+    return closes, highs, lows, opens, volumes
