@@ -5,7 +5,44 @@
 > **上一稳定版**: v4.2.3(2026-08-03)— partial_filled 完整处理骨架(1 feat + 19 测试)
 > **再上一稳定版**: v4.2.2(2026-08-03)— v4.2.1 patch(2 bug fix + 1 feat + 2 docs)
 > **再上一稳定版**: v4.2.1(2026-08-03)— T+1 watcher N 态(M1) + 因子分钟级 55 因子(M2)
-> **下一阶段**: v5.0-beta(M5 WS 推送 / M6 分钟级 K 线 / M8 多用户 + cash 表 / M9 通知集成),详见 `2026-08-01-v5.0-strategy.md`
+> **下一阶段**: v5.0-beta(M5 WS 推送 / M8 多用户 + cash 表 / M9 通知集成),详见 `2026-08-01-v5.0-strategy.md`
+
+---
+
+## v5.0-beta-M7 — 2026-08-05
+
+**代号**: v5.0-beta M7 — 55 因子完整接入
+**代码基线**: 235f20b
+**范围**: `services/realtime_factor_cache.py` in-place 升级 30→55 因子
+
+### 关键改动
+
+- **feat(55_factors)**: `compute_realtime_factors()` 转发到 `factor_service.compute_minute_factors`(55 因子 + 5 元组分发)
+- **feat(55_factors)**: `fetch_recent_bars()` 改返 `((closes, highs, lows, opens, volumes), data_source)` 2 元组
+- **feat(55_factors)**: 复用 M6 灰度开关 `REALTIME_USE_MINUTE_BARS` + 3 函数拆分模式 (`_fetch_minute_bars` / `_fetch_daily_bars` / `_to_series`)
+- **feat(router)**: `/api/realtime/factor/{code}` 解包 5 元组 + 新增 `data_source` 字段
+- **test(55_factors)**: 新增 20 个 mock 测试 (M6 30 回归仍通过)
+- **test(conftest)**: test_db fixture 加 `realtime_factor_cache` 表 schema
+
+### 双 cache 表共存
+
+| 表 | 接口 | 因子 | 来源 |
+|----|------|------|------|
+| `realtime_factor_cache` | `/api/realtime/factor/{code}` | **55** (M7 升级) | alpha M1 接口 |
+| `minute_factor_cache` | `/api/realtime/factor/{code}/minute` | 55 | M6 已就位 |
+
+### 不变项
+
+- `factor_service.compute_minute_factors` 不动(已实现)
+- `realtime_factor_minute.py` 不动(M6 已 55 因子)
+- 前端不动(因子数据更全,UI 不变)
+- `factor_lab.py` 30 因子保留(alpha M2 screener 用)
+
+### 验收
+
+- 20/20 测试通过 (M7)
+- 30/30 测试仍通过 (M6 回归)
+- 手动验证 `curl /api/realtime/factor/600519` 返 55+ 因子 + data_source 字段
 
 ---
 

@@ -2,13 +2,16 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-> **当前版本: v4.2.4**(2026-08-05 tag) — leaderboard 超时修复 + 5min 缓存 + `async def` 漏改修复(`70f9dc3`)
+> **当前版本: v5.0-beta-M7**(2026-08-05 tag) — 55 因子完整接入(`235f20b`)
 > **量化方向**: 准实盘量化交易系统(D1 战略锁定) — 实时行情 + 盘中因子 + 信号手动确认 + 模拟成交
-> **最新改动**: v4.2.4 patch:
->   - **fix**: `_pearson_daily` + decay 向量化(~90s → ~4s) + 默认窗口 240 天 + `get_cached_leaderboard()` 5min TTL + per-key asyncio.Lock
->   - **fix**: `get_leaderboard` async def 漏改导致 `SyntaxError` → main.py import 崩溃 → 3000 ECONNREFUSED(现已修复,端到端 `/api/stocks/holdings/with-pnl` 200)
+> **最新改动**: v5.0-beta M7 patch:
+>   - **feat**: `realtime_factor_cache.py` in-place 升 30→55 因子(`compute_realtime_factors()` 转发到 `factor_service.compute_minute_factors`)
+>   - **feat**: `fetch_recent_bars()` 改返 5 元组 `(closes, highs, lows, opens, volumes)` + `data_source` 字段
+>   - **feat**: `/api/realtime/factor/{code}` 响应新增 `data_source` 字段
+>   - **test**: 20 个 mock 测试 + M6 30 测试回归全过
+> **上一里程碑**: v5.0-beta M6: minute bars 接入 — `fetch_recent_bars()` 灰度切 1m(`REALTIME_USE_MINUTE_BARS` env), Futu 失败自动 fallback 日级。详见 `RELEASE-NOTES-v5.0-beta-M6.md`
+> **再上一**: v4.2.4 patch (`70f9dc3`) — `_pearson_daily` + decay 向量化(~90s → ~4s) + `get_cached_leaderboard()` 5min TTL + `async def` 漏改修复
 > 详见 `RELEASE-NOTES-v4.2.md` + `RELEASE-NOTES-v4.2-m2.md` + `RELEASE-NOTES-v4.2.2.md` + `RELEASE-NOTES-v4.2.3.md` + `RELEASE-NOTES-v4.2.4.md`;**v5.0-alpha** 已完成(69 测试,git tag v5.0),详见 `2026-08-01-v5.0-strategy.md` + `RELEASE-NOTES-v5.0.md`
-> **v5.0-beta M6**: minute bars 接入 — `fetch_recent_bars()` 灰度切 1m(`REALTIME_USE_MINUTE_BARS` env), Futu 失败自动 fallback 日级。详见 `RELEASE-NOTES-v5.0-beta-M6.md`
 > **详细记录**: 看 `stockai-project-docs/CHANGELOG.md` 和 `stockai-project-docs/V4-PLAN.md`
 > **文档结构**: 根目录 `INDEX.md` 是入口,所有 MD 已分类到 `stockai-project-docs/` 与 `monitor-desktop-docs/`
 
