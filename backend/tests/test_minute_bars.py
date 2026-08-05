@@ -95,3 +95,29 @@ def test_fetch_fallback_when_minute_empty(monkeypatch, fake_daily_rows, caplog):
             result, source = fetch_recent_bars("600519", limit=240)
     assert source == "historical_daily_fallback"
     assert "fallback" in caplog.text.lower()
+
+
+# ── 组 5 续: Router 集成 (1 个) ──────────────────────
+
+
+def test_router_returns_data_source_from_function(monkeypatch, fake_minute_rows):
+    """router 应把 fetch_recent_bars 返回的 data_source 透传到 API 响应"""
+    monkeypatch.setenv("REALTIME_USE_MINUTE_BARS", "true")
+    from fastapi.testclient import TestClient
+    from main import app, pyjwt as _main_pyjwt
+
+    # 旁路 JWT 中间件：让 auth_middleware 解析任意 token 都成功
+    with patch.object(_main_pyjwt, "decode", return_value={"sub": "1"}), \
+         patch("services.realtime_factor_minute._fetch_minute_bars", return_value=fake_minute_rows), \
+         patch("services.realtime_factor_minute.compute_minute_factors_with_cache",
+               return_value={f"f{i}": 1.0 for i in range(5)}), \
+         patch("services.realtime_factor_minute.get_all_cached", return_value={}):
+        client = TestClient(app)
+        resp = client.get(
+            "/api/realtime/factor/600519/minute",
+            headers={"Authorization": "Bearer test-token"},
+        )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["data_source"] == "futu_1m"
+    assert body["bar_count"] == 240

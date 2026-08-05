@@ -42,7 +42,7 @@ def get_minute_factors(
         }
     """
     try:
-        closes, highs, lows, opens, volumes = fetch_recent_bars(code, limit=240)
+        (closes, highs, lows, opens, volumes), data_source = fetch_recent_bars(code, limit=240)
     except Exception as e:
         logger.exception("realtime_factor_minute.fetch_bars(%s) 失败: %s", code, e)
         raise HTTPException(503, f"拉取 bar 失败: {e}")
@@ -69,7 +69,7 @@ def get_minute_factors(
         "bar_count": len(closes),
         "cached_count": cached_count,
         "fresh_count": fresh_count,
-        "data_source": "historical_daily_fallback",  # v5.0-rc M11 切 futu_1m
+        "data_source": data_source,  # 来自 fetch_recent_bars 返回 ("futu_1m" | "historical_daily_fallback")
     }
 
 
