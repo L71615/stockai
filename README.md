@@ -4,7 +4,7 @@
 
 > ✅ **当前版本: v4.2.3**(2026-08-03 tag) — partial_filled 完整处理骨架(1 feat + 19 测试)
 > **v5.0 alpha 阶段完成**(2026-08-01) — M1-M4 已交付,详见 [`RELEASE-NOTES-v5.0.md`](stockai-project-docs/RELEASE-NOTES-v5.0.md)
-> 下一阶段: v5.0-beta(WS 推送 / 分钟级 K 线 / 多用户 + cash 表 / 通知集成)
+> 下一阶段: v5.0-beta(WS 推送 / 分钟级 K 线 / 通知集成)
 > 详见 [`stockai-project-docs/CHANGELOG.md`](stockai-project-docs/CHANGELOG.md) v4.2 + v5.0-alpha 系列
 
 ### A 股 AI 量化选股 · T+1 短线预测 + 研究→决策证据闭环

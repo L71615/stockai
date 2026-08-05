@@ -70,7 +70,6 @@ echo "REALTIME_USE_MINUTE_BARS=true" >> backend/.env
 
 - **M5**: WebSocket 推送(替换 5s 轮询)
 - **M9**: 通知集成
-- **M8**: 多用户 + 权限
 
 ---
 

@@ -55,7 +55,7 @@ D:\stocks\
 - **当前版本**: **v4.2.3** (2026-08-03 tag,partial_filled 完整处理骨架)
 - **上一稳定版**: v4.2.2 (2026-08-03,v4.2.1 patch)
 - **再上一稳定版**: v4.2.1 (2026-08-03,M1 + M2 打包)
-- **下一大版本**: v5.0-beta(WS 推送 / 分钟级 K 线 / 多用户 + cash 表 / 通知集成)
+- **下一大版本**: v5.0-beta(WS 推送 / 分钟级 K 线 / 通知集成)
 - **核心能力**: v5.0-alpha 全量 + **v4.2 新增**:
   - **M1**: T+1 watcher 6 态机(OSS 风格) + transition() 守卫 + t1_order_events 事件溯源 + partial_filled 字段
   - **M2**: factor_service 55 因子分钟级对齐 + compute_minute_factors() + minute_factor_cache 5m TTL + REST `/api/realtime/factor/{code}/minute` + 前端 hook/组件

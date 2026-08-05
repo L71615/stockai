@@ -5,7 +5,7 @@
 > ✅ **当前版本: v4.2.3**(2026-08-03 tag) — partial_filled 完整处理骨架(1 feat + 19 测试)
 > **上一稳定版**: v4.2.2(2026-08-03)— v4.2.1 patch(2 bug fix + 1 feat + 2 docs 同步)
 > 此外 v5.0-alpha 已完成(2026-08-01 tag,M1-M4 共 69 测试)
-> 下一阶段: v5.0-beta(WS 推送 / 分钟级 K 线 / 多用户 + cash 表 / 通知集成)
+> 下一阶段: v5.0-beta(WS 推送 / 分钟级 K 线 / 通知集成)
 > 详见 [`RELEASE-NOTES-v4.2.md`](RELEASE-NOTES-v4.2.md) + [`RELEASE-NOTES-v4.2-m2.md`](RELEASE-NOTES-v4.2-m2.md) + [`RELEASE-NOTES-v4.2.2.md`](RELEASE-NOTES-v4.2.2.md) + [`RELEASE-NOTES-v4.2.3.md`](RELEASE-NOTES-v4.2.3.md) + [`RELEASE-NOTES-v5.0.md`](RELEASE-NOTES-v5.0.md)
 
 ### A 股 AI 量化选股 · T+1 短线预测 + 研究→决策证据闭环 + 准实盘量化

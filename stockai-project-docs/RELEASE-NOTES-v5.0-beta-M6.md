@@ -70,7 +70,6 @@ curl http://localhost:3000/api/realtime/factor/600519/minute | jq .data_source
 - **M5**: WebSocket 推送（替换 5s 轮询）
 - **M7**: 55 因子全部接入（依赖 M6）
 - **M9**: 通知集成
-- **M8**: 多用户 + 权限
 
 ---
 

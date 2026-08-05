@@ -143,7 +143,6 @@ backend/database.py                # 加 2 张新表 schema
 | K 线频率 | 日级 fallback(60 根) | M11 切 `futu_raw_kline` 分钟级 |
 | 行情延迟 | 5s SWR 轮询 | M5 切 WebSocket 推送 |
 | 因子范围 | 30 个(factor_lab) | 55 个 factor_service 完整接入 |
-| 用户体系 | 单 admin(alpha) | 多用户 + 权限分层 |
 | 数据源 | 腾讯免费 API(限频) | Futu OpenD + akshare fallback |
 
 ---
@@ -151,9 +150,8 @@ backend/database.py                # 加 2 张新表 schema
 ## 📌 下一步(v5.0-beta 候选)
 
 - **M5**: WebSocket 推送(替换 5s 轮询)
-- **M6**: 分钟级 K 线接入
-- **M7**: 55 因子全部接入
-- **M8**: 多用户 + 权限
+- **M6**: 分钟级 K 线接入 ✅
+- **M7**: 55 因子全部接入 ✅
 - **M9**: 通知集成(盘中信号 → 邮件/微信/Telegram 推送)
 
 详见 [`2026-08-01-v5.0-strategy.md`](2026-08-01-v5.0-strategy.md) + [`2026-08-01-v5.0-alpha-plan.md`](2026-08-01-v5.0-alpha-plan.md)。
