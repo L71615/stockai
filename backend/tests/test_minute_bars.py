@@ -22,6 +22,23 @@ from services.realtime_factor_minute import (
 )
 
 
+# ── 最小化测试 app(避免 from main import 触发 startup 副作用) ──
+
+
+def _make_test_client():
+    """构造只含 realtime_factor_minute router 的 FastAPI 测试 app。
+
+    直接 import main 会触发 startup(JWT_SECRET 校验、AI 客户端初始化等),
+    测试环境若缺 .env 会崩。这里只挂载目标 router,保留完整请求链路。
+    """
+    from fastapi import FastAPI
+    from routers.realtime_factor_minute import router as realtime_router
+    app = FastAPI()
+    app.include_router(realtime_router)
+    from fastapi.testclient import TestClient
+    return TestClient(app)
+
+
 # ── 公共 fixture ──────────────────────────────────────
 
 
@@ -77,6 +94,10 @@ def test_fetch_returns_minute_when_env_true(monkeypatch, fake_minute_rows):
         result, source = fetch_recent_bars("600519", limit=240)
     assert source == "futu_1m"
     assert len(result[0]) == 240
+    # 顺序契约: closes[0] 是 fixture 中最旧的一根(OLDEST), closes[-1] 是最新(NEWEST)
+    closes = result[0]
+    assert closes[0] == fake_minute_rows[0]["close"]
+    assert closes[-1] == fake_minute_rows[-1]["close"]
     m_d.assert_not_called()
 
 
@@ -108,20 +129,13 @@ def test_fetch_fallback_when_minute_empty(monkeypatch, fake_daily_rows, caplog):
 def test_router_returns_data_source_from_function(monkeypatch, fake_minute_rows):
     """router 应把 fetch_recent_bars 返回的 data_source 透传到 API 响应"""
     monkeypatch.setenv("REALTIME_USE_MINUTE_BARS", "true")
-    from fastapi.testclient import TestClient
-    from main import app, pyjwt as _main_pyjwt
+    client = _make_test_client()
 
-    # 旁路 JWT 中间件：让 auth_middleware 解析任意 token 都成功
-    with patch.object(_main_pyjwt, "decode", return_value={"sub": "1"}), \
-         patch("services.realtime_factor_minute._fetch_minute_bars", return_value=fake_minute_rows), \
+    with patch("services.realtime_factor_minute._fetch_minute_bars", return_value=fake_minute_rows), \
          patch("services.realtime_factor_minute.compute_minute_factors_with_cache",
                return_value={f"f{i}": 1.0 for i in range(5)}), \
          patch("services.realtime_factor_minute.get_all_cached", return_value={}):
-        client = TestClient(app)
-        resp = client.get(
-            "/api/realtime/factor/600519/minute",
-            headers={"Authorization": "Bearer test-token"},
-        )
+        resp = client.get("/api/realtime/factor/600519/minute")
     assert resp.status_code == 200
     body = resp.json()
     assert body["data_source"] == "futu_1m"
@@ -341,20 +355,13 @@ def test_invalid_env_value_treated_as_false(monkeypatch, fake_daily_rows):
 
 def test_sqlite_error_returns_503_via_router(monkeypatch):
     """SQLite OperationalError → router 抛 503"""
-    from fastapi.testclient import TestClient
-    from main import app, pyjwt as _main_pyjwt
-
     def fake_query_all(*args, **kwargs):
         import sqlite3
         raise sqlite3.OperationalError("database is locked")
 
     monkeypatch.setattr("services.realtime_factor_minute.query_all", fake_query_all)
-    with patch.object(_main_pyjwt, "decode", return_value={"sub": "1"}):
-        client = TestClient(app)
-        resp = client.get(
-            "/api/realtime/factor/600519/minute",
-            headers={"Authorization": "Bearer test-token"},
-        )
+    client = _make_test_client()
+    resp = client.get("/api/realtime/factor/600519/minute")
     assert resp.status_code == 503
 
 
@@ -380,17 +387,10 @@ def test_minute_and_daily_both_empty(monkeypatch):
 
 def test_router_returns_404_when_no_data(monkeypatch):
     """router 在 bar_count<5 时返 404"""
-    from fastapi.testclient import TestClient
-    from main import app, pyjwt as _main_pyjwt
-
     monkeypatch.setenv("REALTIME_USE_MINUTE_BARS", "false")
-    with patch("services.realtime_factor_minute._fetch_daily_bars", return_value=[]), \
-         patch.object(_main_pyjwt, "decode", return_value={"sub": "1"}):
-        client = TestClient(app)
-        resp = client.get(
-            "/api/realtime/factor/600519/minute",
-            headers={"Authorization": "Bearer test-token"},
-        )
+    with patch("services.realtime_factor_minute._fetch_daily_bars", return_value=[]):
+        client = _make_test_client()
+        resp = client.get("/api/realtime/factor/600519/minute")
     assert resp.status_code == 404
 
 
@@ -409,12 +409,15 @@ def test_fallback_logs_warning_on_empty_minute(monkeypatch, fake_daily_rows, cap
 
 
 def test_limit_5_returns_5_bars(monkeypatch, fake_minute_rows):
-    """limit=5 应返 5 根"""
+    """limit=5 应返 5 根,且顺序 ASC(closes[0] = fixture[0] = OLDEST)"""
     monkeypatch.setenv("REALTIME_USE_MINUTE_BARS", "true")
     with patch("services.realtime_factor_minute._fetch_minute_bars",
                return_value=fake_minute_rows[:5]):
         (closes, _, _, _, _), _ = fetch_recent_bars("600519", limit=5)
     assert len(closes) == 5
+    # 锁定顺序契约: closes[0] 应是 fixture[0] 的 close(OLDEST)
+    assert closes[0] == fake_minute_rows[0]["close"]
+    assert closes[-1] == fake_minute_rows[4]["close"]
 
 
 def test_limit_zero_returns_zero(monkeypatch):

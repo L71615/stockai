@@ -116,15 +116,17 @@ def _fetch_minute_bars(code: str, limit: int) -> list[dict]:
     """读 futu_raw_kline(1m, qfq) 最近 N 根
 
     Returns: list[dict{bar_time, open, high, low, close, volume}]
-             倒序（最新在前），调用方负责 reverse。
+             已按 bar_time 正序排列（oldest first, newest last），
+             与 _fetch_daily_bars() 的返回顺序契约保持一致。
     """
-    return query_all(
+    rows = query_all(
         """SELECT bar_time, open, high, low, close, volume
            FROM futu_raw_kline
            WHERE symbol = ? AND interval = '1m' AND adjust_type = 'qfq'
            ORDER BY bar_time DESC LIMIT ?""",
         (code, limit),
     )
+    return list(reversed(rows))
 
 
 def _fetch_daily_bars(code: str, limit: int) -> list[dict]:
