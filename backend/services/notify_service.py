@@ -302,6 +302,46 @@ def send_alert(stock_code: str, stock_name: str, alert_msg: str,
     return send_notification(markdown, title=f"盯盘预警 — {stock_name}")
 
 
+def send_signal(signal) -> dict:
+    """发送盘中策略信号 (v5.0-beta M9 新增)
+
+    Args:
+        signal: RealtimeSignal (dataclass) 或同构 dict
+              - stock_code / strategy_name / direction / reason / score / triggered_at
+    """
+    # 兼容 dict 与 dataclass
+    if isinstance(signal, dict):
+        stock_code = signal.get("stock_code", "?")
+        strategy_name = signal.get("strategy_name", "?")
+        direction = signal.get("direction", "watch")
+        reason = signal.get("reason", "")
+        score = signal.get("score", 0)
+        triggered_at = signal.get("triggered_at", time.time())
+    else:
+        stock_code = getattr(signal, "stock_code", "?")
+        strategy_name = getattr(signal, "strategy_name", "?")
+        direction = getattr(signal, "direction", "watch")
+        reason = getattr(signal, "reason", "")
+        score = getattr(signal, "score", 0)
+        triggered_at = getattr(signal, "triggered_at", time.time())
+
+    emoji = "🟢" if direction == "buy" else "🔴" if direction == "sell" else "🟡"
+    dir_cn = {"buy": "买入", "sell": "卖出", "watch": "观察"}.get(direction, direction)
+    trigger_time = time.strftime("%Y-%m-%d %H:%M", time.localtime(triggered_at))
+
+    markdown = (
+        f"## {emoji} 盘中信号触发\n\n"
+        f"**{stock_code}** {strategy_name}\n\n"
+        f"- 方向: {dir_cn}\n"
+        f"- 强度: {score:+.2f}\n"
+        f"- 触发: {trigger_time}\n"
+        f"- 原因: {reason}\n\n"
+        f"---\n"
+        f"⏰ {time.strftime('%Y-%m-%d %H:%M:%S')} · StockAI"
+    )
+    return send_notification(markdown, title=f"信号触发 — {stock_code}")
+
+
 def send_briefing(briefing: str) -> dict:
     """发送 AI 盯盘简报"""
     markdown = (
