@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import time
 
 from database import execute, query_all, query_one
@@ -78,24 +79,72 @@ def invalidate(code: str) -> None:
 # ── 数据获取(临时, v5.0-rc 切 futu_raw_kline) ─────
 
 
+# ── 数据获取(v5.0-beta M6 — 灰度开关, 默认日级 fallback) ─────
+
+
 def fetch_recent_bars(
     code: str,
     limit: int = 240,
-) -> tuple[list[float], list[float], list[float], list[float], list[float]]:
-    """从 historical_kline 取最近 N 根 bar — 用日级 fallback
+) -> tuple[tuple[list[float], list[float], list[float], list[float], list[float]], str]:
+    """从 minute 或 daily K 线表拉取最近 N 根 bar
+
+    v5.0-beta M6: 灰度切换 — REALTIME_USE_MINUTE_BARS=true 走 1m 分钟级,
+    Futu 查询空时自动 fallback 日级。
 
     Returns:
-        (closes, highs, lows, opens, volumes)
-        v5.0-rc 切 futu_raw_kline(1m / 5m) — 同样 5 个序列
+        ((closes, highs, lows, opens, volumes), data_source)
+        data_source ∈ {"futu_1m", "historical_daily_fallback"}
+    """
+    use_minute = os.getenv("REALTIME_USE_MINUTE_BARS", "false").strip().lower() == "true"
+
+    if use_minute:
+        rows = _fetch_minute_bars(code, limit)
+        if not rows:
+            logger.warning(
+                "minute_bars_empty_for_code=%s fallback_to_daily minute_bars=0",
+                code,
+            )
+            rows = _fetch_daily_bars(code, limit)
+            return _to_series(rows), "historical_daily_fallback"
+        return _to_series(rows), "futu_1m"
+
+    rows = _fetch_daily_bars(code, limit)
+    return _to_series(rows), "historical_daily_fallback"
+
+
+def _fetch_minute_bars(code: str, limit: int) -> list[dict]:
+    """读 futu_raw_kline(1m, qfq) 最近 N 根
+
+    Returns: list[dict{bar_time, open, high, low, close, volume}]
+             倒序（最新在前），调用方负责 reverse。
+    """
+    return query_all(
+        """SELECT bar_time, open, high, low, close, volume
+           FROM futu_raw_kline
+           WHERE symbol = ? AND interval = '1m' AND adjust_type = 'qfq'
+           ORDER BY bar_time DESC LIMIT ?""",
+        (code, limit),
+    )
+
+
+def _fetch_daily_bars(code: str, limit: int) -> list[dict]:
+    """读 historical_kline 最近 N 根（日级，alpha 既有逻辑）
+
+    Returns: list[dict{bar_time, open, high, low, close, volume}]
+             已按 bar_time 正序排列。
     """
     rows = query_all(
-        """SELECT trade_date, open, high, low, close, volume
+        """SELECT trade_date as bar_time, open, high, low, close, volume
            FROM historical_kline
            WHERE stock_code = ?
            ORDER BY trade_date DESC LIMIT ?""",
         (code, limit),
     )
-    rows = list(reversed(rows))
+    return list(reversed(rows))
+
+
+def _to_series(rows: list[dict]) -> tuple[list[float], list[float], list[float], list[float], list[float]]:
+    """统一转 (closes, highs, lows, opens, volumes) — None 值过滤"""
     closes = [r["close"] for r in rows if r["close"] is not None]
     highs = [r["high"] for r in rows if r.get("high") is not None]
     lows = [r["low"] for r in rows if r.get("low") is not None]
