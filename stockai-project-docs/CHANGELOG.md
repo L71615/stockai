@@ -9,6 +9,36 @@
 
 ---
 
+## v5.0-beta-M6 — 2026-08-05
+
+**代号**: v5.0-beta M6 — 分钟级 K 线接入
+**代码基线**: 9241c29
+**范围**: `services/realtime_factor_minute.py:fetch_recent_bars()` 灰度切 1m 分钟级
+
+### 关键改动
+
+- **feat(minute_bars)**: `fetch_recent_bars()` 拆出 `_fetch_minute_bars` / `_fetch_daily_bars` / `_to_series` 三函数
+- **feat(minute_bars)**: 环境变量 `REALTIME_USE_MINUTE_BARS` 灰度开关(默认 `false`)
+- **feat(minute_bars)**: Futu 分钟表空 → 自动 fallback 日级(永不返 503)
+- **feat(router)**: `data_source` 字段从函数返回值取,值域 `{futu_1m, historical_daily_fallback}`
+- **chore(env)**: `.env.example` 加 `REALTIME_USE_MINUTE_BARS=false`
+- **test(minute_bars)**: 新增 30 个 mock 测试
+
+### 不变项
+
+- `run_intraday_sync()` 保持 5min 同步
+- `sync_minute_kline()` 不动
+- `futu_raw_kline` schema 不动
+- 因子计算 `compute_minute_factors` 不动
+
+### 验收
+
+- 30 个测试全过
+- 灰度切换零停机(`.env` 改 env 即可)
+- staging 观察 1 周再 prod 启用
+
+---
+
 ## 2026-08-05 — v4.2.4 (patch: leaderboard 超时修复 + 5min 缓存 + async def 漏改)
 
 ### 🆕 feat: leaderboard 向量化 + 缓存层
