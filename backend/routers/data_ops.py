@@ -408,38 +408,48 @@ def sync_stocks(
 
     def _worker():
         import time as _time
+        from services.baostock_adapter import get_kline as bs_get_kline
         MAX_RETRIES = 2
         SLEEP_BETWEEN = 0.15  # 限频：每只 150ms（akshare 腾讯 QPS 友好）
         for code in target_codes:
             success = False
+            last_error = None
             for attempt in range(MAX_RETRIES + 1):
-                try:
-                    # 拉最近 10 天 K 线（覆盖缺失 + 增量）
-                    kline = get_kline(code, days=10)
-                    if kline and "closes" in kline and len(kline["closes"]) > 0:
-                        from database import execute, execute_many
-                        dates = kline.get("dates", [])
-                        opens = kline.get("opens", [])
-                        highs = kline.get("highs", [])
-                        lows = kline.get("lows", [])
-                        closes = kline.get("closes", [])
-                        volumes = kline.get("volumes", [])
-                        statements = [
-                            ("INSERT OR REPLACE INTO historical_kline "
-                             "(stock_code, trade_date, open, high, low, close, volume) "
-                             "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                             (code, dates[i], opens[i], highs[i], lows[i], closes[i], volumes[i]))
-                            for i in range(len(dates)) if i < len(opens)
-                        ]
-                        if statements:
-                            execute_many(statements)
-                        success = True
-                        break
-                    else:
-                        # 返回空：akshare 静默失败，可能限频
-                        logger.debug("sync %s: empty result (attempt %d)", code, attempt + 1)
-                except Exception as e:
-                    logger.warning("sync %s attempt %d: %s", code, attempt + 1, str(e)[:100])
+                # 数据源 fallback: 腾讯(快) → baostock(慢但无 QPS 限制)
+                # 腾讯 API 单批 >500 触发 30-60 min 冷却 — 失败的股切 baostock 救场
+                for source_name, source_fn in [("tencent", get_kline), ("baostock", bs_get_kline)]:
+                    try:
+                        kline = source_fn(code, days=10)
+                        if kline and "closes" in kline and len(kline["closes"]) > 0:
+                            from database import execute_many
+                            dates = kline.get("dates", [])
+                            opens = kline.get("opens", [])
+                            highs = kline.get("highs", [])
+                            lows = kline.get("lows", [])
+                            closes = kline.get("closes", [])
+                            volumes = kline.get("volumes", [])
+                            statements = [
+                                ("INSERT OR REPLACE INTO historical_kline "
+                                 "(stock_code, trade_date, open, high, low, close, volume) "
+                                 "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                                 (code, dates[i], opens[i], highs[i], lows[i], closes[i], volumes[i]))
+                                for i in range(len(dates)) if i < len(opens)
+                            ]
+                            if statements:
+                                execute_many(statements)
+                            success = True
+                            # 调试: 成功来源(只在切换 fallback 时打)
+                            if source_name != "tencent":
+                                logger.warning("sync %s: tencent 失败, fallback baostock 成功 (rows=%d)", code, len(closes))
+                            break
+                        else:
+                            last_error = f"{source_name} empty"
+                            logger.warning("sync %s attempt %d: %s", code, attempt + 1, last_error)
+                    except Exception as e:
+                        last_error = f"{source_name}: {str(e)[:80]}"
+                        logger.warning("sync %s attempt %d: %s", code, attempt + 1, last_error)
+                if success:
+                    break
                 if attempt < MAX_RETRIES:
                     _time.sleep(SLEEP_BETWEEN * (attempt + 1))  # 递增退避
             with _sync_lock:
@@ -447,6 +457,9 @@ def sync_stocks(
                     _sync_tasks[task_id]["completed"] += 1
                 else:
                     _sync_tasks[task_id]["failed"] += 1
+                    # 最终失败也记一条,便于排查
+                    if last_error:
+                        logger.warning("sync %s 最终失败: %s", code, last_error)
             _time.sleep(SLEEP_BETWEEN)  # 每只之间也限频
         with _sync_lock:
             _sync_tasks[task_id]["status"] = "done"
