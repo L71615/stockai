@@ -200,16 +200,20 @@ async def parse_transactions_with_ai(text: str, user_id: int) -> dict:
             },
         }
 
-    # 4. 后置校验 — 股票代码 + 卖出持仓量
+    # 4. 后置校验 — 股票代码 + 卖出持仓量(本批买入也算)
     validation_errors = _validate_ai_results(ai_transactions, user_id)
 
-    # 把后置校验失败的转成 errors
-    final_transactions = []
-    final_errors = list(validation_errors)
-    for tx in ai_transactions:
-        if tx["code"] in {e["raw"] for e in validation_errors}:
-            continue  # 已被校验标错
-        final_transactions.append(tx)
+    # 按行号/索引精确剔除失败的(不能用 code 聚合, 否则一笔错会带掉该代码全部)
+    failed_indices = {e.get("index") for e in validation_errors if "index" in e}
+    final_transactions = [
+        tx for i, tx in enumerate(ai_transactions)
+        if i not in failed_indices
+    ]
+    # 错误信息里去掉 index 字段(给前端)
+    final_errors = [
+        {"line": e.get("line", 0), "raw": e.get("raw", ""), "reason": e["reason"]}
+        for e in validation_errors
+    ]
 
     return {
         "transactions": final_transactions,
@@ -279,61 +283,58 @@ async def _call_ai_parse(text: str, system: str) -> list[dict]:
 
 
 def _validate_ai_results(transactions: list[dict], user_id: int) -> list[dict]:
-    """校验 AI 返回的交易: 股票代码存在 + 卖出 ≤ 持仓
+    """校验 AI 返回的交易: 股票代码存在 + 卖出 ≤ (当前持仓 + 本批买入)
 
     Returns:
-        errors: [{"line": 0, "raw": <code>, "reason": "..."}]
-        注: 这里 line 不可知, 用 code 作为 raw 标识
+        errors: [{"index": int, "line": 0, "raw": <code>, "reason": "..."}]
+        index 是 ai_transactions 列表里的位置(0-based), 用于精确剔除
     """
     if not transactions:
         return []
 
     codes = list({t["code"] for t in transactions})
 
-    # 1. 股票代码是否存在 (本地缓存表 + 全量数据源)
+    # 1. 股票代码是否存在
     valid_codes = _check_codes_exist(codes)
 
-    # 2. 当前持仓(用户级, 用于卖出校验)
+    # 2. 当前持仓(用户级, 卖出校验用基线)
     holdings = query_all(
         "SELECT stock_code, quantity FROM holdings WHERE user_id = ? AND quantity > 0",
         (user_id,),
     )
     holding_map = {h["stock_code"]: h["quantity"] for h in holdings}
 
+    # 3. 累计本批买入(同代码) — 用于"卖出 ≤ 当前持仓 + 本批买入"
+    pending_buys: dict[str, int] = {}
+
     errors = []
-    for tx in transactions:
+    for i, tx in enumerate(transactions):
         code = tx.get("code", "")
+
+        # ── 基础格式校验(任一失败都直接跳过后续校验) ──
         if code not in valid_codes:
             errors.append({
+                "index": i,
                 "line": 0,
                 "raw": code,
                 "reason": f"股票代码 {code} 不存在或本地无数据",
             })
             continue
 
-        direction = tx.get("direction", "")
-        qty = tx.get("quantity", 0)
-        if direction == "sell":
-            held = holding_map.get(code, 0)
-            if qty > held:
-                errors.append({
-                    "line": 0,
-                    "raw": code,
-                    "reason": f"卖出 {qty} 股超过当前持仓 {held} 股",
-                })
-                continue
-
         price = tx.get("price", 0)
         if price <= 0:
             errors.append({
+                "index": i,
                 "line": 0,
                 "raw": code,
                 "reason": f"价格 {price} 无效 (必须 > 0)",
             })
             continue
 
+        qty = tx.get("quantity", 0)
         if qty <= 0:
             errors.append({
+                "index": i,
                 "line": 0,
                 "raw": code,
                 "reason": f"数量 {qty} 无效 (必须 > 0)",
@@ -346,11 +347,29 @@ def _validate_ai_results(transactions: list[dict], user_id: int) -> list[dict]:
             datetime.strptime(date_str, "%Y-%m-%d")
         except ValueError:
             errors.append({
+                "index": i,
                 "line": 0,
                 "raw": code,
                 "reason": f"日期 {date_str} 格式错误 (应为 YYYY-MM-DD)",
             })
             continue
+
+        direction = tx.get("direction", "")
+        if direction == "buy":
+            pending_buys[code] = pending_buys.get(code, 0) + qty
+        elif direction == "sell":
+            available = holding_map.get(code, 0) + pending_buys.get(code, 0)
+            if qty > available:
+                errors.append({
+                    "index": i,
+                    "line": 0,
+                    "raw": code,
+                    "reason": (
+                        f"卖出 {qty} 股超过可用持仓 {available} 股"
+                        f" (当前 {holding_map.get(code, 0)} + 本批买入 {pending_buys.get(code, 0)})"
+                    ),
+                })
+                continue
 
     return errors
 

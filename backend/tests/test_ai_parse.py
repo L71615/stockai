@@ -205,7 +205,7 @@ async def test_parse_invalid_stock_code(fresh_db, mock_ai_parser):
 
 @pytest.mark.asyncio
 async def test_parse_sell_exceeds_holding(fresh_db, mock_ai_parser):
-    """测试 4: 卖出超过持仓(300) → 报错"""
+    """测试 4: 卖出超过当前持仓(300) → 报错"""
     from services.ai_parse_transactions import parse_transactions_with_ai
 
     text = """000725,卖出,500,4.20,2026-08-06"""
@@ -215,8 +215,25 @@ async def test_parse_sell_exceeds_holding(fresh_db, mock_ai_parser):
     assert len(result["transactions"]) == 0
     assert len(result["errors"]) == 1
     assert "000725" in result["errors"][0]["raw"]
-    assert "超过当前持仓" in result["errors"][0]["reason"]
+    assert "可用持仓" in result["errors"][0]["reason"]
     assert "300" in result["errors"][0]["reason"]
+
+
+@pytest.mark.asyncio
+async def test_parse_buy_buy_sell_validated_together(fresh_db, mock_ai_parser):
+    """测试 4b: 同代码 buy+buy+sell 视为 batch 验证, 卖 <= 当前+本批买入 → 通过"""
+    from services.ai_parse_transactions import parse_transactions_with_ai
+
+    # 600519 当前持仓 0 (无), 但本批买 100 + 卖 50 应该 OK
+    text = """600519,买入,100,1680.00,2026-08-05
+600519,买入,200,1685.00,2026-08-05
+600519,卖出,50,1700.00,2026-08-06"""
+
+    result = await parse_transactions_with_ai(text, user_id=1)
+
+    # 3 笔全部通过校验 (本批买入 300 >= 卖 50)
+    assert len(result["transactions"]) == 3
+    assert len(result["errors"]) == 0
 
 
 def test_bulk_two_transactions(fresh_db):
