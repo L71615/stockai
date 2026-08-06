@@ -356,7 +356,7 @@ def _validate_ai_results(transactions: list[dict], user_id: int) -> list[dict]:
 
 
 def _check_codes_exist(codes: list[str]) -> set[str]:
-    """校验股票代码 — 优先查本地 stocks 表, 缺失则查 akshare
+    """校验股票代码 — 查本地 stock_info 表 (Futu sync 写入)
 
     Returns: 存在的代码集合
     """
@@ -365,24 +365,16 @@ def _check_codes_exist(codes: list[str]) -> set[str]:
 
     placeholders = ",".join("?" * len(codes))
 
-    # 1. 本地 stocks 表
-    rows = query_all(
-        f"SELECT stock_code FROM stocks WHERE stock_code IN ({placeholders})",
-        tuple(codes),
-    )
-    found = {r["stock_code"] for r in rows}
-
-    # 2. 本地 stock_info (Futu sync 写入)
-    if len(found) < len(codes):
-        missing = [c for c in codes if c not in found]
-        ph2 = ",".join("?" * len(missing))
-        rows2 = query_all(
-            f"SELECT stock_code FROM stock_info WHERE stock_code IN ({ph2})",
-            tuple(missing),
+    try:
+        rows = query_all(
+            f"SELECT stock_code FROM stock_info WHERE stock_code IN ({placeholders})",
+            tuple(codes),
         )
-        found.update(r["stock_code"] for r in rows2)
-
-    return found
+        return {r["stock_code"] for r in rows}
+    except Exception as e:
+        # stock_info 表可能不存在(老 DB / 极简部署)
+        logger.warning("_check_codes_exist: 查询失败, 当作全部不存在: %s", e)
+        return set()
 
 
 # ── 股票代码到名称(批量落库时用) ──
@@ -394,19 +386,18 @@ def lookup_stock_names(codes: list[str]) -> dict[str, str]:
         return {}
 
     placeholders = ",".join("?" * len(codes))
-    rows = query_all(
-        f"SELECT stock_code, name FROM stock_info WHERE stock_code IN ({placeholders})",
-        tuple(codes),
-    )
-    result = {r["stock_code"]: r["name"] for r in rows if r.get("name")}
 
-    # 兜底: stocks 表
-    rows2 = query_all(
-        f"SELECT stock_code, name FROM stocks WHERE stock_code IN ({placeholders}) AND name IS NOT NULL AND name != ''",
-        tuple(codes),
-    )
-    for r in rows2:
-        result.setdefault(r["stock_code"], r["name"])
+    result: dict[str, str] = {}
+    try:
+        rows = query_all(
+            f"SELECT stock_code, name FROM stock_info WHERE stock_code IN ({placeholders})",
+            tuple(codes),
+        )
+        for r in rows:
+            if r.get("name"):
+                result[r["stock_code"]] = r["name"]
+    except Exception as e:
+        logger.warning("lookup_stock_names: 查询失败, 用代码兜底: %s", e)
 
     # 最终兜底: 用 code 自己
     for c in codes:

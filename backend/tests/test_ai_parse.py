@@ -69,13 +69,6 @@ def fresh_db(monkeypatch, tmp_path):
             note TEXT,
             created_at TEXT DEFAULT (datetime('now','localtime'))
         );
-        CREATE TABLE stocks (
-            stock_code TEXT PRIMARY KEY,
-            name TEXT,
-            industry TEXT,
-            list_date TEXT,
-            market TEXT
-        );
         CREATE TABLE stock_info (
             stock_code TEXT PRIMARY KEY,
             name TEXT,
@@ -84,10 +77,10 @@ def fresh_db(monkeypatch, tmp_path):
         );
         INSERT INTO users (id, username, email, password)
         VALUES (1, 'admin', 'admin@test.com', 'x');
-        -- 已存在股票
-        INSERT INTO stocks VALUES ('600519', '贵州茅台', '白酒', NULL, 'SH');
-        INSERT INTO stocks VALUES ('000725', '京东方A', '面板', NULL, 'SZ');
-        INSERT INTO stocks VALUES ('000001', '平安银行', '银行', NULL, 'SZ');
+        -- 已存在股票 (与 production 一致: 用 stock_info 表)
+        INSERT INTO stock_info VALUES ('600519', '贵州茅台', '白酒', NULL);
+        INSERT INTO stock_info VALUES ('000725', '京东方A', '面板', NULL);
+        INSERT INTO stock_info VALUES ('000001', '平安银行', '银行', NULL);
         -- 用户已持有 000725 共 300 股
         INSERT INTO holdings (user_id, stock_code, stock_name, market, asset_type, quantity, cost_price)
         VALUES (1, '000725', '京东方A', 'SZ', 'stock', 300, 4.0);
