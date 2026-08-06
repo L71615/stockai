@@ -464,3 +464,57 @@ export interface PortfolioComparisonResponse {
   rows: HoldingVsShadowDiff[]
   message?: string
 }
+
+// ── v5.1: AI 录入交易 ──
+
+export interface AIParsedTransaction {
+  code: string
+  stock_name?: string
+  direction: "buy" | "sell"
+  quantity: number
+  price: number
+  date: string
+  note?: string
+}
+
+export interface AIParseError {
+  line: number
+  raw: string
+  reason: string
+}
+
+export interface AIParseSummary {
+  input_lines: number
+  parsed_ok: number
+  parse_failed: number
+  validation_failed: number
+}
+
+export interface AIParseResponse {
+  template: string
+  transactions: AIParsedTransaction[]
+  errors: AIParseError[]
+  summary: AIParseSummary
+}
+
+export interface BulkTransactionItem {
+  stock_code: string
+  direction: "buy" | "sell"
+  quantity: number
+  price: number
+  traded_at: string
+  note?: string
+}
+
+export interface BulkTransactionInserted extends BulkTransactionItem {
+  id: number
+  stock_name: string
+  amount: number
+  fee: number
+}
+
+export interface BulkTransactionResponse {
+  message: string
+  inserted: BulkTransactionInserted[]
+  holding_updates: Record<string, { stock_code: string; quantity: number; cost_price: number }>
+}

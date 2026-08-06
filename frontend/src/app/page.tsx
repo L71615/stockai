@@ -7,6 +7,7 @@ import { PortfolioRiskCards } from "@/components/portfolio-risk-cards"
 import { HoldingsVsShadowCard } from "@/components/portfolio/holdings-vs-shadow-card"
 import { ChartAreaInteractive } from "@/components/chart-area-interactive"
 import { DataTable } from "@/components/data-table"
+import { AITransactionImporter } from "@/components/ai-transaction-importer"
 import { Card, CardAction, CardContent, CardFooter, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -244,6 +245,9 @@ export default function Home() {
                 </Card>
               </div>
             )}
+
+            {/* v5.1 — AI 录入交易 (面板放在顶部, 让用户随时可粘) */}
+            <AITransactionImporter onSuccess={refresh} />
 
             {/* Protection Warning */}
             {protectionData && (protectionData as Record<string, unknown>).streak > 0 && (

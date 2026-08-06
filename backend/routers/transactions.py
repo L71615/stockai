@@ -3,7 +3,7 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from database import query_all, query_one, execute
+from database import query_all, query_one, execute, execute_transaction
 from services.utils import detect_asset_type
 from dependencies import get_current_user_id
 
@@ -166,6 +166,143 @@ class UpdateTransactionBody(BaseModel):
     quantity: float | None = None
     fee: float | None = None       # None = keep existing / auto-calc
     note: str | None = None
+
+
+# ── v5.1 — AI 批量落库 ──
+
+
+class BulkTransactionItem(BaseModel):
+    stock_code: str
+    direction: str       # buy / sell
+    quantity: int
+    price: float
+    traded_at: str       # YYYY-MM-DD
+    note: str = ""
+
+
+class BulkTransactionRequest(BaseModel):
+    transactions: list[BulkTransactionItem]
+
+
+@router.post("/transactions/bulk")
+def add_transactions_bulk(body: BulkTransactionRequest):
+    """v5.1 — AI 批量落库(单事务, 任一失败回滚全部)
+
+    前置: AI 已解析 + 用户已确认预览 → 批量入库
+    行为: 单事务串行写 transactions → 对每只代码调 _recalc_holding_for_code 刷新持仓
+    """
+    from services.utils import calc_fee, get_market
+    from services.ai_parse_transactions import lookup_stock_names
+
+    user_id = get_current_user_id()
+    items = body.transactions
+    if not items:
+        raise HTTPException(400, "空批次")
+    if len(items) > 50:
+        raise HTTPException(400, f"单批最多 50 笔 (实际 {len(items)})")
+
+    # 预查股票名称(批量)
+    codes = list({it.stock_code for it in items})
+    name_map = lookup_stock_names(codes)
+
+    # 前置校验: 卖出 ≤ 当前持仓 + 本批买入(同代码)
+    existing = {
+        h["stock_code"]: h["quantity"]
+        for h in query_all(
+            "SELECT stock_code, quantity FROM holdings WHERE user_id = ? AND quantity > 0",
+            (user_id,),
+        )
+    }
+    pending_buys: dict[str, int] = {}  # 本批累加的买入
+    for it in items:
+        if it.direction not in ("buy", "sell"):
+            raise HTTPException(400, f"非法方向 {it.direction} (代码 {it.stock_code})")
+        if it.quantity <= 0:
+            raise HTTPException(400, f"数量必须 > 0 (代码 {it.stock_code})")
+        if it.price <= 0:
+            raise HTTPException(400, f"价格必须 > 0 (代码 {it.stock_code})")
+
+        if it.direction == "buy":
+            pending_buys[it.stock_code] = pending_buys.get(it.stock_code, 0) + it.quantity
+        else:  # sell
+            available = existing.get(it.stock_code, 0) + pending_buys.get(it.stock_code, 0)
+            if it.quantity > available:
+                raise HTTPException(
+                    400,
+                    f"卖出 {it.quantity} 股超过可用持仓 {available} 股 (代码 {it.stock_code})",
+                )
+
+    # 单事务串行写
+    def _do(cur):
+        results = []
+        affected_codes: set[str] = set()
+        for it in items:
+            at = detect_asset_type(it.stock_code)
+            fee = round(calc_fee(it.price, it.quantity, it.direction, at) or 0, 2)
+            if it.direction == "buy":
+                amount = round(it.price * it.quantity + fee, 2)
+            else:
+                amount = round(it.price * it.quantity - fee, 2)
+
+            cur.execute(
+                """INSERT INTO transactions
+                   (user_id, stock_code, stock_name, asset_type, direction,
+                    price, quantity, amount, fee, traded_at, note)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (user_id, it.stock_code, name_map.get(it.stock_code, it.stock_code),
+                 at, it.direction, it.price, it.quantity, amount, fee,
+                 it.traded_at, it.note),
+            )
+            tx_id = cur.lastrowid
+            results.append({
+                "id": tx_id,
+                "stock_code": it.stock_code,
+                "stock_name": name_map.get(it.stock_code, it.stock_code),
+                "direction": it.direction,
+                "quantity": it.quantity,
+                "price": it.price,
+                "amount": amount,
+                "fee": fee,
+                "traded_at": it.traded_at,
+            })
+            affected_codes.add(it.stock_code)
+
+        # 全部 INSERT 成功后再创建 holdings / 刷新成本
+        for code in affected_codes:
+            h = cur.execute(
+                "SELECT id FROM holdings WHERE user_id = ? AND stock_code = ?",
+                (user_id, code),
+            ).fetchone()
+            if not h:
+                market = get_market(code)
+                cur.execute(
+                    """INSERT INTO holdings
+                       (user_id, stock_code, stock_name, market, asset_type,
+                        quantity, cost_price, shares)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (user_id, code, name_map.get(code, code), market,
+                     detect_asset_type(code), 0, 0, 0),
+                )
+
+        return results
+
+    try:
+        inserted = execute_transaction(_do)
+    except Exception as e:
+        raise HTTPException(500, f"批量落库失败: {e}")
+
+    # 事务外刷新每只代码的成本
+    holding_updates = {}
+    for tx in inserted:
+        h = _recalc_holding_for_code(tx["stock_code"])
+        if h:
+            holding_updates[tx["stock_code"]] = h
+
+    return {
+        "message": f"成功入库 {len(inserted)} 笔",
+        "inserted": inserted,
+        "holding_updates": holding_updates,
+    }
 
 
 @router.put("/transactions/{tx_id}")
