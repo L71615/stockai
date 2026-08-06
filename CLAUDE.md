@@ -2,13 +2,15 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-> **当前版本: v5.0-beta-M9**(2026-08-06 tag) — 通知集成(`b81b5c1`) — **v5.0-beta 4 子模块全部完成**
+> **当前版本: v5.1-ai-import**(2026-08-06 tag) — AI 录入交易(持仓页顶部面板 + 后端 AI 解析 + 批量落库)
 > **量化方向**: 准实盘量化交易系统(D1 战略锁定) — 实时行情 + 盘中因子 + 信号手动确认 + 模拟成交
-> **最新改动**: v5.0-beta M9 patch:
->   - **feat(notify)**: `notify_service.send_signal(signal)` 格式化 Markdown + scanner 集成
->   - **feat(notify)**: 5min dedup(同 code+strategy 不重推)
->   - **feat(notify)**: 异常隔离(单 channel 失败不阻塞 scanner)
->   - **test(notify)**: 6 个 mock 测试
+> **最新改动**: v5.1-ai-import:
+>   - **feat(ai-import)**: `AITransactionImporter` 组件(持仓页顶部,粘贴 → AI 解析 → 批量入库)
+>   - **feat(ai-import)**: `ai_parse_transactions.py` 服务(Claude Haiku 4.5 + tools + 后置校验)
+>   - **feat(ai-import)**: `/api/transactions/bulk` 端点(单事务 + 前置持仓校验)
+>   - **feat(ai-import)**: CSV 模板 + 自然语言混排(注释/空行自动跳过)
+>   - **test(ai-import)**: 6 个测试(解析/校验/批量/回滚)
+> **v5.0-beta M9**: 通知集成(`b81b5c1`) — `notify_service.send_signal` + 5min dedup + 异常隔离 + 6 测试。详见 `RELEASE-NOTES-v5.0-beta-M9.md`
 > **v5.0-beta M5**: WebSocket 实时推送 — `/api/realtime/ws` + `useRealtimeQuote` 切 WS。详见 `RELEASE-NOTES-v5.0-beta-M5.md`
 > **v5.0-beta M7**: 55 因子完整接入 — `realtime_factor_cache.py` in-place 升 30→55 因子。详见 `RELEASE-NOTES-v5.0-beta-M7.md`
 > **v5.0-beta M6**: minute bars 接入 — `fetch_recent_bars()` 灰度切 1m(`REALTIME_USE_MINUTE_BARS` env)。详见 `RELEASE-NOTES-v5.0-beta-M6.md`
