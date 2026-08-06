@@ -6,7 +6,7 @@
  *   1. 用户粘贴交易文本(支持 CSV 模板 + 自然语言混排)
  *   2. 点 "AI 识别" → POST /api/ai/parse-transactions → 预览
  *   3. 检查预览(可点击行编辑/删除)
- *   4. 点 "确认入库" → POST /api/transactions/bulk → 刷新持仓
+ *   4. 点 "确认入库" → POST /api/stocks/transactions/bulk → 刷新持仓
  */
 
 import { useState, useCallback, useMemo } from "react"
@@ -130,7 +130,7 @@ export function AITransactionImporter({ onSuccess }: AITransactionImporterProps)
         price: t.price,
         traded_at: t.date,
       }))
-      const resp = await apiPost<BulkResponse>("/api/transactions/bulk", {
+      const resp = await apiPost<BulkResponse>("/api/stocks/transactions/bulk", {
         transactions: bulkItems,
       })
       setSubmitOk(resp.message)
