@@ -124,29 +124,32 @@ _PARSE_TOOL = {
 
 _PARSE_SYSTEM_PROMPT = """你是股票交易记录解析助手. 从用户粘贴的中文/英文文本中抽取每笔交易.
 
+**核心原则**: 每行一笔交易, 一行都不漏. 宁可多解析也不要少解析.
+
 输出格式: 调用 `submit_transactions` 工具, 参数 `transactions` 是数组.
 
 规则:
-1. **代码**: 6位数字股票代码, 不含交易所前缀(SH/SZ)
+1. **代码**: 6位数字股票代码. 可能前后有股票名(如 "北投科技 600936"), 取6位数字.
 2. **方向**: 买入/buy/Buy/BUY/买了/买进 → "buy"; 卖出/sell/Sell/SOLD/卖了/卖 → "sell"
-3. **数量**: 正整数, "100股" → 100, "1手" → 100 (A 股 1 手 = 100 股)
-4. **价格**: 正小数, "1680" "1,680.00" "@1680" "1680元" → 1680.0
-5. **日期**: YYYY-MM-DD; "今天"→{today}; "昨天"→{yesterday}; 默认今天
+3. **数量**: 正整数, "100股" → 100, "1手" → 100 (A 股 1 手 = 100 股). 单位词前是数量.
+4. **价格**: 正小数, "@6.030" "6.030元" "价格6.030" → 6.030. 单位词后或@前通常是价格.
+5. **日期**: YYYY-MM-DD 格式; "今天"→{today}; "昨天"→{yesterday}; 默认今天
+   - 含时间部分 ("2026-08-05 13:18:26") → 只取日期部分 "2026-08-05"
 6. **跳过**: 空行 / `#` 注释行 / 模板表头(代码,方向,数量,价格,日期)
-7. **失败**: 单行无法解析 → 跳过该行 (不要放进 transactions)
-8. **不去重**: 每笔交易保留独立行(即便是同代码同日), 用户可在预览界面手动删除重复
+7. **不去重**: 每笔交易保留独立行(即便是同代码同日), 用户可在预览界面手动删除重复
+8. **模糊时**: 只要能从一行识别出 [代码, 方向, 数量, 价格, 日期] 就解析. 不确定的才跳过.
 
-示例输入:
-```
-今天买了600519 100股 价格1680
-000725,卖出,500,4.20,2026-08-06
-买了 1手 平安银行 @12.5
-```
+常见格式 (顺序灵活):
+- "北投科技 600936 买入 6.030 300股 2026-08-05 13:18:26" → buy, 600936, 6.03, 300, 2026-08-05
+- "今天买了600519 100股 价格1680" → buy, 600519, 1680.0, 100, {today}
+- "000725,卖出,500,4.20,2026-08-06" → sell, 000725, 4.20, 500, 2026-08-06
+- "买了 1手 平安银行 @12.5" → buy, 000001(平安银行), 12.5, 100, {today}
+- "600519 100@1680 buy" → buy, 600519, 1680.0, 100, {today}
 
 示例输出 → submit_transactions(transactions=[
-  {{code:"600519", direction:"buy", quantity:100, price:1680.0, date:"{today}"}},
-  {{code:"000725", direction:"sell", quantity:500, price:4.2, date:"2026-08-06"}},
-  {{code:"000001", direction:"buy", quantity:100, price:12.5, date:"{today}"}},
+  {{code:"600936", direction:"buy", quantity:300, price:6.030, date:"2026-08-05"}},
+  {{code:"600936", direction:"buy", quantity:200, price:6.000, date:"2026-08-05"}},
+  {{code:"600936", direction:"sell", quantity:200, price:5.900, date:"2026-08-06"}},
 ])"""
 
 
@@ -201,6 +204,12 @@ async def parse_transactions_with_ai(text: str, user_id: int) -> dict:
         }
 
     # 4. 后置校验 — 股票代码 + 卖出持仓量(本批买入也算)
+    # DEBUG: 打印 AI 实际返回(排查用)
+    logger.info(
+        "AI parse: input_lines=%d, ai_returned=%d, txs=%s",
+        len(cleaned_lines), len(ai_transactions), ai_transactions,
+    )
+
     validation_errors = _validate_ai_results(ai_transactions, user_id)
 
     # 按行号/索引精确剔除失败的(不能用 code 聚合, 否则一笔错会带掉该代码全部)
@@ -352,8 +361,11 @@ def _validate_ai_results(transactions: list[dict], user_id: int) -> list[dict]:
             })
             continue
 
-        # 日期格式校验
-        date_str = tx.get("date", "")
+        # 日期格式校验 — 兼容 "2026-08-05 13:18:26" (带时间)
+        date_str = tx.get("date", "").strip()
+        # 截取前 10 字符作为日期(去掉时间部分)
+        if len(date_str) >= 10:
+            date_str = date_str[:10]
         try:
             datetime.strptime(date_str, "%Y-%m-%d")
         except ValueError:
@@ -364,6 +376,8 @@ def _validate_ai_results(transactions: list[dict], user_id: int) -> list[dict]:
                 "reason": f"日期 {date_str} 格式错误 (应为 YYYY-MM-DD)",
             })
             continue
+        # 回写归一化日期(去掉时间)
+        tx["date"] = date_str
 
         direction = tx.get("direction", "")
         if direction == "sell":
