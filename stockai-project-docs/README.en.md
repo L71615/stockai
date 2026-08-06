@@ -2,17 +2,16 @@
 
 # StockAI
 
-> ✅ **Current version: v4.2.3** (2026-08-03 tag) — partial_filled complete handling skeleton (1 feat + 19 tests)
-> **Previous stable: v4.2.2** (2026-08-03) — v4.2.1 patch (2 bug fix + 1 feat + 2 docs)
-> Plus **v5.0-alpha completed** (2026-08-01 tag, M1-M4 / 69 tests)
-> Next phase: v5.0-beta (WebSocket push / minute K-line / multi-user + cash table / notification)
-> See [`RELEASE-NOTES-v4.2.md`](RELEASE-NOTES-v4.2.md) + [`RELEASE-NOTES-v4.2-m2.md`](RELEASE-NOTES-v4.2-m2.md) + [`RELEASE-NOTES-v4.2.2.md`](RELEASE-NOTES-v4.2.2.md) + [`RELEASE-NOTES-v4.2.3.md`](RELEASE-NOTES-v4.2.3.md) + [`RELEASE-NOTES-v5.0.md`](RELEASE-NOTES-v5.0.md)
+> ✅ **Current version: v5.1-ai-import** (2026-08-06 tag) — AI transaction importer (holdings page panel + Claude Haiku 4.5 parsing + bulk commit / 9 tests)
+> **v5.0-beta completed** (2026-08-06) — M5 WS push / M6 minute K-line / M7 55 factors / M9 notifications
+> Previous stable: v5.0-alpha (2026-08-01 tag, M1-M4 / 69 tests)
+> See [`RELEASE-NOTES-v5.1-ai-import.md`](RELEASE-NOTES-v5.1-ai-import.md) + [`RELEASE-NOTES-v5.0-beta-M9.md`](RELEASE-NOTES-v5.0-beta-M9.md) + [`RELEASE-NOTES-v5.0.md`](RELEASE-NOTES-v5.0.md)
 
 ### A-Share AI Quant Screener · T+1 Short-term Forecast + Research → Decision Evidence Loop + Quasi-Live Quant
 
-**55 factors · 13 strategies · 8-role multi-agent + agent tool calls · Auto Quant Pipeline · T+1 simulated fills · Counterfactual reports · Multi-strategy portfolio · Real-time intraday factors**
+**55 factors · 13 strategies · 8-role multi-agent + agent tool calls · Auto Quant Pipeline · T+1 simulated fills · Counterfactual reports · Multi-strategy portfolio · Real-time intraday factors · WebSocket push · Notifications · AI transaction importer**
 
-![Version](https://img.shields.io/badge/version-v4.2.1-success?style=flat-square)
+![Version](https://img.shields.io/badge/version-v5.1-blue?style=flat-square)
 ![Python](https://img.shields.io/badge/python-3.11+-blue?style=flat-square&logo=python&logoColor=white)
 ![Next.js](https://img.shields.io/badge/Next.js-16-black?style=flat-square&logo=next.js&logoColor=white)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.6-3178C6?style=flat-square&logo=typescript&logoColor=white)

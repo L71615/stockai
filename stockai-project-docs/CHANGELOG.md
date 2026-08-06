@@ -20,13 +20,23 @@
 - **feat(ai-import)**: 后端 `add_transactions_bulk` — 单事务批量入库 + 前置持仓校验(卖出 ≤ 持仓 + 本批买入)
 - **feat(ai-import)**: CSV 模板 + 自然语言混排(注释行/空行自动跳过)
 - **feat(ai-import)**: 后置校验 — 股票代码存在性 + 卖出 ≤ 持仓 + 价格/数量/日期格式
-- **test(ai-import)**: 6 个测试 — 模板解析 / 注释过滤 / 代码校验 / 持仓校验 / 批量成功 / 部分失败回滚
+- **test(ai-import)**: 9 个测试 — 模板解析 / 注释过滤 / 代码校验 / 持仓校验 / 批量验证 / 顺序无关 / 不合并 / 批量成功 / 部分失败回滚
 
 ### 验收
 
-- 6/6 测试通过
+- 9/9 测试通过
 - 55/55 回归测试不破
 - 单批上限 50 笔 + 输入 ≤ 4000 字符
+
+### Bug 修复 (5 个 commits, post-v5.1-tag)
+
+| Commit | Bug | Fix |
+|--------|-----|-----|
+| `cce7594` | `_check_codes_exist` / `lookup_stock_names` 查不存在的 `stocks` 表 → 500 | 改用 `stock_info` 表(与 production 一致)+ try/except 兜底 |
+| `48a5777` | AI 校验只看"当前持仓",不看本批买入 → 同代码 buy+buy+sell 被误报超持仓 | 校验阶段累加 pending_buys + 精确剔除失败行(用 index 字段) |
+| `bab6a6b` | 校验顺序依赖(AI 把 sell 放在 buy 前面就报错) + 2 笔 600664 买入被合并成 1 笔 | 预计算 batch_buys 总和(顺序无关) + prompt 去掉"去重合并" |
+| `466a8ca` | AI 把日期 `2026-08-05 13:18:26` 整个当 date,校验失败 | 截取日期前 10 字符 + prompt 加更自然语言示例 |
+| `84182ac` | 前端 `/api/transactions/bulk` 路径错 → 404 | 改为 `/api/stocks/transactions/bulk`(实际 mount prefix) |
 
 ### 用户价值
 

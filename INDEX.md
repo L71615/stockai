@@ -19,14 +19,20 @@ D:\stocks\
 │   ├── DESIGN.md                   ← 设计系统(权威)
 │   ├── TODOS.md                    ← 待办
 │   ├── AGENTS.md                   ← Agent 工作流
-│   ├── V4-PLAN.md                  ← ✅ v4.0+v4.1+v4.2+v5.0-alpha 已发布 / v5.0-beta 候选
+│   ├── V4-PLAN.md                  ← ✅ v4.0+v4.1+v4.2+v5.0 已发布 / v5.1 进行中
 │   ├── RELEASE-NOTES-v4.0.md       ← v4.0 release notes
 │   ├── RELEASE-NOTES-v4.1.md       ← v4.1 release notes
 │   ├── RELEASE-NOTES-v4.2.md       ← v4.2 M1 release notes
 │   ├── RELEASE-NOTES-v4.2-m2.md    ← v4.2 M2 release notes
 │   ├── RELEASE-NOTES-v4.2.2.md     ← v4.2.2 patch release notes
 │   ├── RELEASE-NOTES-v4.2.3.md     ← v4.2.3 patch release notes
-│   └── RELEASE-NOTES-v5.0.md       ← v5.0-alpha release notes
+│   ├── RELEASE-NOTES-v4.2.4.md     ← v4.2.4 patch release notes
+│   ├── RELEASE-NOTES-v5.0.md       ← v5.0-alpha release notes
+│   ├── RELEASE-NOTES-v5.0-beta-M5.md  ← v5.0-beta M5(WS 推送)release notes
+│   ├── RELEASE-NOTES-v5.0-beta-M6.md  ← v5.0-beta M6(分钟 K 线)release notes
+│   ├── RELEASE-NOTES-v5.0-beta-M7.md  ← v5.0-beta M7(55 因子)release notes
+│   ├── RELEASE-NOTES-v5.0-beta-M9.md  ← v5.0-beta M9(通知集成)release notes
+│   └── RELEASE-NOTES-v5.1-ai-import.md  ← v5.1 AI 录入交易 release notes
 │
 ├── docs/                           ← 📦 历史归档 + 路线图(早期内容)
 │   ├── ROADMAP.md                  ← 路线图(v3.6 时代,历史)
@@ -48,20 +54,22 @@ D:\stocks\
 
 ### StockAI 主项目
 
-- **类型**: A 股量化研究 + 回测 + 预测
+- **类型**: A 股量化研究 + 回测 + 预测 + 准实盘量化
 - **后端**: Python FastAPI (端口 3000)
 - **前端**: Next.js 16 (端口 3001)
 - **数据库**: SQLite (WAL 模式)
-- **当前版本**: **v4.2.3** (2026-08-03 tag,partial_filled 完整处理骨架)
-- **上一稳定版**: v4.2.2 (2026-08-03,v4.2.1 patch)
-- **再上一稳定版**: v4.2.1 (2026-08-03,M1 + M2 打包)
-- **下一大版本**: v5.0-beta(WS 推送 / 分钟级 K 线 / 通知集成)
-- **核心能力**: v5.0-alpha 全量 + **v4.2 新增**:
-  - **M1**: T+1 watcher 6 态机(OSS 风格) + transition() 守卫 + t1_order_events 事件溯源 + partial_filled 字段
-  - **M2**: factor_service 55 因子分钟级对齐 + compute_minute_factors() + minute_factor_cache 5m TTL + REST `/api/realtime/factor/{code}/minute` + 前端 hook/组件
-  - **v4.2.2 patch**: /live 接分钟因子卡片 + 百分比自动格式化 + scanner 默认策略 3→7 + 三件套同步
-  - **v4.2.3 patch**: partial_filled 完整骨架(_simulate_buy 接受 partial_shares + try_fill_pending_order helper)
-  - 详见 [`RELEASE-NOTES-v4.2.md`](stockai-project-docs/RELEASE-NOTES-v4.2.md) + [`RELEASE-NOTES-v4.2-m2.md`](stockai-project-docs/RELEASE-NOTES-v4.2-m2.md) + [`RELEASE-NOTES-v4.2.2.md`](stockai-project-docs/RELEASE-NOTES-v4.2.2.md) + [`RELEASE-NOTES-v4.2.3.md`](stockai-project-docs/RELEASE-NOTES-v4.2.3.md) + [`RELEASE-NOTES-v5.0.md`](stockai-project-docs/RELEASE-NOTES-v5.0.md)
+- **当前版本**: **v5.1-ai-import** (2026-08-06 tag,AI 录入交易 + 9 测试 + 5 bugfix)
+- **上一稳定版**: v5.0-beta-M9 (2026-08-06,通知集成 4 子模块全套)
+- **再上一稳定版**: v5.0-alpha (2026-08-01,M1-M4 共 69 测试)
+- **下一大版本**: 优化 v5.1 AI 录入(OCR 截图识别 / 重复检测 / 更智能模板)
+- **核心能力**: v5.0-alpha + v5.0-beta 全套 + **v5.1 新增**:
+  - **v5.1**: AI 录入交易 — 持仓页顶部面板 + Claude Haiku 4.5 解析 + 批量落库(单事务 + 前置校验)
+  - **v5.0-beta M9**: 通知集成 — wechat/tg/email 推送 + 5min dedup
+  - **v5.0-beta M7**: factor_service 30→55 因子分钟级
+  - **v5.0-beta M6**: minute bars 接入 — fetch_recent_bars() 灰度切 1m
+  - **v5.0-beta M5**: WebSocket 实时推送 — /api/realtime/ws + useRealtimeQuote 切 WS
+  - **v5.0-alpha M1-M4**: 盘中因子 + 7 策略信号扫描 + /live 仪表板 + T+1 模拟成交
+  - 详见 [`RELEASE-NOTES-v5.1-ai-import.md`](stockai-project-docs/RELEASE-NOTES-v5.1-ai-import.md) + 各 `RELEASE-NOTES-v5.0-beta-M*.md`
 - **项目入口**: `stockai-project-docs/README.md`
 - **GitHub 主页**: `README.md` (根)
 
@@ -89,12 +97,13 @@ D:\stocks\
 | 运行手册 | `stockai-project-docs/RUNBOOK.md` |
 | 待办事项 | `stockai-project-docs/TODOS.md` |
 | Agent 工作流 | `stockai-project-docs/AGENTS.md` |
-| **✅ v4.0+v4.1+v4.2 已发布 / v5.0-beta 候选** | **`stockai-project-docs/V4-PLAN.md`** |
-| **v4.2 M1 release notes** | **`stockai-project-docs/RELEASE-NOTES-v4.2.md`** |
-| **v4.2 M2 release notes** | **`stockai-project-docs/RELEASE-NOTES-v4.2-m2.md`** |
-| **v4.2.2 patch release notes** | **`stockai-project-docs/RELEASE-NOTES-v4.2.2.md`** |
-| **v4.2.3 patch release notes** | **`stockai-project-docs/RELEASE-NOTES-v4.2.3.md`** |
+| **✅ v4.0+v4.1+v4.2+v5.0 已发布 / v5.1 进行中** | **`stockai-project-docs/V4-PLAN.md`** |
+| **v5.1 AI 录入交易 release notes** | **`stockai-project-docs/RELEASE-NOTES-v5.1-ai-import.md`** |
+| **v5.0-beta M5-M9 release notes** | **`stockai-project-docs/RELEASE-NOTES-v5.0-beta-M*.md`** |
 | **v5.0-alpha release notes** | **`stockai-project-docs/RELEASE-NOTES-v5.0.md`** |
+| **v4.2.4 patch release notes** | **`stockai-project-docs/RELEASE-NOTES-v4.2.4.md`** |
+| **v4.2.3 patch release notes** | **`stockai-project-docs/RELEASE-NOTES-v4.2.3.md`** |
+| **v4.2 M1 release notes** | **`stockai-project-docs/RELEASE-NOTES-v4.2.md`** |
 | 监视器计划 | `monitor-desktop-docs/PLAN.md` |
 | 监视器改动 | `monitor-desktop-docs/DAILY-LOG.md` |
 | 文档归档说明 | `stockai-project-docs/ARCHIVE.md` |
@@ -205,6 +214,9 @@ v5.0-strategy.md §3.2「若 T+1 watcher N 态 和 因子分钟级 各需要 ≥
 
 ## 📝 文档历史
 
+- **2026-08-06**: v5.1-ai-import 文档同步 — RELEASE-NOTES-v5.1-ai-import.md 新建 + CLAUDE.md / README.md / stockai-project-docs/README.md / INDEX.md / CHANGELOG.md 当前版本 v5.1
+- **2026-08-06**: v5.0-beta 全套完成 — M5/M6/M7/M9 + 4 个 release notes + tag
+- **2026-08-05**: v4.2.4 patch — leaderboard 超时 + 5min 缓存
 - **2026-08-03**: v4.2 M2 文档同步 — RELEASE-NOTES-v4.2-m2.md 新建 + CLAUDE.md / INDEX.md / CHANGELOG.md 当前版本 v4.2.1
 - **2026-08-02**: v4.2 M1 文档三件套同步(CLAUDE.md / INDEX.md / CHANGELOG.md 当前版本 + RELEASE-NOTES-v4.2.md 新建 + git tag v4.2)
 - **2026-08-01**: v5.0-alpha 完成 + tag v5.0(M1-M4 共 69 测试)

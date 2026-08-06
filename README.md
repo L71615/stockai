@@ -2,22 +2,21 @@
 
 # StockAI
 
-> ✅ **当前版本: v4.2.3**(2026-08-03 tag) — partial_filled 完整处理骨架(1 feat + 19 测试)
-> **v5.0 alpha 阶段完成**(2026-08-01) — M1-M4 已交付,详见 [`RELEASE-NOTES-v5.0.md`](stockai-project-docs/RELEASE-NOTES-v5.0.md)
-> 下一阶段: v5.0-beta(WS 推送 / 分钟级 K 线 / 通知集成)
-> 详见 [`stockai-project-docs/CHANGELOG.md`](stockai-project-docs/CHANGELOG.md) v4.2 + v5.0-alpha 系列
+> ✅ **当前版本: v5.1-ai-import**(2026-08-06 tag) — AI 录入交易面板(持仓页)+ 后端 AI 解析 + 批量落库(9 测试)
+> **v5.0 beta 全套完成**(2026-08-06)— M5 WS / M6 分钟 K 线 / M7 55 因子 / M9 通知集成
+> 详见 [`RELEASE-NOTES-v5.1-ai-import.md`](stockai-project-docs/RELEASE-NOTES-v5.1-ai-import.md) + [`stockai-project-docs/CHANGELOG.md`](stockai-project-docs/CHANGELOG.md)
 
-### A 股 AI 量化选股 · T+1 短线预测 + 研究→决策证据闭环
+### A 股 AI 量化选股 · T+1 短线预测 + 研究→决策证据闭环 + 准实盘量化
 
-**64 因子 · 13 策略 · 8 角色多 Agent + Agent 工具调用 · 自动量化 Pipeline · T+1 模拟成交 · 反事实报告 · 多策略组合**
+**55 因子 · 13 策略 · 8 角色多 Agent + Agent 工具调用 · 自动量化 Pipeline · T+1 模拟成交 · 反事实报告 · 多策略组合 · 盘中实时因子 · WebSocket 推送 · 通知集成 · AI 录入交易**
 
-![Version](https://img.shields.io/badge/version-v5.0-blue?style=flat-square)
+![Version](https://img.shields.io/badge/version-v5.1-blue?style=flat-square)
 ![Python](https://img.shields.io/badge/python-3.11+-blue?style=flat-square&logo=python&logoColor=white)
 ![Next.js](https://img.shields.io/badge/Next.js-16-black?style=flat-square&logo=next.js&logoColor=white)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.6-3178C6?style=flat-square&logo=typescript&logoColor=white)
 ![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)
 
-[English](stockai-project-docs/README.en.md) · [中文](#) · [文档导航](INDEX.md) · [v4.x 计划](stockai-project-docs/V4-PLAN.md)
+[English](stockai-project-docs/README.en.md) · [中文](#) · [文档导航](INDEX.md) · [v5.x 计划](stockai-project-docs/V4-PLAN.md)
 
 </div>
 

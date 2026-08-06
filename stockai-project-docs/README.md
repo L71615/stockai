@@ -2,17 +2,16 @@
 
 # StockAI
 
-> ✅ **当前版本: v4.2.3**(2026-08-03 tag) — partial_filled 完整处理骨架(1 feat + 19 测试)
-> **上一稳定版**: v4.2.2(2026-08-03)— v4.2.1 patch(2 bug fix + 1 feat + 2 docs 同步)
-> 此外 v5.0-alpha 已完成(2026-08-01 tag,M1-M4 共 69 测试)
-> 下一阶段: v5.0-beta(WS 推送 / 分钟级 K 线 / 通知集成)
-> 详见 [`RELEASE-NOTES-v4.2.md`](RELEASE-NOTES-v4.2.md) + [`RELEASE-NOTES-v4.2-m2.md`](RELEASE-NOTES-v4.2-m2.md) + [`RELEASE-NOTES-v4.2.2.md`](RELEASE-NOTES-v4.2.2.md) + [`RELEASE-NOTES-v4.2.3.md`](RELEASE-NOTES-v4.2.3.md) + [`RELEASE-NOTES-v5.0.md`](RELEASE-NOTES-v5.0.md)
+> ✅ **当前版本: v5.1-ai-import**(2026-08-06 tag) — AI 录入交易面板(持仓页)+ 后端 AI 解析 + 批量落库(9 测试)
+> **v5.0 beta 全套完成**(2026-08-06)— M5 WS / M6 分钟 K 线 / M7 55 因子 / M9 通知集成
+> 上一稳定版: v5.0-alpha(2026-08-01 tag,M1-M4 共 69 测试)
+> 详见 [`RELEASE-NOTES-v5.1-ai-import.md`](RELEASE-NOTES-v5.1-ai-import.md) + [`RELEASE-NOTES-v5.0-beta-M9.md`](RELEASE-NOTES-v5.0-beta-M9.md) + [`RELEASE-NOTES-v5.0.md`](RELEASE-NOTES-v5.0.md)
 
 ### A 股 AI 量化选股 · T+1 短线预测 + 研究→决策证据闭环 + 准实盘量化
 
-**55 因子 · 13 策略 · 8 角色多 Agent + Agent 工具调用 · 自动量化 Pipeline · T+1 模拟成交 · 反事实报告 · 多策略组合 · 盘中实时因子**
+**55 因子 · 13 策略 · 8 角色多 Agent + Agent 工具调用 · 自动量化 Pipeline · T+1 模拟成交 · 反事实报告 · 多策略组合 · 盘中实时因子 · WebSocket 推送 · 通知集成 · AI 录入交易**
 
-![Version](https://img.shields.io/badge/version-v4.2.1-success?style=flat-square)
+![Version](https://img.shields.io/badge/version-v5.1-blue?style=flat-square)
 ![Python](https://img.shields.io/badge/python-3.11+-blue?style=flat-square&logo=python&logoColor=white)
 ![Next.js](https://img.shields.io/badge/Next.js-16-black?style=flat-square&logo=next.js&logoColor=white)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.6-3178C6?style=flat-square&logo=typescript&logoColor=white)
