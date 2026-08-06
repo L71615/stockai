@@ -25,7 +25,6 @@ import {
   IconChartBar,
   IconChartScatter,
   IconSearch,
-  IconFilter,
   IconFileInvoice,
   IconNotebook,
   IconRobot,
@@ -59,8 +58,7 @@ const navGroups = [
     defaultOpen: true,
     items: [
       { id: "quant", label: "量化分析", icon: IconChartScatter, url: "/quant", remember: true },
-      { id: "condition", label: "条件选股", icon: IconFilter, url: "/screener/condition" },
-      { id: "screener", label: "AI 选股", icon: IconSearch, url: "/screener" },
+      { id: "screener", label: "选股中心", icon: IconSearch, url: "/screener" },
       { id: "plan", label: "盘前计划", icon: IconClipboardList, url: "/plan" },
       { id: "factor-lab", label: "因子实验室", icon: IconFlask, url: "/factor-lab" },
       { id: "pipeline", label: "量化 Pipeline", icon: IconPlayerPlay, url: "/pipeline" },
