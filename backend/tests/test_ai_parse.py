@@ -236,6 +236,41 @@ async def test_parse_buy_buy_sell_validated_together(fresh_db, mock_ai_parser):
     assert len(result["errors"]) == 0
 
 
+@pytest.mark.asyncio
+async def test_parse_sell_before_buy_order_independent(fresh_db, mock_ai_parser):
+    """测试 4c: AI 把卖出放在买入前面 — 校验必须顺序无关"""
+    from services.ai_parse_transactions import parse_transactions_with_ai
+
+    # 同代码 2 buy + 1 sell, 但 mock 让 sell 出现在前面
+    text = """600519,卖出,50,1700.00,2026-08-06
+600519,买入,100,1680.00,2026-08-05
+600519,买入,200,1685.00,2026-08-05"""
+
+    result = await parse_transactions_with_ai(text, user_id=1)
+
+    # 顺序无关: 卖出 50 vs (0 + 300 本批买入) = 300 可用, OK
+    assert len(result["transactions"]) == 3
+    assert len(result["errors"]) == 0
+
+
+@pytest.mark.asyncio
+async def test_parse_does_not_merge_same_day(fresh_db, mock_ai_parser):
+    """测试 4d: 同代码同日同方向不被合并(每笔独立)"""
+    from services.ai_parse_transactions import parse_transactions_with_ai
+
+    # 2 笔独立买入 (即使 mock 默认不合并, 验证 AI 返回的就是 2 笔)
+    text = """600519,买入,100,1680.00,2026-08-05
+600519,买入,100,1680.00,2026-08-05"""
+
+    result = await parse_transactions_with_ai(text, user_id=1)
+
+    # mock 不合并 → 2 笔独立保留
+    assert len(result["transactions"]) == 2
+    txs = result["transactions"]
+    assert txs[0]["quantity"] == 100
+    assert txs[1]["quantity"] == 100
+
+
 def test_bulk_two_transactions(fresh_db):
     """测试 5: 批量落库 2 笔 → 全部成功 + 自动创建 holdings"""
     from routers.transactions import add_transactions_bulk, BulkTransactionRequest

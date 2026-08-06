@@ -134,7 +134,7 @@ _PARSE_SYSTEM_PROMPT = """你是股票交易记录解析助手. 从用户粘贴�
 5. **日期**: YYYY-MM-DD; "今天"→{today}; "昨天"→{yesterday}; 默认今天
 6. **跳过**: 空行 / `#` 注释行 / 模板表头(代码,方向,数量,价格,日期)
 7. **失败**: 单行无法解析 → 跳过该行 (不要放进 transactions)
-8. **去重**: 同代码同方向同价格同日期 → 合并为 1 笔 (累加数量)
+8. **不去重**: 每笔交易保留独立行(即便是同代码同日), 用户可在预览界面手动删除重复
 
 示例输入:
 ```
@@ -283,7 +283,9 @@ async def _call_ai_parse(text: str, system: str) -> list[dict]:
 
 
 def _validate_ai_results(transactions: list[dict], user_id: int) -> list[dict]:
-    """校验 AI 返回的交易: 股票代码存在 + 卖出 ≤ (当前持仓 + 本批买入)
+    """校验 AI 返回的交易: 股票代码存在 + 卖出 ≤ (当前持仓 + 本批总买入)
+
+    顺序无关 — AI 可能把卖出放在买入前面, 我们用 batch 总和判断
 
     Returns:
         errors: [{"index": int, "line": 0, "raw": <code>, "reason": "..."}]
@@ -304,8 +306,17 @@ def _validate_ai_results(transactions: list[dict], user_id: int) -> list[dict]:
     )
     holding_map = {h["stock_code"]: h["quantity"] for h in holdings}
 
-    # 3. 累计本批买入(同代码) — 用于"卖出 ≤ 当前持仓 + 本批买入"
-    pending_buys: dict[str, int] = {}
+    # 3. 预计算本批每只代码的总买入/总卖出(顺序无关)
+    batch_buys: dict[str, int] = {}
+    batch_sells: dict[str, int] = {}
+    for tx in transactions:
+        c = tx.get("code", "")
+        d = tx.get("direction", "")
+        q = tx.get("quantity", 0)
+        if d == "buy":
+            batch_buys[c] = batch_buys.get(c, 0) + q
+        elif d == "sell":
+            batch_sells[c] = batch_sells.get(c, 0) + q
 
     errors = []
     for i, tx in enumerate(transactions):
@@ -355,10 +366,9 @@ def _validate_ai_results(transactions: list[dict], user_id: int) -> list[dict]:
             continue
 
         direction = tx.get("direction", "")
-        if direction == "buy":
-            pending_buys[code] = pending_buys.get(code, 0) + qty
-        elif direction == "sell":
-            available = holding_map.get(code, 0) + pending_buys.get(code, 0)
+        if direction == "sell":
+            # 顺序无关: 用本批总买入 + 当前持仓判断
+            available = holding_map.get(code, 0) + batch_buys.get(code, 0)
             if qty > available:
                 errors.append({
                     "index": i,
@@ -366,7 +376,7 @@ def _validate_ai_results(transactions: list[dict], user_id: int) -> list[dict]:
                     "raw": code,
                     "reason": (
                         f"卖出 {qty} 股超过可用持仓 {available} 股"
-                        f" (当前 {holding_map.get(code, 0)} + 本批买入 {pending_buys.get(code, 0)})"
+                        f" (当前 {holding_map.get(code, 0)} + 本批买入 {batch_buys.get(code, 0)})"
                     ),
                 })
                 continue
