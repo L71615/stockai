@@ -2,14 +2,15 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-> **当前版本: v5.1-ai-import**(2026-08-06 tag) — AI 录入交易(持仓页顶部面板 + 后端 AI 解析 + 批量落库)
+> **当前版本: v5.2-screener-merge**(2026-08-07) — 选股中心合并(AI 选股 + 条件选股 → 单页 /screener + Tab)
+> **上一稳定版**: v5.1-ai-import(2026-08-06 tag) — AI 录入交易(持仓页顶部面板 + 后端 AI 解析 + 批量落库)
 > **量化方向**: 准实盘量化交易系统(D1 战略锁定) — 实时行情 + 盘中因子 + 信号手动确认 + 模拟成交
-> **最新改动**: v5.1-ai-import:
->   - **feat(ai-import)**: `AITransactionImporter` 组件(持仓页顶部,粘贴 → AI 解析 → 批量入库)
->   - **feat(ai-import)**: `ai_parse_transactions.py` 服务(Claude Haiku 4.5 + tools + 后置校验)
->   - **feat(ai-import)**: `/api/transactions/bulk` 端点(单事务 + 前置持仓校验)
->   - **feat(ai-import)**: CSV 模板 + 自然语言混排(注释/空行自动跳过)
->   - **test(ai-import)**: 6 个测试(解析/校验/批量/回滚)
+> **最新改动**: v5.2-screener-merge:
+>   - **feat(screener)**: AI 选股 + 条件选股 → 单页 `/screener` + Tab
+>   - **feat(screener)**: Tab 状态同步 URL `?tab=` + localStorage 跨刷新
+>   - **feat(screener)**: `/screener/condition` 自动 redirect → `/screener?tab=condition`
+>   - **chore(sidebar)**: 移除"条件选股"入口(只剩"选股中心")
+> **v5.1**: AI 录入交易(`b81b5c1`) — `AITransactionImporter` + Claude Haiku 4.5 + `/api/transactions/bulk` + 9 测试。详见 `RELEASE-NOTES-v5.1-ai-import.md`
 > **v5.0-beta M9**: 通知集成(`b81b5c1`) — `notify_service.send_signal` + 5min dedup + 异常隔离 + 6 测试。详见 `RELEASE-NOTES-v5.0-beta-M9.md`
 > **v5.0-beta M5**: WebSocket 实时推送 — `/api/realtime/ws` + `useRealtimeQuote` 切 WS。详见 `RELEASE-NOTES-v5.0-beta-M5.md`
 > **v5.0-beta M7**: 55 因子完整接入 — `realtime_factor_cache.py` in-place 升 30→55 因子。详见 `RELEASE-NOTES-v5.0-beta-M7.md`
