@@ -383,7 +383,8 @@ export default function Home() {
             <AlertDialogDescription>
               将删除 <span className="font-mono font-semibold text-foreground">{deleteTarget?.code}</span> {deleteTarget?.name} 的持仓记录。
               <br />
-              此操作不会删除已有的交易记录。删除后可在交易记录中重新添加。
+              此操作会一并删除该股的全部交易记录(交易历史也会清空)。
+              如果只是想重新添加, 请用 AI 录入交易面板直接补录。
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

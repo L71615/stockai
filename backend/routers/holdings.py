@@ -5,7 +5,7 @@ from datetime import datetime
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
-from database import query_all, query_one, execute, execute_many
+from database import query_all, query_one, execute, execute_many, execute_transaction
 from services.utils import get_market, detect_asset_type, get_fund_nav, calc_xirr, get_fee_config, FeeConfig
 from routers.stocks import _cached_quote  # 共享的行情缓存函数
 from dependencies import get_current_user_id
@@ -109,8 +109,29 @@ def update_holding(holding_id: int, body: HoldingBody):
 
 @router.delete("/holdings/{holding_id}")
 def delete_holding(holding_id: int):
-    execute("DELETE FROM holdings WHERE id = ? AND user_id = ?", (holding_id, get_current_user_id()))
-    return {"message": "已删除"}
+    """删除持仓(v5.2.2 修复: 同时删除 transactions 里的相关记录)
+
+    之前 bug: 只删 holdings 表, transactions 历史保留 → 用户用 AI 录入
+    重新添加时, _recalc_holding_for_code 把所有 buy 累加 → 旧 500 + 新 200 = 700.
+
+    修复: 删除 holdings 同时清掉该 stock_code 的所有 transactions,
+    让用户能"干净地"重新添加, 不会和历史合并.
+    """
+    h = query_one("SELECT stock_code FROM holdings WHERE id = ? AND user_id = ?",
+                  (holding_id, get_current_user_id()))
+    if not h:
+        raise HTTPException(404, "持仓不存在")
+    stock_code = h["stock_code"]
+
+    # 单事务删除: holdings + 该股的所有 transactions
+    def _do(cur):
+        cur.execute("DELETE FROM holdings WHERE id = ? AND user_id = ?",
+                    (holding_id, get_current_user_id()))
+        cur.execute("DELETE FROM transactions WHERE user_id = ? AND stock_code = ?",
+                    (get_current_user_id(), stock_code))
+
+    execute_transaction(_do)
+    return {"message": "已删除", "stock_code": stock_code}
 
 
 class JournalBody(BaseModel):
