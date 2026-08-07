@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useCallback } from "react"
 import { useRouter } from "next/navigation"
 import { SiteHeader } from "@/components/site-header"
 import { PortfolioRiskCards } from "@/components/portfolio-risk-cards"
@@ -10,6 +10,8 @@ import { DataTable } from "@/components/data-table"
 import { AITransactionImporter } from "@/components/ai-transaction-importer"
 import { Card, CardAction, CardContent, CardFooter, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
 import { cn } from "@/lib/utils"
 import { usePortfolio, usePortfolioHistory, useDiversification } from "@/hooks/use-portfolio"
@@ -59,6 +61,13 @@ export default function Home() {
   const [lastRefreshAt, setLastRefreshAt] = useState("")
   const [deleting, setDeleting] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<{ holdingId: number; code: string; name: string } | null>(null)
+  // ── v5.2.2 编辑持仓 ──
+  const [editing, setEditing] = useState(false)
+  const [editTarget, setEditTarget] = useState<HomeHolding | null>(null)
+  const [editForm, setEditForm] = useState({
+    stock_name: "", quantity: 0, cost_price: 0, portfolio_id: null as number | null, journal: "",
+  })
+  const [portfolios, setPortfolios] = useState<Array<{ id: number; name: string }>>([])
   const displayUpdateTime = lastRefreshAt || (!isLoading && portfolio ? "刚刚" : "")
 
   const refresh = () => {
@@ -101,6 +110,54 @@ export default function Home() {
       setDeleteTarget(null)
     }
   }
+
+  // ── v5.2.2 编辑持仓 ──
+  const openEdit = useCallback(async (item: HomeHolding) => {
+    setEditTarget(item)
+    setEditForm({
+      stock_name: item.stock_name || "",
+      quantity: item.quantity || 0,
+      cost_price: item.cost_price || 0,
+      portfolio_id: item.portfolio_id ?? null,
+      journal: (item as any).journal || "",
+    })
+    // 加载 portfolios (一次性)
+    if (portfolios.length === 0) {
+      try {
+        const list = await apiGet<Array<{ id: number; name: string }>>("/api/stocks/portfolios")
+        if (Array.isArray(list)) setPortfolios(list)
+      } catch { /* 静默失败, 用户仍可编辑其他字段 */ }
+    }
+  }, [portfolios.length])
+
+  const saveEdit = useCallback(async () => {
+    if (!editTarget) return
+    if (editForm.quantity <= 0) { alert("数量必须 > 0"); return }
+    if (editForm.cost_price < 0) { alert("成本不能为负"); return }
+    setEditing(true)
+    try {
+      // PUT /api/stocks/holdings/{id} — 复用现有后端
+      // 注意: PUT 端点用 HoldingBody 接收, 包含 stock_code/stock_name/quantity/cost_price 等
+      await apiPost(`/api/stocks/holdings/${editTarget.id}`, {
+        stock_code: editTarget.stock_code,
+        stock_name: editForm.stock_name,
+        market: (editTarget as any).market || "SH",
+        asset_type: editTarget.asset_type || "",
+        quantity: editForm.quantity,
+        cost_price: editForm.cost_price,
+        shares: (editTarget as any).shares ?? null,
+        portfolio_id: editForm.portfolio_id,
+        fee: null,
+      }, "PUT")
+      mutate()  // 重新拉数据
+      setEditTarget(null)
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "保存失败"
+      alert(msg)
+    } finally {
+      setEditing(false)
+    }
+  }, [editTarget, editForm, mutate])
 
   const decimals = (assetType: string) => assetType === "fund" ? 4 : 3
 
@@ -339,7 +396,10 @@ export default function Home() {
               <DataTable
                 data={tableData}
                 actions={{
-                  onEdit: (item) => alert(`编辑 ${item.code} ${item.name} 暂未实现`),
+                  onEdit: (item) => {
+                    const h = holdings.find((x) => x.id === item.id)
+                    if (h) openEdit(h)
+                  },
                   onView: (item) => alert(`请点击名称查看 ${item.code} ${item.name} 详情`),
                   onAddToWatchlist: (item) => alert(`${item.code} ${item.name} 已在持仓中，可去自选股页管理`),
                   onDelete: (item) => setDeleteTarget({ holdingId: item.id, code: item.code, name: item.name }),
@@ -391,6 +451,91 @@ export default function Home() {
             <AlertDialogCancel disabled={deleting}>取消</AlertDialogCancel>
             <AlertDialogAction onClick={handleDelete} disabled={deleting} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
               {deleting ? "删除中…" : "确认删除"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* ── v5.2.2 编辑持仓对话框 ── */}
+      <AlertDialog open={!!editTarget} onOpenChange={(open) => { if (!open) setEditTarget(null) }}>
+        <AlertDialogContent className="max-w-md">
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              编辑持仓 · {editTarget?.stock_code} {editTarget?.stock_name}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              直接修改持仓快照(不走交易流)。仅用于修正录入错误或调整组合归属。
+              <br />
+              <span className="text-amber-500">⚠ 数量 / 成本改动不会写入交易历史,如需"加仓减仓"请用 AI 录入交易面板。</span>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+
+          <div className="space-y-3 py-2">
+            <div className="space-y-1">
+              <label className="text-xs text-muted-foreground">名称</label>
+              <Input
+                value={editForm.stock_name}
+                onChange={(e) => setEditForm({ ...editForm, stock_name: e.target.value })}
+                className="h-8 text-xs"
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <label className="text-xs text-muted-foreground">
+                  数量 {editTarget?.asset_type === "fund" ? "(份)" : "(股)"}
+                </label>
+                <Input
+                  type="number"
+                  value={editForm.quantity}
+                  onChange={(e) => setEditForm({ ...editForm, quantity: Number(e.target.value) || 0 })}
+                  className="h-8 text-xs font-mono"
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs text-muted-foreground">成本价</label>
+                <Input
+                  type="number"
+                  step="0.0001"
+                  value={editForm.cost_price}
+                  onChange={(e) => setEditForm({ ...editForm, cost_price: Number(e.target.value) || 0 })}
+                  className="h-8 text-xs font-mono"
+                />
+              </div>
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-xs text-muted-foreground">所属组合</label>
+              <select
+                value={editForm.portfolio_id ?? ""}
+                onChange={(e) => setEditForm({
+                  ...editForm,
+                  portfolio_id: e.target.value ? Number(e.target.value) : null,
+                })}
+                className="w-full h-8 text-xs rounded-md border border-input bg-background px-2"
+              >
+                <option value="">未指定</option>
+                {portfolios.map((p) => (
+                  <option key={p.id} value={p.id}>{p.name}</option>
+                ))}
+              </select>
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-xs text-muted-foreground">备注</label>
+              <Input
+                value={editForm.journal}
+                onChange={(e) => setEditForm({ ...editForm, journal: e.target.value })}
+                placeholder="例如: 2024Q2 调仓"
+                className="h-8 text-xs"
+              />
+            </div>
+          </div>
+
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={editing}>取消</AlertDialogCancel>
+            <AlertDialogAction onClick={saveEdit} disabled={editing}>
+              {editing ? "保存中…" : "保存"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
