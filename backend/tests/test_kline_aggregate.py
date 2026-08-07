@@ -101,12 +101,13 @@ def test_aggregate_empty():
 
 
 def test_aggregate_called_in_get_kline(monkeypatch):
-    """get_kline_data 端到端: 分钟线 mock 全部同日 → 聚合后 1 根"""
+    """get_kline_data 端到端: 即使 mock 的 daily bars 全同日期,聚合后仍 1 根
+    (防御性测试 — v5.2.4 已统一走日线路径,但 _aggregate_minute_bars_by_date 仍兜底)
+    """
     from routers.stocks import get_kline_data
 
-    # Mock 替代 get_minute_kline_with_fallback
-    def mock_minute_kline(code, count, fallback, client=None):
-        # 32 根分钟线,全部 2025-08-07(模拟 Futu 陈旧数据)
+    # Mock fetch_kline 返回 32 根同日期的 bars (极端异常场景)
+    def mock_fetch_kline(code, market=None, days=120):
         dates = ["2025-08-07"] * 32
         return {
             "code": code,
@@ -118,11 +119,42 @@ def test_aggregate_called_in_get_kline(monkeypatch):
             "volumes": [200000.0] * 32,
         }
 
-    monkeypatch.setattr("routers.stocks.get_minute_kline_with_fallback", mock_minute_kline)
-    # 跳过市场判定,直接 mock
+    monkeypatch.setattr("services.technical.fetch_kline", mock_fetch_kline)
     monkeypatch.setattr("routers.stocks.get_market", lambda code: "SZ")
 
     result = get_kline_data("002747", period="1m")
     assert len(result["dates"]) == 1, f"应该聚合成 1 根,实际 {len(result['dates'])} 根"
     assert result["dates"][0] == "2025-08-07"
-    assert result["closes"][0] == 23.62 + 31 * 0.01  # 最后一天的最后一个 close
+    assert result["closes"][0] == 23.62 + 31 * 0.01  # 最后一根 close
+
+
+def test_get_kline_uses_daily_path(monkeypatch):
+    """v5.2.4 — period=1m 不再走分钟线,统一走 fetch_kline (日线)"""
+    from routers.stocks import get_kline_data
+
+    called_with = {"fetch": 0, "minute": 0}
+
+    def mock_fetch_kline(code, market=None, days=120):
+        called_with["fetch"] += 1
+        # 返回 22 根日线
+        dates = [f"2026-07-{i+1:02d}" for i in range(22)]
+        return {
+            "code": code, "dates": dates,
+            "opens": [10.0] * 22, "highs": [11.0] * 22,
+            "lows": [9.0] * 22, "closes": [10.5] * 22,
+            "volumes": [100.0] * 22,
+        }
+
+    def mock_minute_kline(code, count, fallback, client=None):
+        called_with["minute"] += 1
+        return fallback()
+
+    monkeypatch.setattr("services.technical.fetch_kline", mock_fetch_kline)
+    monkeypatch.setattr("routers.stocks.get_minute_kline_with_fallback", mock_minute_kline)
+    monkeypatch.setattr("routers.stocks.get_market", lambda code: "SZ")
+
+    result = get_kline_data("002747", period="1m")
+
+    assert called_with["fetch"] == 1, "period=1m 应该调 fetch_kline"
+    assert called_with["minute"] == 0, "period=1m 不应该再调分钟线"
+    assert len(result["dates"]) == 22

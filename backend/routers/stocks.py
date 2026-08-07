@@ -639,14 +639,11 @@ def get_kline_data(code: str, period: str = "1m"):
     def _legacy_daily_kline_for_chart() -> dict:
         return fetch_kline(code, mkt, days=max(days + 60, 120))
 
-    if period == "1m":
-        kline = get_minute_kline_with_fallback(
-            code,
-            count=max(days + 10, 60),
-            fallback=_legacy_daily_kline_for_chart,
-        )
-    else:
-        kline = _legacy_daily_kline_for_chart()
+    # v5.2.4: 所有周期统一走日线路径 ——
+    # 之前 period=1m 走分钟线 (get_minute_kline_with_fallback),但 Futu 经常返回
+    # 陈旧分钟线(全部落在同一天),聚合后只剩 1 根,用户看到的图表空白。
+    # UI 标签 '1月' = 1 month,语义上应该是 22 根日线,与 5d/3m/6m 一致。
+    kline = _legacy_daily_kline_for_chart()
 
     if "error" in kline:
         raise HTTPException(500, kline["error"])
