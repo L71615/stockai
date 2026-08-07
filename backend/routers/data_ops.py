@@ -233,7 +233,13 @@ def freshness_dashboard():
         if not info:
             continue
         dates = info["dates"]
-        latest = max(dates) if dates else None
+        # 用众数(最常见日期)代表板块"典型"数据日期 ——
+        # 之前用 max() 会让 1 只 fresh 的股票掩盖 99% stale 的真相,
+        # 导致 /browse 的 FreshnessBar 显示 "0d" 但实际主流停在几天前
+        latest = None
+        if dates:
+            from collections import Counter
+            latest = Counter(dates).most_common(1)[0][0]
         days_ago = None
         if latest:
             try:
