@@ -531,6 +531,53 @@ def get_memory_context(code: str):
 PERIOD_DAYS = {"5d": 5, "1m": 22, "3m": 66, "6m": 130}
 
 
+def _aggregate_minute_bars_by_date(dates: list[str], opens: list[float], highs: list[float],
+                                   lows: list[float], closes: list[float], volumes: list[float]
+                                   ) -> tuple[list, list, list, list, list, list]:
+    """v5.2.4 — 把分钟线按 date 聚合成日线
+
+    适用场景: Futu 偶尔返回陈旧分钟线(全部落在同一天),或 minute path
+    返回的所有 bar 都用同一 date 字符串表示,直接传到前端会让 lightweight-charts
+    报 'data must be asc ordered by time' 崩溃。
+
+    策略: 按 date 去重 + 聚合 ——
+      open = 第一个 bar 的 open
+      high = max(highs)
+      low = min(lows)
+      close = 最后一个 bar 的 close
+      volume = sum(volumes)
+    """
+    if not dates:
+        return dates, opens, highs, lows, closes, volumes
+    if len(set(dates)) == len(dates):
+        return dates, opens, highs, lows, closes, volumes
+    agg: dict[str, dict] = {}
+    for i, dt in enumerate(dates):
+        if dt not in agg:
+            agg[dt] = {
+                "open": opens[i] if i < len(opens) else 0,
+                "high": highs[i] if i < len(highs) else 0,
+                "low": lows[i] if i < len(lows) else 0,
+                "close": closes[i] if i < len(closes) else 0,
+                "volume": volumes[i] if i < len(volumes) else 0,
+            }
+        else:
+            a = agg[dt]
+            a["high"] = max(a["high"], highs[i] if i < len(highs) else 0)
+            a["low"] = min(a["low"], lows[i] if i < len(lows) else 0)
+            a["close"] = closes[i] if i < len(closes) else 0
+            a["volume"] += volumes[i] if i < len(volumes) else 0
+    sorted_keys = sorted(agg.keys())
+    return (
+        sorted_keys,
+        [agg[k]["open"] for k in sorted_keys],
+        [agg[k]["high"] for k in sorted_keys],
+        [agg[k]["low"] for k in sorted_keys],
+        [agg[k]["close"] for k in sorted_keys],
+        [agg[k]["volume"] for k in sorted_keys],
+    )
+
+
 def _aggregate_bars(dates: list[str], opens: list[float], highs: list[float],
                     lows: list[float], closes: list[float], volumes: list[float],
                     freq: str) -> tuple[list, list, list, list, list, list]:
@@ -610,6 +657,14 @@ def get_kline_data(code: str, period: str = "1m"):
     lows = kline["lows"]
     closes = kline["closes"]
     volumes = kline.get("volumes", [0] * len(closes))
+
+    # v5.2.4: 聚合同日期的分钟线到日线 ——
+    # Futu 偶尔返回陈旧分钟线(全部落在同一天)或 fetch_kline 返回的"日期"粒度混杂,
+    # 如果直接传前端,所有 bar 同一 timestamp 会让 lightweight-charts 崩溃
+    # 'Assertion failed: data must be asc ordered by time'
+    dates, opens, highs, lows, closes, volumes = _aggregate_minute_bars_by_date(
+        dates, opens, highs, lows, closes, volumes,
+    )
 
     # 如果 fetch_kline 没返回 opens/volumes，用 closes 模拟
     if not opens:

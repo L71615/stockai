@@ -86,17 +86,26 @@ export interface KlineChartProps {
 function toChartBars(raw: KlineResponse): KlineBar[] {
   const { dates, opens, highs, lows, closes, volumes, ma5, ma10, ma20 } = raw
   if (!dates) return []
-  return dates.map((dt: string, i: number) => ({
-    date: dt,
-    open: opens?.[i] ?? closes?.[i] ?? 0,
-    high: highs?.[i] ?? closes?.[i] ?? 0,
-    low: lows?.[i] ?? closes?.[i] ?? 0,
-    close: closes?.[i] ?? 0,
-    volume: volumes?.[i] ?? 0,
-    ma5: ma5?.[i] ?? null,
-    ma10: ma10?.[i] ?? null,
-    ma20: ma20?.[i] ?? null,
-  }))
+  // 去重 + 按日期升序 — 后端 _aggregate_bars(week/month) 可能输出重复日期,
+  // 触发 lightweight-charts 'data must be asc ordered by time' 崩溃
+  // 保留每个日期的最后一根 bar(应该是该日的最新/收盘)
+  const seen = new Map<string, KlineBar>()
+  dates.forEach((dt: string, i: number) => {
+    seen.set(dt, {
+      date: dt,
+      open: opens?.[i] ?? closes?.[i] ?? 0,
+      high: highs?.[i] ?? closes?.[i] ?? 0,
+      low: lows?.[i] ?? closes?.[i] ?? 0,
+      close: closes?.[i] ?? 0,
+      volume: volumes?.[i] ?? 0,
+      ma5: ma5?.[i] ?? null,
+      ma10: ma10?.[i] ?? null,
+      ma20: ma20?.[i] ?? null,
+    })
+  })
+  return Array.from(seen.entries())
+    .map(([, bar]) => bar)
+    .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0))
 }
 
 // ═══════════════════════════════════════════════════════════════
