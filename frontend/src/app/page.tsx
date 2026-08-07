@@ -74,12 +74,20 @@ export default function Home() {
       mutate(
         (current: PortfolioData | undefined) => {
           if (!current) return current
+          const newHoldings = current.holdings.filter((h) => h.id !== deleteTarget.holdingId)
+          // 重算 summary(避免 revalidate 失败时显示旧值, 也避免 total_cost 写死 0 的旧 bug)
+          const totalCost = newHoldings.reduce((s, h) => s + ((h.cost_price || 0) * (h.quantity || 0)), 0)
+          const totalValue = newHoldings.reduce((s, h) => s + (h.market_value || 0), 0)
+          const totalPnl = totalValue - totalCost
           return {
             ...current,
-            holdings: current.holdings.filter((h) => h.id !== deleteTarget.holdingId),
+            holdings: newHoldings,
             summary: {
-              ...current.summary,
-              total_cost: 0,
+              total_cost: Math.round(totalCost * 100) / 100,
+              total_value: Math.round(totalValue * 100) / 100,
+              total_pnl: Math.round(totalPnl * 100) / 100,
+              total_pnl_pct: totalCost > 0 ? Math.round((totalPnl / totalCost) * 10000) / 100 : 0,
+              today_pnl: current.summary.today_pnl || 0,
             },
           }
         },
